@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { IpcEventPayload } from '@shared/ipc'
 import { useChatStore } from '../stores/chat'
+import { useDownloadsStore, formatSpeed, formatEta } from '../stores/downloads'
 
 interface CatalogEntry {
   id: string
@@ -247,15 +248,36 @@ function HuggingFaceBrowser({
   )
 }
 
+function Section({
+  title,
+  children
+}: {
+  title: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <section className="mt-5 first:mt-0">
+      <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">{title}</h3>
+      {children}
+    </section>
+  )
+}
+
 export default function ModelsManager({ onClose }: { onClose: () => void }): React.JSX.Element {
   const [entries, setEntries] = useState<CatalogEntry[]>([])
   const [hardware, setHardware] = useState<Hardware | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [hfProgress, setHfProgress] = useState<
-    Record<string, { downloadedBytes: number; totalBytes: number }>
-  >({})
+  const [orKey, setOrKey] = useState('')
+  const downloads = useDownloadsStore((s) => s.downloads)
+  const models = useChatStore((s) => s.models)
+  const selectedModelId = useChatStore((s) => s.selectedModelId)
+  const selectModel = useChatStore((s) => s.selectModel)
+  const apiKeyConfigured = useChatStore((s) => s.apiKeyConfigured)
+  const saveApiKey = useChatStore((s) => s.saveApiKey)
   const loadModels = useChatStore((s) => s.loadModels)
   const importLocalModel = useChatStore((s) => s.importLocalModel)
+
+  const localModels = models.filter((m) => m.provider === 'local')
 
   const refresh = useCallback(async (): Promise<void> => {
     const result = await window.pandora.invoke('models:catalog', undefined)
@@ -269,38 +291,15 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
 
   useEffect(() => {
     void refresh()
+    void loadModels()
+    // Completion/failure notifications; live progress comes from the
+    // downloads store.
     const unsubscribe = window.pandora.on('model:downloadProgress', (raw) => {
       const p = raw as IpcEventPayload<'model:downloadProgress'>
       if (p.error && p.error !== 'cancelled') setError(p.error)
-
-      if (p.modelId.startsWith('hf:')) {
-        if (p.done || p.error) {
-          setHfProgress((prev) => {
-            const next = { ...prev }
-            delete next[p.modelId]
-            return next
-          })
-          if (p.done) void loadModels()
-        } else {
-          setHfProgress((prev) => ({
-            ...prev,
-            [p.modelId]: { downloadedBytes: p.downloadedBytes, totalBytes: p.totalBytes }
-          }))
-        }
-        return
-      }
-
       if (p.done) {
         void refresh()
         void loadModels()
-      } else {
-        setEntries((prev) =>
-          prev.map((e) =>
-            e.id === p.modelId
-              ? { ...e, downloading: !p.error, downloadedBytes: p.downloadedBytes }
-              : e
-          )
-        )
       }
     })
     return unsubscribe
@@ -308,29 +307,16 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
 
   const downloadHf = async (repoId: string, file: HfFile): Promise<void> => {
     setError(null)
-    const key = `hf:${repoId}/${file.filename}`
-    setHfProgress((prev) => ({
-      ...prev,
-      [key]: { downloadedBytes: 0, totalBytes: file.sizeBytes }
-    }))
     const result = await window.pandora.invoke('models:downloadHf', {
       repoId,
       filename: file.filename,
       sizeBytes: file.sizeBytes
     })
-    if (!result.ok) {
-      setError(result.error.message)
-      setHfProgress((prev) => {
-        const next = { ...prev }
-        delete next[key]
-        return next
-      })
-    }
+    if (!result.ok) setError(result.error.message)
   }
 
   const download = async (id: string): Promise<void> => {
     setError(null)
-    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, downloading: true } : e)))
     await window.pandora.invoke('models:download', { modelId: id })
   }
 
@@ -339,10 +325,22 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
     void refresh()
   }
 
-  const remove = async (id: string): Promise<void> => {
+  const removeCatalog = async (id: string): Promise<void> => {
     await window.pandora.invoke('models:delete', { modelId: id })
     await refresh()
     await loadModels()
+  }
+
+  const removeLocal = async (path: string): Promise<void> => {
+    // Catalog-installed models get their file deleted too; imports are only
+    // deregistered (the user's own file stays put).
+    const catalogEntry = entries.find((e) => e.installedPath === path)
+    if (catalogEntry) {
+      await removeCatalog(catalogEntry.id)
+    } else {
+      await window.pandora.invoke('llm:removeLocalModel', { path })
+      await loadModels()
+    }
   }
 
   return (
@@ -366,94 +364,169 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {error && (
             <div className="mb-3 rounded-lg border border-red-900 bg-red-950/60 px-3 py-2 text-xs text-red-300">
               {error}
             </div>
           )}
-          <ul className="flex flex-col gap-3">
-            {entries.map((e) => {
-              const fit = FIT_LABEL[e.fit]
-              const pct =
-                e.downloading && e.sizeBytes > 0
-                  ? Math.min(100, Math.round((e.downloadedBytes / e.sizeBytes) * 100))
-                  : 0
-              return (
-                <li key={e.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-medium text-zinc-200">{e.name}</h3>
-                        {e.tags.includes('recommended') && (
-                          <span className="rounded-full bg-indigo-950 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-indigo-300">
-                            Popular
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-1 text-xs leading-relaxed text-zinc-500">{e.description}</p>
-                      <p className="mt-1.5 text-[11px] text-zinc-600">
-                        {gb(e.sizeBytes)} · {Math.round(e.contextLength / 1024)}k context ·{' '}
-                        {e.license} · <span className={fit.cls}>{fit.text}</span>
-                      </p>
-                    </div>
-                    <div className="shrink-0">
-                      {e.installedPath ? (
-                        <div className="flex flex-col items-end gap-1">
-                          <span className="text-xs text-emerald-400">Installed</span>
-                          <button
-                            onClick={() => void remove(e.id)}
-                            className="text-[11px] text-zinc-500 hover:text-red-400"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ) : e.downloading ? (
-                        <button
-                          onClick={() => void cancel(e.id)}
-                          className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
-                        >
-                          Cancel
-                        </button>
+
+          <Section title="Your models">
+            {localModels.length === 0 ? (
+              <p className="text-xs text-zinc-600">
+                Nothing downloaded yet — grab a recommended model below, or search Hugging Face.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-1.5">
+                {localModels.map((m) => (
+                  <li
+                    key={m.id}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm text-zinc-200">{m.name}</span>
+                      <span className="text-[10px] text-zinc-600">
+                        {Math.round(m.contextLength / 1024)}k context
+                      </span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      {selectedModelId === m.id ? (
+                        <span className="text-[11px] text-emerald-400">In use</span>
                       ) : (
                         <button
-                          onClick={() => void download(e.id)}
-                          disabled={e.fit === 'too-large'}
-                          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => selectModel(m.id)}
+                          className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-800"
                         >
-                          Download
+                          Use
                         </button>
                       )}
-                    </div>
-                  </div>
-                  {e.downloading && (
-                    <div className="mt-3">
-                      <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
-                        <div
-                          className="h-full rounded-full bg-indigo-500 transition-all"
-                          style={{ width: `${pct}%` }}
-                        />
+                      <button
+                        onClick={() => void removeLocal(m.id)}
+                        className="text-[11px] text-zinc-500 hover:text-red-400"
+                      >
+                        Remove
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+
+          <Section title="Recommended models">
+            <ul className="flex flex-col gap-3">
+              {entries
+                .filter((e) => !e.installedPath)
+                .map((e) => {
+                  const progress = downloads[e.id]
+                  const fit = FIT_LABEL[e.fit]
+                  const pct =
+                    progress && e.sizeBytes > 0
+                      ? Math.min(100, Math.round((progress.downloadedBytes / e.sizeBytes) * 100))
+                      : 0
+                  return (
+                    <li key={e.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-medium text-zinc-200">{e.name}</h4>
+                            {e.tags.includes('recommended') && (
+                              <span className="rounded-full bg-indigo-950 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-indigo-300">
+                                Popular
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                            {e.description}
+                          </p>
+                          <p className="mt-1.5 text-[11px] text-zinc-600">
+                            {gb(e.sizeBytes)} · {Math.round(e.contextLength / 1024)}k context ·{' '}
+                            {e.license} · <span className={fit.cls}>{fit.text}</span>
+                          </p>
+                        </div>
+                        <div className="shrink-0">
+                          {progress ? (
+                            <button
+                              onClick={() => void cancel(e.id)}
+                              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+                            >
+                              Cancel
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => void download(e.id)}
+                              disabled={e.fit === 'too-large'}
+                              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Download
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <p className="mt-1 text-[11px] text-zinc-500">
-                        {gb(e.downloadedBytes)} of {gb(e.sizeBytes)} ({pct}%)
-                      </p>
-                    </div>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
+                      {progress && (
+                        <div className="mt-3">
+                          <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                            <div
+                              className="h-full rounded-full bg-indigo-500 transition-all"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <p className="mt-1 tabular-nums text-[11px] text-zinc-500">
+                            {gb(progress.downloadedBytes)} of {gb(e.sizeBytes)} ({pct}%)
+                            {progress.speedBps > 0 && <> · {formatSpeed(progress.speedBps)}</>}
+                            {progress.etaSeconds !== null && (
+                              <> · about {formatEta(progress.etaSeconds)} left</>
+                            )}
+                          </p>
+                        </div>
+                      )}
+                    </li>
+                  )
+                })}
+            </ul>
 
-          <HuggingFaceBrowser downloading={hfProgress} onDownload={(r, f) => void downloadHf(r, f)} />
-        </div>
+            <HuggingFaceBrowser
+              downloading={downloads}
+              onDownload={(r, f) => void downloadHf(r, f)}
+            />
+          </Section>
 
-        <div className="border-t border-zinc-800 px-5 py-3">
-          <button
-            onClick={() => void importLocalModel().then(onClose)}
-            className="text-xs text-zinc-400 hover:text-zinc-200"
-          >
-            Or import a .gguf file you already have…
-          </button>
+          <Section title="Remote models — OpenRouter">
+            <p className="text-xs leading-relaxed text-zinc-600">
+              {apiKeyConfigured
+                ? 'Connected. Remote models appear in the chat model picker.'
+                : 'Bring your own OpenRouter API key to use hosted models (Claude, GPT, and more). The key is stored encrypted in your system keychain.'}
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="password"
+                value={orKey}
+                onChange={(e) => setOrKey(e.target.value)}
+                placeholder={apiKeyConfigured ? 'API key (saved — paste to replace)' : 'sk-or-…'}
+                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+              />
+              <button
+                onClick={() => {
+                  void saveApiKey(orKey.trim()).then((ok) => {
+                    if (ok) setOrKey('')
+                  })
+                }}
+                disabled={!orKey.trim()}
+                className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+              >
+                {apiKeyConfigured ? 'Replace' : 'Connect'}
+              </button>
+            </div>
+          </Section>
+
+          <Section title="Have a GGUF file already?">
+            <button
+              onClick={() => void importLocalModel()}
+              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+            >
+              Import a .gguf file…
+            </button>
+          </Section>
         </div>
       </div>
     </div>

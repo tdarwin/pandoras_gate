@@ -27,12 +27,22 @@ interface ChatStore {
 
   init: () => void
   loadModels: () => Promise<void>
+  /** Restores the model last used with this novel and warms it up. */
+  loadForNovel: (novelDir: string) => Promise<void>
   saveApiKey: (key: string) => Promise<boolean>
   selectModel: (id: string) => void
   importLocalModel: () => Promise<void>
   send: (text: string) => Promise<void>
   cancel: () => Promise<void>
   clear: () => void
+}
+
+/** Preload a local model into the inference worker so first chat is instant. */
+function warmIfLocal(models: ModelInfo[], modelId: string | null): void {
+  const model = models.find((m) => m.id === modelId)
+  if (model?.provider === 'local') {
+    void window.pandora.invoke('llm:warmLoad', { modelId: model.id })
+  }
 }
 
 let initialized = false
@@ -101,14 +111,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set({ models: result.data.models })
       const { selectedModelId } = get()
       if (!selectedModelId) {
-        // Sensible default: a well-known strong prose model if present.
+        // Sensible defaults: a local model first, then a strong remote one.
         const preferred =
+          result.data.models.find((m) => m.provider === 'local') ??
           result.data.models.find((m) => m.id === 'anthropic/claude-sonnet-4.5') ??
           result.data.models.find((m) => m.id.startsWith('anthropic/')) ??
           result.data.models[0]
         if (preferred) set({ selectedModelId: preferred.id })
       }
     }
+  },
+
+  loadForNovel: async (novelDir: string) => {
+    get().init()
+    await get().loadModels()
+    const persisted = await window.pandora.invoke('llm:novelModel:get', { novelDir })
+    if (persisted.ok && persisted.data.modelId) {
+      const { models } = get()
+      if (models.some((m) => m.id === persisted.data.modelId)) {
+        set({ selectedModelId: persisted.data.modelId })
+      }
+    }
+    warmIfLocal(get().models, get().selectedModelId)
   },
 
   saveApiKey: async (key: string) => {
@@ -122,7 +146,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     return false
   },
 
-  selectModel: (id) => set({ selectedModelId: id }),
+  selectModel: (id) => {
+    set({ selectedModelId: id })
+    const novel = useProjectStore.getState().novel
+    if (novel) {
+      void window.pandora.invoke('llm:novelModel:set', { novelDir: novel.dir, modelId: id })
+    }
+    warmIfLocal(get().models, id)
+  },
 
   importLocalModel: async () => {
     const result = await window.pandora.invoke('llm:importGguf', undefined)

@@ -73,7 +73,7 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
     }
 
     get().init()
-    await project.saveActiveChapter()
+    await project.snapshotActiveChapter()
 
     const requestId = crypto.randomUUID()
     set({ drafting: true, requestId, draftFile: activeFile, error: null })

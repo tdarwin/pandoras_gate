@@ -218,6 +218,42 @@ export async function writeChapter(novelDir: string, file: string, content: stri
   await writeFile(join(novelDir, file), content, 'utf8')
 }
 
+/**
+ * Moves a chapter out of the manifest into archive/ — recoverable by hand,
+ * and its history stays in git.
+ */
+export async function archiveChapter(novelDir: string, file: string): Promise<NovelState> {
+  const manifest = await readNovelManifest(novelDir)
+  const entry = manifest.chapters.find((c) => c.file === file)
+  if (!entry) throw new Error(`Chapter not in manifest: ${file}`)
+  await mkdir(join(novelDir, 'archive'), { recursive: true })
+  let target = `archive/${basename(file)}`
+  let n = 1
+  while (await exists(join(novelDir, target))) {
+    target = `archive/${basename(file, '.md')}-${++n}.md`
+  }
+  await rename(join(novelDir, file), join(novelDir, target))
+  manifest.chapters = manifest.chapters.filter((c) => c.file !== file)
+  await writeNovelManifest(novelDir, manifest)
+  return { dir: novelDir, manifest }
+}
+
+/**
+ * Deletes a chapter file and its manifest entry. The file stays recoverable
+ * from git history (deletion is itself a commit).
+ */
+export async function deleteChapter(novelDir: string, file: string): Promise<NovelState> {
+  const manifest = await readNovelManifest(novelDir)
+  if (!manifest.chapters.some((c) => c.file === file)) {
+    throw new Error(`Chapter not in manifest: ${file}`)
+  }
+  const { rm } = await import('node:fs/promises')
+  await rm(join(novelDir, file), { force: true })
+  manifest.chapters = manifest.chapters.filter((c) => c.file !== file)
+  await writeNovelManifest(novelDir, manifest)
+  return { dir: novelDir, manifest }
+}
+
 /* ------------------------------------------------------------------ */
 /* Story bible (metadata docs)                                         */
 /* ------------------------------------------------------------------ */

@@ -9,13 +9,19 @@ export default function ChapterSidebar(): React.JSX.Element {
   const openChapter = useProjectStore((s) => s.openChapter)
   const createChapter = useProjectStore((s) => s.createChapter)
   const renameChapter = useProjectStore((s) => s.renameChapter)
-  const moveChapter = useProjectStore((s) => s.moveChapter)
+  const reorderChapters = useProjectStore((s) => s.reorderChapters)
+  const archiveChapter = useProjectStore((s) => s.archiveChapter)
+  const deleteChapter = useProjectStore((s) => s.deleteChapter)
   const closeNovel = useProjectStore((s) => s.closeNovel)
 
   const [adding, setAdding] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [menuFor, setMenuFor] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [dropIndex, setDropIndex] = useState<number | null>(null)
 
   const submitNew = async (): Promise<void> => {
     if (newTitle.trim()) await createChapter(newTitle.trim())
@@ -26,6 +32,22 @@ export default function ChapterSidebar(): React.JSX.Element {
   const submitRename = async (file: string): Promise<void> => {
     if (renameValue.trim()) await renameChapter(file, renameValue.trim())
     setRenaming(null)
+  }
+
+  const completeDrop = async (): Promise<void> => {
+    if (dragIndex === null || dropIndex === null || dragIndex === dropIndex) {
+      setDragIndex(null)
+      setDropIndex(null)
+      return
+    }
+    const files = novel.manifest.chapters.map((c) => c.file)
+    const [moved] = files.splice(dragIndex, 1)
+    // Removing an earlier item shifts the target left by one.
+    const insertAt = dragIndex < dropIndex ? dropIndex - 1 : dropIndex
+    files.splice(insertAt, 0, moved!)
+    setDragIndex(null)
+    setDropIndex(null)
+    await reorderChapters(files)
   }
 
   return (
@@ -80,82 +102,164 @@ export default function ChapterSidebar(): React.JSX.Element {
             </button>
           </div>
 
-          <ul className="mt-1 flex-1 overflow-y-auto px-2 pb-3">
-        {novel.manifest.chapters.map((ch, i) => (
-          <li key={ch.file} className="group">
-            {renaming === ch.file ? (
-              <input
-                autoFocus
-                value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                onBlur={() => void submitRename(ch.file)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void submitRename(ch.file)
-                  if (e.key === 'Escape') setRenaming(null)
-                }}
-                className="w-full rounded border border-indigo-500 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 outline-none"
-              />
-            ) : (
-              <div
-                className={`flex items-center rounded px-2 py-1.5 text-sm ${
-                  activeFile === ch.file
-                    ? 'bg-zinc-800 text-zinc-100'
-                    : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
-                }`}
-              >
-                <button
-                  onClick={() => void openChapter(ch.file)}
-                  onDoubleClick={() => {
-                    setRenaming(ch.file)
-                    setRenameValue(ch.title)
-                  }}
-                  className="min-w-0 flex-1 truncate text-left"
-                  title={ch.title}
-                >
-                  <span className="mr-1.5 text-xs text-zinc-600">{i + 1}.</span>
-                  {ch.title}
-                </button>
-                <span className="hidden shrink-0 gap-0.5 group-hover:flex">
-                  <button
-                    onClick={() => void moveChapter(ch.file, -1)}
-                    disabled={i === 0}
-                    title="Move up"
-                    className="rounded px-1 text-zinc-500 hover:text-zinc-200 disabled:opacity-30"
+          <ul
+            className="mt-1 flex-1 overflow-y-auto px-2 pb-3"
+            onDragLeave={(e) => {
+              if (e.currentTarget === e.target) setDropIndex(null)
+            }}
+          >
+            {novel.manifest.chapters.map((ch, i) => (
+              <li key={ch.file} className="group relative">
+                {dropIndex === i && dragIndex !== null && (
+                  <div className="absolute -top-0.5 left-1 right-1 h-0.5 rounded bg-indigo-500" />
+                )}
+                {renaming === ch.file ? (
+                  <input
+                    autoFocus
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={() => void submitRename(ch.file)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void submitRename(ch.file)
+                      if (e.key === 'Escape') setRenaming(null)
+                    }}
+                    className="w-full rounded border border-indigo-500 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 outline-none"
+                  />
+                ) : (
+                  <div
+                    draggable
+                    onDragStart={(e) => {
+                      setDragIndex(i)
+                      setMenuFor(null)
+                      e.dataTransfer.effectAllowed = 'move'
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      // Above midpoint → insert before this row; below → after.
+                      const rect = e.currentTarget.getBoundingClientRect()
+                      const before = e.clientY < rect.top + rect.height / 2
+                      setDropIndex(before ? i : i + 1)
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      void completeDrop()
+                    }}
+                    onDragEnd={() => {
+                      setDragIndex(null)
+                      setDropIndex(null)
+                    }}
+                    className={`flex cursor-grab items-center rounded px-2 py-1.5 text-sm active:cursor-grabbing ${
+                      activeFile === ch.file
+                        ? 'bg-zinc-800 text-zinc-100'
+                        : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+                    } ${dragIndex === i ? 'opacity-40' : ''}`}
                   >
-                    ↑
-                  </button>
-                  <button
-                    onClick={() => void moveChapter(ch.file, 1)}
-                    disabled={i === novel.manifest.chapters.length - 1}
-                    title="Move down"
-                    className="rounded px-1 text-zinc-500 hover:text-zinc-200 disabled:opacity-30"
-                  >
-                    ↓
-                  </button>
-                </span>
-              </div>
+                    <button
+                      onClick={() => void openChapter(ch.file)}
+                      onDoubleClick={() => {
+                        setRenaming(ch.file)
+                        setRenameValue(ch.title)
+                      }}
+                      className="min-w-0 flex-1 truncate text-left"
+                      title={ch.title}
+                    >
+                      <span className="mr-1.5 text-xs text-zinc-600">{i + 1}.</span>
+                      {ch.title}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setMenuFor(menuFor === ch.file ? null : ch.file)
+                        setConfirmDelete(null)
+                      }}
+                      title="Chapter actions"
+                      className="hidden shrink-0 rounded px-1 text-zinc-500 hover:text-zinc-200 group-hover:block"
+                    >
+                      ⋯
+                    </button>
+                  </div>
+                )}
+
+                {menuFor === ch.file && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-10"
+                      onClick={() => {
+                        setMenuFor(null)
+                        setConfirmDelete(null)
+                      }}
+                    />
+                  <div className="absolute right-1 top-8 z-20 w-44 rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-xl">
+                    <button
+                      onClick={() => {
+                        setMenuFor(null)
+                        setRenaming(ch.file)
+                        setRenameValue(ch.title)
+                      }}
+                      className="block w-full px-3 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-800"
+                    >
+                      Rename
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMenuFor(null)
+                        void archiveChapter(ch.file)
+                      }}
+                      className="block w-full px-3 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-800"
+                    >
+                      Archive
+                      <span className="block text-[10px] text-zinc-600">
+                        Moves the file to archive/, keeps history
+                      </span>
+                    </button>
+                    {confirmDelete === ch.file ? (
+                      <button
+                        onClick={() => {
+                          setMenuFor(null)
+                          setConfirmDelete(null)
+                          void deleteChapter(ch.file)
+                        }}
+                        className="block w-full px-3 py-1.5 text-left text-xs font-medium text-red-400 hover:bg-red-950/50"
+                      >
+                        Really delete “{ch.title}”?
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmDelete(ch.file)}
+                        className="block w-full px-3 py-1.5 text-left text-xs text-red-400/80 hover:bg-zinc-800"
+                      >
+                        Delete…
+                      </button>
+                    )}
+                  </div>
+                  </>
+                )}
+              </li>
+            ))}
+            {dropIndex === novel.manifest.chapters.length && dragIndex !== null && (
+              <li className="relative">
+                <div className="absolute -top-0.5 left-1 right-1 h-0.5 rounded bg-indigo-500" />
+              </li>
             )}
-          </li>
-        ))}
-        {adding && (
-          <li className="mt-1">
-            <input
-              autoFocus
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              onBlur={() => void submitNew()}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void submitNew()
-                if (e.key === 'Escape') {
-                  setAdding(false)
-                  setNewTitle('')
-                }
-              }}
-              placeholder="Chapter title…"
-              className="w-full rounded border border-indigo-500 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 outline-none"
-            />
-          </li>
-        )}
+            {adding && (
+              <li className="mt-1">
+                <input
+                  autoFocus
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  onBlur={() => void submitNew()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void submitNew()
+                    if (e.key === 'Escape') {
+                      setAdding(false)
+                      setNewTitle('')
+                    }
+                  }}
+                  placeholder="Chapter title…"
+                  className="w-full rounded border border-indigo-500 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 outline-none"
+                />
+              </li>
+            )}
           </ul>
         </>
       )}

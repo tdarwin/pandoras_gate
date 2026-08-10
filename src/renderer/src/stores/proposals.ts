@@ -68,7 +68,8 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       return
     }
 
-    await project.saveActiveChapter()
+    // Snapshot first so chapter edits and metadata changes stay separate commits.
+    await project.snapshotActiveChapter()
     set({ running: true, error: null, lastRunStatus: null })
     const result = await window.pandora.invoke('proposals:run', {
       novelDir: novel.dir,
@@ -104,7 +105,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     }
     if (scope === 'chapter' && !project.activeFile?.startsWith('chapters/')) return
 
-    await project.saveActiveChapter()
+    await project.snapshotActiveChapter()
     set({ running: true, error: null, lastRunStatus: null })
     const result = await window.pandora.invoke('outlines:generate', {
       novelDir: novel.dir,

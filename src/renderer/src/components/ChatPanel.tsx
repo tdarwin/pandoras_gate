@@ -42,48 +42,20 @@ function ContextInspector({ report }: { report: ContextReport }): React.JSX.Elem
   )
 }
 
-function ApiKeySetup(): React.JSX.Element {
-  const saveApiKey = useChatStore((s) => s.saveApiKey)
-  const importLocalModel = useChatStore((s) => s.importLocalModel)
-  const [key, setKey] = useState('')
-  const [busy, setBusy] = useState(false)
-
+function ModelSetupPrompt({ onOpenModels }: { onOpenModels: () => void }): React.JSX.Element {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-      <h3 className="text-sm font-medium text-zinc-300">Connect a model</h3>
+      <h3 className="text-sm font-medium text-zinc-300">No model connected yet</h3>
       <p className="text-xs leading-relaxed text-zinc-500">
-        Paste your OpenRouter API key to chat with remote models. Your key is stored encrypted in
-        the system keychain and never leaves this machine except to call OpenRouter.
+        Download a local model that runs entirely on this machine, connect OpenRouter for hosted
+        models, or import a GGUF file you already have.
       </p>
-      <input
-        type="password"
-        value={key}
-        onChange={(e) => setKey(e.target.value)}
-        placeholder="sk-or-…"
-        className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
-      />
       <button
-        disabled={!key.trim() || busy}
-        onClick={() => {
-          setBusy(true)
-          void saveApiKey(key.trim()).finally(() => setBusy(false))
-        }}
-        className="w-full rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+        onClick={onOpenModels}
+        className="w-full rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500"
       >
-        {busy ? 'Saving…' : 'Save key'}
+        Set up a model…
       </button>
-      <div className="my-1 flex w-full items-center gap-2 text-[10px] uppercase tracking-wide text-zinc-600">
-        <span className="h-px flex-1 bg-zinc-800" /> or <span className="h-px flex-1 bg-zinc-800" />
-      </div>
-      <button
-        onClick={() => void importLocalModel()}
-        className="w-full rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
-      >
-        Import a local model (.gguf)…
-      </button>
-      <p className="text-[11px] leading-relaxed text-zinc-600">
-        Local models run entirely on this machine — no account, no data leaves your computer.
-      </p>
     </div>
   )
 }
@@ -183,7 +155,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
 
       {showModels && <ModelsManager onClose={() => setShowModels(false)} />}
       {!apiKeyConfigured && models.length === 0 ? (
-        <ApiKeySetup />
+        <ModelSetupPrompt onOpenModels={() => setShowModels(true)} />
       ) : (
         <>
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3">

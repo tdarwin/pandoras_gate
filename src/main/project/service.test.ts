@@ -8,6 +8,8 @@ import {
   createChapter,
   renameChapter,
   reorderChapters,
+  archiveChapter,
+  deleteChapter,
   readChapter,
   writeChapter,
   readNovelManifest,
@@ -175,6 +177,36 @@ describe('chapters', () => {
     await createChapter(novelDir, 'A')
     await writeChapter(novelDir, 'chapters/001-a.md', '---\ntitle: A\n---\nHello world.\n')
     expect(await readChapter(novelDir, 'chapters/001-a.md')).toContain('Hello world.')
+  })
+
+  it('archives a chapter: file moves, manifest entry drops', async () => {
+    const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
+    await createChapter(novelDir, 'Keep Me')
+    await createChapter(novelDir, 'Archive Me')
+    const state = await archiveChapter(novelDir, 'chapters/002-archive-me.md')
+
+    expect(state.manifest.chapters.map((c) => c.title)).toEqual(['Keep Me'])
+    await expect(access(join(novelDir, 'archive/002-archive-me.md'))).resolves.toBeUndefined()
+    await expect(access(join(novelDir, 'chapters/002-archive-me.md'))).rejects.toThrow()
+  })
+
+  it('archive avoids name collisions', async () => {
+    const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
+    await createChapter(novelDir, 'Twice')
+    await archiveChapter(novelDir, 'chapters/001-twice.md')
+    await createChapter(novelDir, 'Twice')
+    await archiveChapter(novelDir, 'chapters/001-twice.md')
+    await expect(access(join(novelDir, 'archive/001-twice.md'))).resolves.toBeUndefined()
+    await expect(access(join(novelDir, 'archive/001-twice-2.md'))).resolves.toBeUndefined()
+  })
+
+  it('deletes a chapter file and manifest entry', async () => {
+    const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
+    await createChapter(novelDir, 'Doomed')
+    const state = await deleteChapter(novelDir, 'chapters/001-doomed.md')
+    expect(state.manifest.chapters).toEqual([])
+    await expect(access(join(novelDir, 'chapters/001-doomed.md'))).rejects.toThrow()
+    await expect(deleteChapter(novelDir, 'chapters/001-doomed.md')).rejects.toThrow(/not in manifest/)
   })
 
   it('avoids filename collisions when titles repeat', async () => {

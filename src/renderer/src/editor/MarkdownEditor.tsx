@@ -16,6 +16,8 @@ interface MarkdownEditorProps {
    * focused — and the view follows the streamed text.
    */
   forceSync?: boolean
+  /** ⌘S / Ctrl+S inside the editor. */
+  onSave?: () => void
 }
 
 /**
@@ -28,12 +30,15 @@ export default function MarkdownEditor({
   docId,
   value,
   onChange,
-  forceSync = false
+  forceSync = false,
+  onSave
 }: MarkdownEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
+  const onSaveRef = useRef(onSave)
+  onSaveRef.current = onSave
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -44,7 +49,18 @@ export default function MarkdownEditor({
         history(),
         drawSelection(),
         highlightActiveLine(),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
+        keymap.of([
+          {
+            key: 'Mod-s',
+            preventDefault: true,
+            run: () => {
+              onSaveRef.current?.()
+              return true
+            }
+          },
+          ...defaultKeymap,
+          ...historyKeymap
+        ]),
         markdown({ base: markdownLanguage }),
         livePreviewPlugin,
         editorTheme,

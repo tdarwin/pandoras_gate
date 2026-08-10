@@ -83,8 +83,25 @@ export const ipcContract = {
     response: z.object({ content: z.string() })
   },
   'chapter:write': {
-    request: z.object({ novelDir: z.string(), file: z.string(), content: z.string() }),
-    response: z.object({ saved: z.literal(true) })
+    request: z.object({
+      novelDir: z.string(),
+      file: z.string(),
+      content: z.string(),
+      /**
+       * When true, a history snapshot (git commit) is taken immediately.
+       * Plain writes just persist to disk for crash safety — no history entry.
+       */
+      snapshot: z.boolean().optional()
+    }),
+    response: z.object({ saved: z.literal(true), snapshotted: z.boolean() })
+  },
+  'chapter:archive': {
+    request: z.object({ novelDir: z.string(), file: z.string() }),
+    response: NovelStateSchema
+  },
+  'chapter:delete': {
+    request: z.object({ novelDir: z.string(), file: z.string() }),
+    response: NovelStateSchema
   },
   'metadata:list': {
     request: z.object({ novelDir: z.string() }),
@@ -157,6 +174,54 @@ export const ipcContract = {
   'llm:hasApiKey': {
     request: z.object({ provider: z.literal('openrouter') }),
     response: z.object({ configured: z.boolean() })
+  },
+  'llm:warmLoad': {
+    request: z.object({ modelId: z.string() }),
+    response: z.object({ warming: z.boolean() })
+  },
+  'llm:novelModel:get': {
+    request: z.object({ novelDir: z.string() }),
+    response: z.object({ modelId: z.string().nullable() })
+  },
+  'llm:novelModel:set': {
+    request: z.object({ novelDir: z.string(), modelId: z.string() }),
+    response: z.object({ saved: z.literal(true) })
+  },
+  'prefs:get': {
+    request: z.undefined(),
+    response: z.object({
+      autoStoryBible: z.boolean(),
+      snapshotOnBlur: z.boolean()
+    })
+  },
+  'prefs:set': {
+    request: z.object({
+      autoStoryBible: z.boolean().optional(),
+      snapshotOnBlur: z.boolean().optional()
+    }),
+    response: z.object({
+      autoStoryBible: z.boolean(),
+      snapshotOnBlur: z.boolean()
+    })
+  },
+  'sync:getConfig': {
+    request: z.object({ novelDir: z.string() }),
+    response: z.object({
+      remoteUrl: z.string().nullable(),
+      tokenConfigured: z.boolean()
+    })
+  },
+  'sync:setConfig': {
+    request: z.object({
+      novelDir: z.string(),
+      remoteUrl: z.string(),
+      token: z.string().optional()
+    }),
+    response: z.object({ saved: z.literal(true) })
+  },
+  'sync:push': {
+    request: z.object({ novelDir: z.string() }),
+    response: z.object({ pushed: z.literal(true), remoteUrl: z.string() })
   },
   'chat:start': {
     request: z.object({
@@ -379,6 +444,7 @@ export const ipcEvents = {
   }),
   'model:downloadProgress': z.object({
     modelId: z.string(),
+    label: z.string(),
     downloadedBytes: z.number(),
     totalBytes: z.number(),
     done: z.boolean(),

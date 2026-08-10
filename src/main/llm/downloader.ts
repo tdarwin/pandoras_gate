@@ -65,6 +65,8 @@ export async function catalogStatus(): Promise<{
 interface DownloadSpec {
   /** Progress-event key; catalog id or `hf:<repo>/<file>`. */
   key: string
+  /** Human-readable name for progress UI (status bar). */
+  label: string
   hfUri: string
   fileName: string
   dirPath: string
@@ -90,7 +92,9 @@ async function downloadGguf(sender: WebContents, spec: DownloadSpec): Promise<vo
     done: boolean
     error?: string
   }): void => {
-    if (!sender.isDestroyed()) sender.send('model:downloadProgress', payload)
+    if (!sender.isDestroyed()) {
+      sender.send('model:downloadProgress', { ...payload, label: spec.label })
+    }
   }
 
   const state: ActiveDownload = {
@@ -147,6 +151,7 @@ export async function startDownload(sender: WebContents, modelId: string): Promi
   if (!entry) throw new Error(`Unknown catalog model: ${modelId}`)
   await downloadGguf(sender, {
     key: modelId,
+    label: entry.name,
     hfUri: entry.hfUri,
     fileName: entry.filename,
     dirPath: modelsDir(),
@@ -166,6 +171,7 @@ export async function startHfDownload(
   const dirPath = join(modelsDir(), repoId.replaceAll('/', '__'))
   void downloadGguf(sender, {
     key,
+    label: filename.replace(/\.gguf$/i, ''),
     hfUri: `hf:${repoId}/${filename}`,
     fileName: filename,
     dirPath,

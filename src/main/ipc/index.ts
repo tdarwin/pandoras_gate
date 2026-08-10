@@ -21,6 +21,15 @@ import {
 } from '../llm/downloader'
 import { searchHfGgufModels, listHfGgufFiles } from '../llm/hf'
 import { detectHardware, fitForSize } from '../llm/hardware'
+import { llmWorkerHost } from '../llm/worker-host'
+import { listLocalModels } from '../llm/local'
+import {
+  getNovelModel,
+  setNovelModel,
+  readPrefs,
+  writePrefs
+} from '../store'
+import { getRemoteUrl, setRemoteUrl, pushToRemote } from '../git/sync'
 import { setSecret, hasSecret } from '../secrets'
 import { assembleContext } from '../context/assembler'
 import { gatherStorySource } from '../context/gather'
@@ -121,13 +130,39 @@ export function registerIpcHandlers(): void {
 
   handle('chapter:write', async (req) => {
     await project.writeChapter(req.novelDir, req.file, req.content)
-    const label = req.file.startsWith('metadata/') ? 'metadata' : 'chapter'
-    gitService.scheduleAutocommit(
-      req.novelDir,
-      `${label}: ${basename(req.file).replace(/\.(md|yaml)$/, '')}`,
-      [req.file]
-    )
-    return { saved: true as const }
+    let snapshotted = false
+    if (req.snapshot) {
+      // Explicit save (⌘S / blur / chapter switch): one history snapshot now.
+      await gitService.flushAutocommit(req.novelDir)
+      const label = req.file.startsWith('metadata/')
+        ? 'metadata'
+        : req.file.startsWith('outlines/')
+          ? 'outline'
+          : 'chapter'
+      const oid = await gitService.commitAll(
+        req.novelDir,
+        `${label}: ${basename(req.file).replace(/\.(md|yaml)$/, '')}`,
+        [req.file]
+      )
+      snapshotted = oid !== null
+    }
+    return { saved: true as const, snapshotted }
+  })
+
+  handle('chapter:archive', async (req) => {
+    const state = await project.archiveChapter(req.novelDir, req.file)
+    await gitService.commitAll(req.novelDir, `chapter archived: ${basename(req.file, '.md')}`, [
+      'novel.yaml'
+    ])
+    return state
+  })
+
+  handle('chapter:delete', async (req) => {
+    const state = await project.deleteChapter(req.novelDir, req.file)
+    await gitService.commitAll(req.novelDir, `chapter deleted: ${basename(req.file, '.md')}`, [
+      'novel.yaml'
+    ])
+    return state
   })
 
   handle('metadata:list', (req) => project.listMetadata(req.novelDir))
@@ -251,6 +286,49 @@ export function registerIpcHandlers(): void {
   handle('models:downloadHf', (req, event) =>
     startHfDownload(event.sender, req.repoId, req.filename, req.sizeBytes)
   )
+
+  handle('llm:warmLoad', async (req) => {
+    const models = await listLocalModels()
+    const entry = models.find((m) => m.path === req.modelId)
+    if (!entry) return { warming: false }
+    // Fire-and-forget: first chat gets a hot model instead of a load stall.
+    void llmWorkerHost.loadModel(entry.path, entry.contextLength).catch(() => {})
+    return { warming: true }
+  })
+
+  handle('llm:novelModel:get', async (req) => ({
+    modelId: await getNovelModel(req.novelDir)
+  }))
+
+  handle('llm:novelModel:set', async (req) => {
+    await setNovelModel(req.novelDir, req.modelId)
+    return { saved: true as const }
+  })
+
+  handle('prefs:get', () => readPrefs())
+
+  handle('prefs:set', (req) =>
+    writePrefs({
+      ...(req.autoStoryBible !== undefined ? { autoStoryBible: req.autoStoryBible } : {}),
+      ...(req.snapshotOnBlur !== undefined ? { snapshotOnBlur: req.snapshotOnBlur } : {})
+    })
+  )
+
+  handle('sync:getConfig', async (req) => ({
+    remoteUrl: await getRemoteUrl(req.novelDir),
+    tokenConfigured: await hasSecret('git-sync-token')
+  }))
+
+  handle('sync:setConfig', async (req) => {
+    await setRemoteUrl(req.novelDir, req.remoteUrl)
+    if (req.token?.trim()) await setSecret('git-sync-token', req.token.trim())
+    return { saved: true as const }
+  })
+
+  handle('sync:push', async (req) => ({
+    pushed: true as const,
+    remoteUrl: await pushToRemote(req.novelDir)
+  }))
 
   handle('models:delete', async (req) => {
     await deleteDownloadedModel(req.modelId)

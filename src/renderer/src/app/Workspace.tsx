@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useProjectStore } from '../stores/project'
 import { useProposalsStore } from '../stores/proposals'
 import { useDraftStore } from '../stores/draft'
+import { usePrefsStore } from '../stores/prefs'
+import { useChatStore } from '../stores/chat'
 import ChapterSidebar from '../components/ChapterSidebar'
 import ChatPanel from '../components/ChatPanel'
 import HistoryPanel from '../components/HistoryPanel'
@@ -18,7 +20,10 @@ export default function Workspace(): React.JSX.Element {
   const dirty = useProjectStore((s) => s.dirty)
   const setContent = useProjectStore((s) => s.setContent)
   const saveActiveChapter = useProjectStore((s) => s.saveActiveChapter)
+  const snapshotActiveChapter = useProjectStore((s) => s.snapshotActiveChapter)
   const applyNovelState = useProjectStore((s) => s.applyNovelState)
+  const autoStoryBible = usePrefsStore((s) => s.autoStoryBible)
+  const snapshotOnBlur = usePrefsStore((s) => s.snapshotOnBlur)
   const openChapter = useProjectStore((s) => s.openChapter)
   const setError = useProjectStore((s) => s.setError)
   const [showHistory, setShowHistory] = useState(false)
@@ -39,24 +44,50 @@ export default function Workspace(): React.JSX.Element {
   const stopDraft = useDraftStore((s) => s.stop)
   const initDraft = useDraftStore((s) => s.init)
 
+  const loadForNovel = useChatStore((s) => s.loadForNovel)
+
   useEffect(() => {
     initDraft()
     void refreshProposals()
-  }, [initDraft, refreshProposals])
+    // Restore the model last used with this novel (and warm it up).
+    void loadForNovel(novel.dir)
+  }, [initDraft, refreshProposals, loadForNovel, novel.dir])
 
-  // Autosave: 1.5s after the last keystroke (faster while AI streams).
+  // Crash-safety writes: quiet disk write a few seconds after typing pauses.
+  // These do NOT create history entries — snapshots happen on ⌘S, window
+  // blur, and chapter switches.
   useEffect(() => {
     if (!dirty) return
-    const t = setTimeout(() => void saveActiveChapter(), drafting ? 800 : 1500)
+    const t = setTimeout(() => void saveActiveChapter(), drafting ? 800 : 5000)
     return () => clearTimeout(t)
   }, [content, dirty, drafting, saveActiveChapter])
 
+  // Snapshot when the window loses focus.
+  useEffect(() => {
+    if (!snapshotOnBlur) return
+    const onBlur = (): void => void snapshotActiveChapter()
+    window.addEventListener('blur', onBlur)
+    return () => window.removeEventListener('blur', onBlur)
+  }, [snapshotOnBlur, snapshotActiveChapter])
+
+  // ⌘S fallback when focus is outside the editor.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault()
+        void snapshotActiveChapter()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [snapshotActiveChapter])
+
   // Auto metadata run: a while after writing settles on a chapter.
   useEffect(() => {
-    if (dirty || drafting || !activeFile?.startsWith('chapters/')) return
+    if (!autoStoryBible || dirty || drafting || !activeFile?.startsWith('chapters/')) return
     const t = setTimeout(() => void runProposals({ silent: true }), AUTO_METADATA_DELAY_MS)
     return () => clearTimeout(t)
-  }, [dirty, drafting, activeFile, runProposals])
+  }, [autoStoryBible, dirty, drafting, activeFile, runProposals])
 
   const activeChapter = novel.manifest.chapters.find((c) => c.file === activeFile)
   const activeLabel =
@@ -191,6 +222,7 @@ export default function Workspace(): React.JSX.Element {
                 value={content}
                 onChange={setContent}
                 forceSync={drafting}
+                onSave={() => void snapshotActiveChapter()}
               />
             </div>
           </>

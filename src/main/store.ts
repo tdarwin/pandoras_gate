@@ -10,9 +10,49 @@ interface AppState {
     contextLength: number
     sizeBytes: number
   }[]
+  /** Last-used model per novel dir, restored when the novel opens. */
+  novelModels?: Record<string, string>
+  prefs?: {
+    autoStoryBible?: boolean
+    snapshotOnBlur?: boolean
+  }
 }
 
 const DEFAULT_STATE: AppState = { recentNovels: [] }
+
+export interface Prefs {
+  autoStoryBible: boolean
+  snapshotOnBlur: boolean
+}
+
+export async function readPrefs(): Promise<Prefs> {
+  const state = await readAppState()
+  return {
+    autoStoryBible: state.prefs?.autoStoryBible ?? true,
+    snapshotOnBlur: state.prefs?.snapshotOnBlur ?? true
+  }
+}
+
+export async function writePrefs(update: Partial<Prefs>): Promise<Prefs> {
+  const state = await readAppState()
+  const current = await readPrefs()
+  const next = { ...current, ...update }
+  await writeAppState({ ...state, prefs: next })
+  return next
+}
+
+export async function getNovelModel(novelDir: string): Promise<string | null> {
+  const state = await readAppState()
+  return state.novelModels?.[novelDir] ?? null
+}
+
+export async function setNovelModel(novelDir: string, modelId: string): Promise<void> {
+  const state = await readAppState()
+  await writeAppState({
+    ...state,
+    novelModels: { ...state.novelModels, [novelDir]: modelId }
+  })
+}
 
 function statePath(): string {
   return join(app.getPath('userData'), 'app-state.json')
