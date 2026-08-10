@@ -206,6 +206,42 @@ export const ipcContract = {
     request: z.object({ modelId: z.string() }),
     response: z.object({ started: z.literal(true) })
   },
+  'models:searchHf': {
+    request: z.object({ query: z.string().min(1) }),
+    response: z.object({
+      repos: z.array(
+        z.object({
+          id: z.string(),
+          downloads: z.number(),
+          likes: z.number(),
+          gated: z.boolean()
+        })
+      )
+    })
+  },
+  'models:listHfFiles': {
+    request: z.object({ repoId: z.string() }),
+    response: z.object({
+      gated: z.boolean(),
+      files: z.array(
+        z.object({
+          filename: z.string(),
+          sizeBytes: z.number(),
+          quant: z.string(),
+          parts: z.number(),
+          fit: z.enum(['recommended', 'slow', 'too-large'])
+        })
+      )
+    })
+  },
+  'models:downloadHf': {
+    request: z.object({
+      repoId: z.string(),
+      filename: z.string(),
+      sizeBytes: z.number()
+    }),
+    response: z.object({ key: z.string() })
+  },
   'models:cancelDownload': {
     request: z.object({ modelId: z.string() }),
     response: z.object({ cancelled: z.boolean() })

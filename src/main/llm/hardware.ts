@@ -30,3 +30,15 @@ export function fitForModel(hw: HardwareInfo, minMemoryGB: number, recommendedMe
   if (hw.totalMemoryGB >= minMemoryGB) return 'slow'
   return 'too-large'
 }
+
+/**
+ * Fit estimate for an arbitrary GGUF where all we know is the file size:
+ * weights need roughly their file size in memory, plus KV-cache and runtime
+ * overhead, plus room for the OS and the app itself.
+ */
+export function fitForSize(hw: HardwareInfo, sizeBytes: number): Fit {
+  const sizeGB = sizeBytes / 1024 ** 3
+  const minGB = sizeGB * 1.15 + 1
+  const recommendedGB = sizeGB * 1.4 + 3
+  return fitForModel(hw, minGB, recommendedGB)
+}

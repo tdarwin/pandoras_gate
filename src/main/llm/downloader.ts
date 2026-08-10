@@ -62,17 +62,25 @@ export async function catalogStatus(): Promise<{
   return { hardware: hw, entries }
 }
 
-/**
- * Starts (or resumes) a catalog download. Progress is pushed to the renderer
- * on `model:downloadProgress`; on completion the model is registered and a
- * final event with `done: true` is sent.
- */
-export async function startDownload(sender: WebContents, modelId: string): Promise<void> {
-  const entry = catalog.models.find((m) => m.id === modelId)
-  if (!entry) throw new Error(`Unknown catalog model: ${modelId}`)
-  if (activeDownloads.has(modelId)) return
+interface DownloadSpec {
+  /** Progress-event key; catalog id or `hf:<repo>/<file>`. */
+  key: string
+  hfUri: string
+  fileName: string
+  dirPath: string
+  expectedBytes: number
+}
 
-  await mkdir(modelsDir(), { recursive: true })
+/**
+ * Starts (or resumes) a GGUF download. Progress is pushed to the renderer on
+ * `model:downloadProgress`; on completion the model is registered and a final
+ * event with `done: true` is sent. Shared by the curated catalog and the
+ * Hugging Face browser.
+ */
+async function downloadGguf(sender: WebContents, spec: DownloadSpec): Promise<void> {
+  if (activeDownloads.has(spec.key)) return
+
+  await mkdir(spec.dirPath, { recursive: true })
   const { createModelDownloader } = await import('node-llama-cpp')
 
   const send = (payload: {
@@ -88,21 +96,21 @@ export async function startDownload(sender: WebContents, modelId: string): Promi
   const state: ActiveDownload = {
     downloader: null as unknown as ModelDownloader,
     downloadedBytes: 0,
-    totalBytes: entry.sizeBytes
+    totalBytes: spec.expectedBytes
   }
-  activeDownloads.set(modelId, state)
+  activeDownloads.set(spec.key, state)
 
   try {
     const downloader = await createModelDownloader({
-      modelUri: entry.hfUri,
-      dirPath: modelsDir(),
-      fileName: entry.filename,
+      modelUri: spec.hfUri,
+      dirPath: spec.dirPath,
+      fileName: spec.fileName,
       showCliProgress: false,
       onProgress: ({ totalSize, downloadedSize }) => {
         state.downloadedBytes = downloadedSize
-        state.totalBytes = totalSize || entry.sizeBytes
+        state.totalBytes = totalSize || spec.expectedBytes
         send({
-          modelId,
+          modelId: spec.key,
           downloadedBytes: downloadedSize,
           totalBytes: state.totalBytes,
           done: false
@@ -113,20 +121,63 @@ export async function startDownload(sender: WebContents, modelId: string): Promi
 
     const path = await downloader.download()
     await importGguf(path)
-    send({ modelId, downloadedBytes: state.totalBytes, totalBytes: state.totalBytes, done: true })
+    send({
+      modelId: spec.key,
+      downloadedBytes: state.totalBytes,
+      totalBytes: state.totalBytes,
+      done: true
+    })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     // Cancellation surfaces as an error from download(); report it quietly.
     send({
-      modelId,
+      modelId: spec.key,
       downloadedBytes: state.downloadedBytes,
       totalBytes: state.totalBytes,
       done: false,
       error: message.includes('abort') ? 'cancelled' : message
     })
   } finally {
-    activeDownloads.delete(modelId)
+    activeDownloads.delete(spec.key)
   }
+}
+
+export async function startDownload(sender: WebContents, modelId: string): Promise<void> {
+  const entry = catalog.models.find((m) => m.id === modelId)
+  if (!entry) throw new Error(`Unknown catalog model: ${modelId}`)
+  await downloadGguf(sender, {
+    key: modelId,
+    hfUri: entry.hfUri,
+    fileName: entry.filename,
+    dirPath: modelsDir(),
+    expectedBytes: entry.sizeBytes
+  })
+}
+
+/** Downloads an arbitrary GGUF picked in the Hugging Face browser. */
+export async function startHfDownload(
+  sender: WebContents,
+  repoId: string,
+  filename: string,
+  sizeBytes: number
+): Promise<{ key: string }> {
+  const key = `hf:${repoId}/${filename}`
+  // Per-repo subdirectory so same-named quants from different repos coexist.
+  const dirPath = join(modelsDir(), repoId.replaceAll('/', '__'))
+  void downloadGguf(sender, {
+    key,
+    hfUri: `hf:${repoId}/${filename}`,
+    fileName: filename,
+    dirPath,
+    expectedBytes: sizeBytes
+  })
+  return { key }
+}
+
+/** Live progress for a download key (HF browser polls this on reopen). */
+export function downloadProgress(key: string): { downloadedBytes: number; totalBytes: number } | null {
+  const active = activeDownloads.get(key)
+  return active ? { downloadedBytes: active.downloadedBytes, totalBytes: active.totalBytes } : null
 }
 
 export async function cancelDownload(modelId: string): Promise<boolean> {

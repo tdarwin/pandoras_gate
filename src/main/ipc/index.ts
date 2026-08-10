@@ -15,9 +15,12 @@ import { importGguf, removeLocalModel } from '../llm/local'
 import {
   catalogStatus,
   startDownload,
+  startHfDownload,
   cancelDownload,
   deleteDownloadedModel
 } from '../llm/downloader'
+import { searchHfGgufModels, listHfGgufFiles } from '../llm/hf'
+import { detectHardware, fitForSize } from '../llm/hardware'
 import { setSecret, hasSecret } from '../secrets'
 import { assembleContext } from '../context/assembler'
 import { gatherStorySource } from '../context/gather'
@@ -231,6 +234,23 @@ export function registerIpcHandlers(): void {
   handle('models:cancelDownload', async (req) => ({
     cancelled: await cancelDownload(req.modelId)
   }))
+
+  handle('models:searchHf', async (req) => ({
+    repos: await searchHfGgufModels(req.query)
+  }))
+
+  handle('models:listHfFiles', async (req) => {
+    const { files, gated } = await listHfGgufFiles(req.repoId)
+    const hw = detectHardware()
+    return {
+      gated,
+      files: files.map((f) => ({ ...f, fit: fitForSize(hw, f.sizeBytes) }))
+    }
+  })
+
+  handle('models:downloadHf', (req, event) =>
+    startHfDownload(event.sender, req.repoId, req.filename, req.sizeBytes)
+  )
 
   handle('models:delete', async (req) => {
     await deleteDownloadedModel(req.modelId)
