@@ -46,13 +46,15 @@ export default function Workspace(): React.JSX.Element {
   const initDraft = useDraftStore((s) => s.init)
 
   const loadForNovel = useChatStore((s) => s.loadForNovel)
+  const initProposals = useProposalsStore((s) => s.init)
 
   useEffect(() => {
     initDraft()
+    initProposals()
     void refreshProposals()
     // Restore the model last used with this novel (and warm it up).
     void loadForNovel(novel.dir)
-  }, [initDraft, refreshProposals, loadForNovel, novel.dir])
+  }, [initDraft, initProposals, refreshProposals, loadForNovel, novel.dir])
 
   // Crash-safety writes: quiet disk write a few seconds after typing pauses.
   // These do NOT create history entries — snapshots happen on ⌘S, window
@@ -158,9 +160,7 @@ export default function Workspace(): React.JSX.Element {
                       title="Ask the AI to update character profiles, summaries, and world docs from this chapter"
                       className="rounded px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 disabled:opacity-60"
                     >
-                      {proposalsRunning
-                        ? 'Working…'
-                        : (lastRunStatus ?? 'Update story bible')}
+                      {proposalsRunning ? 'Working…' : (lastRunStatus ?? 'Update Codex')}
                     </button>
                   </>
                 )}

@@ -59,7 +59,7 @@ export class LocalProvider implements LLMProvider {
       name: m.name,
       provider: 'local',
       contextLength: m.contextLength,
-      capabilities: { jsonSchema: true }
+      capabilities: { jsonSchema: true, toolUse: true }
     }))
   }
 
@@ -77,9 +77,11 @@ export class LocalProvider implements LLMProvider {
         messages: req.messages,
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
         ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
-        ...(req.responseFormat ? { responseFormat: req.responseFormat } : {})
+        ...(req.responseFormat ? { responseFormat: req.responseFormat } : {}),
+        ...(req.tools?.length ? { tools: req.tools } : {})
       },
-      signal
+      signal,
+      req.toolExecutor
     )
   }
 

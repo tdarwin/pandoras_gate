@@ -83,7 +83,7 @@ export default function ChapterSidebar(): React.JSX.Element {
             tab === 'bible' ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'
           }`}
         >
-          Story Bible
+          Codex
         </button>
       </div>
 

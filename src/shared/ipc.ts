@@ -2,8 +2,12 @@ import { z } from 'zod'
 import { NovelStateSchema } from './schemas/project'
 
 export const ChatMessageSchema = z.object({
-  role: z.enum(['system', 'user', 'assistant']),
-  content: z.string()
+  role: z.enum(['system', 'user', 'assistant', 'tool']),
+  content: z.string(),
+  toolCalls: z
+    .array(z.object({ id: z.string(), name: z.string(), arguments: z.string() }))
+    .optional(),
+  toolCallId: z.string().optional()
 })
 
 export const ModelInfoSchema = z.object({
@@ -11,7 +15,7 @@ export const ModelInfoSchema = z.object({
   name: z.string(),
   provider: z.enum(['local', 'openrouter']),
   contextLength: z.number(),
-  capabilities: z.object({ jsonSchema: z.boolean() }),
+  capabilities: z.object({ jsonSchema: z.boolean(), toolUse: z.boolean() }),
   pricing: z
     .object({ promptPerMTok: z.number(), completionPerMTok: z.number() })
     .optional()
@@ -24,6 +28,13 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
     promptTokens: z.number(),
     completionTokens: z.number()
   }),
+  z.object({
+    type: z.literal('toolCall'),
+    id: z.string(),
+    name: z.string(),
+    arguments: z.string()
+  }),
+  z.object({ type: z.literal('toolStatus'), text: z.string() }),
   z.object({ type: z.literal('done'), finishReason: z.string() }),
   z.object({ type: z.literal('error'), message: z.string() })
 ])
@@ -235,9 +246,25 @@ export const ipcContract = {
       modelId: z.string(),
       messages: z.array(ChatMessageSchema),
       temperature: z.number().optional(),
-      maxTokens: z.number().optional()
+      maxTokens: z.number().optional(),
+      /** Novel context enabling agent tools (update_codex, generate_outline). */
+      novelDir: z.string().optional(),
+      activeFile: z.string().nullable().optional(),
+      toolUse: z.boolean().optional()
     }),
     response: z.object({ started: z.literal(true) })
+  },
+  'app:openLogs': {
+    request: z.undefined(),
+    response: z.object({ opened: z.literal(true) })
+  },
+  'telemetry:configure': {
+    request: z.object({ honeycombKey: z.string() }),
+    response: z.object({ enabled: z.boolean() })
+  },
+  'telemetry:status': {
+    request: z.undefined(),
+    response: z.object({ enabled: z.boolean(), keyConfigured: z.boolean() })
   },
   'chat:cancel': {
     request: z.object({ requestId: z.string() }),
@@ -454,7 +481,9 @@ export const ipcEvents = {
     totalBytes: z.number(),
     done: z.boolean(),
     error: z.string().optional()
-  })
+  }),
+  /** Fired when the agent (or a pipeline run) created new proposals. */
+  'proposals:changed': z.object({})
 } as const satisfies Record<string, z.ZodType>
 
 export type IpcEventChannel = keyof typeof ipcEvents

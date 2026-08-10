@@ -154,8 +154,8 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
           <Toggle
             checked={prefs.autoStoryBible}
             onChange={(v) => void prefs.update({ autoStoryBible: v })}
-            label="Update the story bible automatically"
-            hint="A little while after you stop writing, the AI proposes story-bible updates (you still review them). Off = only when you click “Update story bible”."
+            label="Update the Codex automatically"
+            hint="A little while after you stop writing, the AI proposes Codex updates (you still review them). Off = only when you click “Update Codex” or ask in chat."
           />
           <Toggle
             checked={prefs.snapshotOnBlur}
@@ -223,8 +223,72 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
           <div className="mt-2">
             <SyncSection />
           </div>
+
+          <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Observability
+          </h3>
+          <div className="mt-2">
+            <ObservabilitySection />
+          </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function ObservabilitySection(): React.JSX.Element {
+  const [key, setKey] = useState('')
+  const [status, setStatus] = useState<{ enabled: boolean; keyConfigured: boolean } | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    void window.pandora.invoke('telemetry:status', undefined).then((r) => {
+      if (r.ok) setStatus(r.data)
+    })
+  }, [])
+
+  const save = async (): Promise<void> => {
+    const result = await window.pandora.invoke('telemetry:configure', { honeycombKey: key.trim() })
+    if (result.ok) {
+      setStatus({ enabled: result.data.enabled, keyConfigured: key.trim().length > 0 })
+      setMessage(result.data.enabled ? 'Telemetry on — traces flowing to Honeycomb.' : 'Telemetry off.')
+      setKey('')
+    } else {
+      setMessage(result.error.message)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs leading-relaxed text-zinc-500">
+        Send OpenTelemetry traces (every app action, AI generation, tool call, and Codex run) to
+        Honeycomb. Paste an ingest API key to enable; save an empty key to turn it off.
+        {status?.enabled && <span className="text-emerald-400"> Currently on.</span>}
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          type="password"
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          placeholder={status?.keyConfigured ? 'Honeycomb key (saved — paste to replace)' : 'Honeycomb ingest key'}
+          className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+        />
+        <button
+          onClick={() => void save()}
+          className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800"
+        >
+          Save
+        </button>
+      </div>
+      <div>
+        <button
+          onClick={() => void window.pandora.invoke('app:openLogs', undefined)}
+          className="text-xs text-zinc-400 underline-offset-2 hover:text-zinc-200 hover:underline"
+        >
+          Open local log folder…
+        </button>
+      </div>
+      {message && <p className="text-xs text-zinc-500">{message}</p>}
     </div>
   )
 }

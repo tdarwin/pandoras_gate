@@ -26,6 +26,7 @@ interface ProposalsStore {
   lastRunStatus: string | null
   error: string | null
 
+  init: () => void
   pendingCount: () => number
   refresh: () => Promise<void>
   runForActiveChapter: (opts?: { silent?: boolean }) => Promise<void>
@@ -38,11 +39,20 @@ interface ProposalsStore {
   ) => Promise<void>
 }
 
+let subscribed = false
+
 export const useProposalsStore = create<ProposalsStore>((set, get) => ({
   proposals: [],
   running: false,
   lastRunStatus: null,
   error: null,
+
+  init: () => {
+    if (subscribed) return
+    subscribed = true
+    // The chat agent's tools create proposals out-of-band; refresh on notify.
+    window.pandora.on('proposals:changed', () => void get().refresh())
+  },
 
   pendingCount: () => get().proposals.reduce((n, p) => n + p.items.length, 0),
 
@@ -84,7 +94,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
           result.data.status === 'ran'
             ? `${result.data.itemCount} suggestion${result.data.itemCount === 1 ? '' : 's'}`
             : result.data.status === 'no-changes'
-              ? 'Story bible already up to date'
+              ? 'Codex already up to date'
               : null
       })
       await get().refresh()

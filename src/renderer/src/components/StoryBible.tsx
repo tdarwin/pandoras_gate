@@ -53,15 +53,21 @@ export default function StoryBible(): React.JSX.Element {
   const generateOutline = useProposalsStore((s) => s.generateOutline)
   const proposalsRunning = useProposalsStore((s) => s.running)
 
+  const pendingTotal = useProposalsStore((s) =>
+    s.proposals.reduce((n, p) => n + p.items.length, 0)
+  )
+
   const refresh = useCallback(async (): Promise<void> => {
     const result = await window.pandora.invoke('metadata:list', { novelDir: novel.dir })
     if (result.ok) setListing(result.data)
     else setError(result.error.message)
   }, [novel.dir, setError])
 
+  // Re-list whenever proposals are created or resolved — accepting a
+  // suggestion writes new Codex files that must appear here immediately.
   useEffect(() => {
     void refresh()
-  }, [refresh])
+  }, [refresh, pendingTotal])
 
   const submitNew = async (): Promise<void> => {
     if (adding && newName.trim()) {

@@ -8,6 +8,7 @@ export interface ModelInfo {
   contextLength: number
   capabilities: {
     jsonSchema: boolean
+    toolUse: boolean
   }
   /** USD per million tokens; remote models only. */
   pricing?: {
@@ -16,9 +17,27 @@ export interface ModelInfo {
   }
 }
 
+export interface ToolCallRef {
+  id: string
+  name: string
+  /** JSON-encoded arguments. */
+  arguments: string
+}
+
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant'
+  role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  /** Assistant messages that requested tool calls (agentic loop, main-only). */
+  toolCalls?: ToolCallRef[]
+  /** Tool-result messages: which call this answers. */
+  toolCallId?: string
+}
+
+export interface ToolDefinition {
+  name: string
+  description: string
+  /** JSON schema for the arguments object. */
+  parameters: Record<string, unknown>
 }
 
 export interface ChatRequest {
@@ -28,11 +47,21 @@ export interface ChatRequest {
   maxTokens?: number
   /** When set, the provider constrains output to this JSON schema. */
   responseFormat?: { name: string; schema: Record<string, unknown> }
+  /** Tools the model may call; providers that can't do tools ignore this. */
+  tools?: ToolDefinition[]
+  /**
+   * Executes a tool call and returns its result. Main-process only — never
+   * crosses IPC. Used by providers that run the tool loop internally (local
+   * models); the OpenRouter loop lives in the chat orchestrator instead.
+   */
+  toolExecutor?: (name: string, argsJson: string) => Promise<string>
 }
 
 export type StreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'usage'; promptTokens: number; completionTokens: number }
+  | { type: 'toolCall'; id: string; name: string; arguments: string }
+  | { type: 'toolStatus'; text: string }
   | { type: 'done'; finishReason: string }
   | { type: 'error'; message: string }
 

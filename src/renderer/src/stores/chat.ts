@@ -23,6 +23,8 @@ interface ChatStore {
   requestId: string | null
   usage: { promptTokens: number; completionTokens: number } | null
   report: ContextReport | null
+  /** "Updating the Codex…" while the agent runs a tool. */
+  toolStatus: string | null
   error: string | null
 
   init: () => void
@@ -56,6 +58,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   requestId: null,
   usage: null,
   report: null,
+  toolStatus: null,
   error: null,
 
   init: () => {
@@ -75,15 +78,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 content: last.content + event.text
               }
             }
-            return { messages }
+            return { messages, toolStatus: null }
           })
           break
         }
+        case 'toolStatus':
+          set({ toolStatus: event.text })
+          break
         case 'usage':
           set({ usage: { promptTokens: event.promptTokens, completionTokens: event.completionTokens } })
           break
         case 'done':
-          set({ streaming: false, requestId: null })
+          set({ streaming: false, requestId: null, toolStatus: null })
           break
         case 'error':
           set((s) => {
@@ -92,7 +98,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             if (messages[messages.length - 1]?.role === 'assistant' && !messages[messages.length - 1]!.content) {
               messages.pop()
             }
-            return { messages, streaming: false, requestId: null, error: event.message }
+            return {
+              messages,
+              streaming: false,
+              requestId: null,
+              toolStatus: null,
+              error: event.message
+            }
           })
           break
       }
@@ -207,7 +219,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       requestId,
       provider: model?.provider ?? 'openrouter',
       modelId: selectedModelId,
-      messages: assembled.data.messages
+      messages: assembled.data.messages,
+      // Enables agent tools (update_codex, generate_outline) in main.
+      novelDir: novel.dir,
+      activeFile: project.activeFile,
+      toolUse: model?.capabilities.toolUse ?? false
     })
     if (!result.ok) {
       set((s) => {

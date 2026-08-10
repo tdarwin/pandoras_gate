@@ -17,6 +17,7 @@ class LlmWorkerHost {
   private nextId = 1
 
   private chatSinks = new Map<string, EventSink>()
+  private toolExecutors = new Map<string, (name: string, argsJson: string) => Promise<string>>()
   private pendingCounts = new Map<number, (count: number) => void>()
   private pendingInfos = new Map<
     number,
@@ -72,6 +73,22 @@ class LlmWorkerHost {
       case 'tokenCount': {
         this.pendingCounts.get(msg.id)?.(msg.count)
         this.pendingCounts.delete(msg.id)
+        break
+      }
+      case 'toolCall': {
+        const executor = this.toolExecutors.get(msg.requestId)
+        const reply = (result: string): void => {
+          this.send({ type: 'toolResult', callId: msg.callId, result })
+        }
+        if (!executor) {
+          reply('Error: no tool executor available for this chat.')
+          break
+        }
+        void executor(msg.name, msg.paramsJson)
+          .then(reply)
+          .catch((err: unknown) =>
+            reply(`Error: ${err instanceof Error ? err.message : String(err)}`)
+          )
         break
       }
       case 'ggufInfoResult': {
@@ -143,7 +160,8 @@ class LlmWorkerHost {
   /** Streams a chat generation; cancellation via the AbortSignal. */
   async *chat(
     req: Omit<Extract<WorkerRequest, { type: 'chat' }>, 'type'>,
-    signal: AbortSignal
+    signal: AbortSignal,
+    toolExecutor?: (name: string, argsJson: string) => Promise<string>
   ): AsyncIterable<StreamEvent> {
     try {
       await this.ensureStarted()
@@ -151,6 +169,7 @@ class LlmWorkerHost {
       yield { type: 'error', message: err instanceof Error ? err.message : String(err) }
       return
     }
+    if (toolExecutor) this.toolExecutors.set(req.requestId, toolExecutor)
 
     const queue: StreamEvent[] = []
     let notify: (() => void) | null = null
@@ -184,6 +203,7 @@ class LlmWorkerHost {
     } finally {
       signal.removeEventListener('abort', onAbort)
       this.chatSinks.delete(req.requestId)
+      this.toolExecutors.delete(req.requestId)
     }
   }
 

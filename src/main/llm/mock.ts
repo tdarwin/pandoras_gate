@@ -21,7 +21,7 @@ export class MockProvider implements LLMProvider {
         name: 'Mock Model',
         provider: 'local',
         contextLength: 8192,
-        capabilities: { jsonSchema: true }
+        capabilities: { jsonSchema: true, toolUse: true }
       }
     ]
   }

@@ -87,6 +87,66 @@ describe('OpenRouterProvider.chatStream', () => {
     expect(events[0]!.type).toBe('error')
   })
 
+  it('accumulates streamed tool calls and emits them before done', async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"update_"}}]}}]}\n\n',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"codex","arguments":"{"}}]}}]}\n\n',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+      'data: [DONE]\n\n'
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse(chunks)))
+    const provider = new OpenRouterProvider()
+    const events = await collect(
+      provider.chatStream(
+        {
+          modelId: 'test/model',
+          messages: [{ role: 'user', content: 'update the codex' }],
+          tools: [{ name: 'update_codex', description: 'x', parameters: { type: 'object' } }]
+        },
+        new AbortController().signal
+      )
+    )
+    const toolCall = events.find((e) => e.type === 'toolCall')
+    expect(toolCall).toEqual({
+      type: 'toolCall',
+      id: 'call_1',
+      name: 'update_codex',
+      arguments: '{}'
+    })
+    expect(events.at(-1)).toEqual({ type: 'done', finishReason: 'tool_calls' })
+  })
+
+  it('maps tool messages to the OpenAI wire format', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(sseResponse(['data: [DONE]\n\n']))
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = new OpenRouterProvider()
+    await collect(
+      provider.chatStream(
+        {
+          modelId: 'test/model',
+          messages: [
+            { role: 'user', content: 'hi' },
+            {
+              role: 'assistant',
+              content: '',
+              toolCalls: [{ id: 'call_1', name: 'update_codex', arguments: '{}' }]
+            },
+            { role: 'tool', content: 'Done: 3 suggestions queued', toolCallId: 'call_1' }
+          ]
+        },
+        new AbortController().signal
+      )
+    )
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body) as {
+      messages: Record<string, unknown>[]
+    }
+    expect(body.messages[1]).toMatchObject({
+      role: 'assistant',
+      tool_calls: [{ id: 'call_1', type: 'function' }]
+    })
+    expect(body.messages[2]).toMatchObject({ role: 'tool', tool_call_id: 'call_1' })
+  })
+
   it('surfaces mid-stream error payloads', async () => {
     const chunks = [
       'data: {"choices":[{"delta":{"content":"Par"}}]}\n\n',
@@ -128,7 +188,7 @@ describe('OpenRouterProvider.listModels', () => {
     expect(models[0]).toMatchObject({
       id: 'acme/prose-1',
       contextLength: 32768,
-      capabilities: { jsonSchema: true }
+      capabilities: { jsonSchema: true, toolUse: false }
     })
     expect(models[0]!.pricing!.promptPerMTok).toBeCloseTo(1)
 

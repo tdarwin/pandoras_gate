@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
 import { flushAllAutocommits } from './git/service'
+import { initTelemetry, shutdownTelemetry } from './telemetry'
+import { logInfo } from './log'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -52,6 +54,8 @@ app.whenReady().then(() => {
 
   registerIpcHandlers()
   createWindow()
+  logInfo('app', `started v${app.getVersion()}`)
+  void initTelemetry()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -68,7 +72,7 @@ let quitFlushed = false
 app.on('before-quit', (event) => {
   if (quitFlushed) return
   event.preventDefault()
-  void flushAllAutocommits().finally(() => {
+  void Promise.allSettled([flushAllAutocommits(), shutdownTelemetry()]).finally(() => {
     quitFlushed = true
     app.quit()
   })

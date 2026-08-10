@@ -13,6 +13,8 @@ import { parseFrontmatter } from '../../shared/frontmatter'
 import { readNovelManifest, readChapter, listMetadata } from '../project/service'
 import { commitAll } from '../git/service'
 import { matchCharacters } from '../context/assembler'
+import { logInfo } from '../log'
+import { withSpan } from '../telemetry'
 
 /**
  * The metadata pipeline: on chapter save, ask the model for full-document
@@ -237,6 +239,20 @@ export interface RunResult {
 }
 
 export async function runMetadataUpdate(ctx: RunContext): Promise<RunResult> {
+  return withSpan(
+    'codex update',
+    { 'llm.model': ctx.modelId, 'codex.chapter': ctx.chapterFile },
+    async (span) => {
+      const result = await runMetadataUpdateInner(ctx)
+      span.setAttribute('codex.status', result.status)
+      if (result.itemCount !== undefined) span.setAttribute('codex.items', result.itemCount)
+      logInfo('codex', `update for ${ctx.chapterFile}: ${result.status}`, result.itemCount)
+      return result
+    }
+  )
+}
+
+async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
   const { novelDir, chapterFile } = ctx
   const chapterRaw = await readChapter(novelDir, chapterFile)
   const chapterHash = sha256(chapterRaw)
@@ -399,6 +415,19 @@ async function buildOutlinePrompt(req: OutlineRequest): Promise<string> {
 }
 
 export async function runOutlineGeneration(req: OutlineRequest): Promise<RunResult> {
+  return withSpan(
+    'outline generation',
+    { 'llm.model': req.modelId, 'outline.scope': req.scope },
+    async (span) => {
+      const result = await runOutlineGenerationInner(req)
+      span.setAttribute('outline.status', result.status)
+      logInfo('outline', `${req.scope} outline: ${result.status}`)
+      return result
+    }
+  )
+}
+
+async function runOutlineGenerationInner(req: OutlineRequest): Promise<RunResult> {
   const { novelDir } = req
   const manifest = await readNovelManifest(novelDir)
   const chapterTitle =

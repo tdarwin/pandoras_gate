@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain } from 'electron'
+import { app, dialog, ipcMain, shell } from 'electron'
 import {
   ipcContract,
   type IpcChannel,
@@ -30,7 +30,9 @@ import {
   writePrefs
 } from '../store'
 import { getRemoteUrl, setRemoteUrl, pushToRemote } from '../git/sync'
-import { setSecret, hasSecret } from '../secrets'
+import { logWarn, logError, logsDir } from '../log'
+import { withSpan, initTelemetry, telemetryEnabled } from '../telemetry'
+import { setSecret, hasSecret, deleteSecret } from '../secrets'
 import { assembleContext } from '../context/assembler'
 import { gatherStorySource } from '../context/gather'
 import {
@@ -56,16 +58,21 @@ function handle<C extends IpcChannel>(
   ipcMain.handle(channel, async (event, payload): Promise<IpcResult<IpcResponse<C>>> => {
     const parsed = ipcContract[channel].request.safeParse(payload)
     if (!parsed.success) {
+      logWarn('ipc', `${channel} rejected: invalid request`, parsed.error.message)
       return {
         ok: false,
         error: { code: 'INVALID_REQUEST', message: parsed.error.message }
       }
     }
     try {
-      const data = await handler(parsed.data as IpcRequest<C>, event)
+      // Every IPC call is a span — the app's whole surface flows through here.
+      const data = await withSpan(`ipc ${channel}`, { 'ipc.channel': channel }, () =>
+        Promise.resolve(handler(parsed.data as IpcRequest<C>, event))
+      )
       return { ok: true, data }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      logError('ipc', `${channel} failed`, err)
       return { ok: false, error: { code: 'INTERNAL', message } }
     }
   })
@@ -227,7 +234,7 @@ export function registerIpcHandlers(): void {
         name: entry.name,
         provider: 'local' as const,
         contextLength: entry.contextLength,
-        capabilities: { jsonSchema: true }
+        capabilities: { jsonSchema: true, toolUse: true }
       }
     }
   })
@@ -247,14 +254,44 @@ export function registerIpcHandlers(): void {
   }))
 
   handle('chat:start', (req, event) => {
-    startChat(event.sender, req.requestId, req.provider, {
-      modelId: req.modelId,
-      messages: req.messages,
-      ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-      ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {})
-    })
+    startChat(
+      event.sender,
+      req.requestId,
+      req.provider,
+      {
+        modelId: req.modelId,
+        messages: req.messages,
+        ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+        ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {})
+      },
+      req.novelDir
+        ? {
+            novelDir: req.novelDir,
+            activeFile: req.activeFile ?? null,
+            toolUse: req.toolUse ?? false
+          }
+        : undefined
+    )
     return { started: true as const }
   })
+
+  handle('app:openLogs', async () => {
+    await shell.openPath(logsDir())
+    return { opened: true as const }
+  })
+
+  handle('telemetry:configure', async (req) => {
+    const key = req.honeycombKey.trim()
+    if (key) await setSecret('honeycomb-api-key', key)
+    else await deleteSecret('honeycomb-api-key')
+    await initTelemetry()
+    return { enabled: telemetryEnabled() }
+  })
+
+  handle('telemetry:status', async () => ({
+    enabled: telemetryEnabled(),
+    keyConfigured: await hasSecret('honeycomb-api-key')
+  }))
 
   handle('chat:cancel', (req) => ({ cancelled: cancelChat(req.requestId) }))
 

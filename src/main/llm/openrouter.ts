@@ -49,7 +49,8 @@ export class OpenRouterProvider implements LLMProvider {
           provider: 'openrouter',
           contextLength: m.context_length,
           capabilities: {
-            jsonSchema: m.supported_parameters?.includes('response_format') ?? false
+            jsonSchema: m.supported_parameters?.includes('response_format') ?? false,
+            toolUse: m.supported_parameters?.includes('tools') ?? false
           },
           pricing: {
             promptPerMTok: Number(m.pricing?.prompt ?? 0) * 1_000_000,
@@ -63,6 +64,25 @@ export class OpenRouterProvider implements LLMProvider {
   }
 
   async *chatStream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamEvent> {
+    // Map our extended messages to OpenAI wire format (tool calls/results).
+    const wireMessages = req.messages.map((m) => {
+      if (m.role === 'tool') {
+        return { role: 'tool', content: m.content, tool_call_id: m.toolCallId }
+      }
+      if (m.role === 'assistant' && m.toolCalls?.length) {
+        return {
+          role: 'assistant',
+          content: m.content || null,
+          tool_calls: m.toolCalls.map((t) => ({
+            id: t.id,
+            type: 'function',
+            function: { name: t.name, arguments: t.arguments }
+          }))
+        }
+      }
+      return { role: m.role, content: m.content }
+    })
+
     let res: Response
     try {
       res = await fetch(`${BASE_URL}/chat/completions`, {
@@ -75,10 +95,22 @@ export class OpenRouterProvider implements LLMProvider {
         },
         body: JSON.stringify({
           model: req.modelId,
-          messages: req.messages,
+          messages: wireMessages,
           stream: true,
           ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
           ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+          ...(req.tools?.length
+            ? {
+                tools: req.tools.map((t) => ({
+                  type: 'function',
+                  function: {
+                    name: t.name,
+                    description: t.description,
+                    parameters: t.parameters
+                  }
+                }))
+              }
+            : {}),
           ...(req.responseFormat
             ? {
                 response_format: {
@@ -119,6 +151,8 @@ export class OpenRouterProvider implements LLMProvider {
     const decoder = new TextDecoder()
     const reader = res.body.getReader()
     let finishReason = 'stop'
+    // Streamed tool calls arrive as fragments keyed by index; accumulate.
+    const toolCalls = new Map<number, { id: string; name: string; arguments: string }>()
 
     try {
       for (;;) {
@@ -128,7 +162,14 @@ export class OpenRouterProvider implements LLMProvider {
           if (payload === '[DONE]') continue
           let json: {
             choices?: {
-              delta?: { content?: string }
+              delta?: {
+                content?: string
+                tool_calls?: {
+                  index?: number
+                  id?: string
+                  function?: { name?: string; arguments?: string }
+                }[]
+              }
               finish_reason?: string | null
             }[]
             usage?: { prompt_tokens?: number; completion_tokens?: number }
@@ -145,6 +186,14 @@ export class OpenRouterProvider implements LLMProvider {
           }
           const choice = json.choices?.[0]
           if (choice?.delta?.content) yield { type: 'delta', text: choice.delta.content }
+          for (const tc of choice?.delta?.tool_calls ?? []) {
+            const idx = tc.index ?? 0
+            const acc = toolCalls.get(idx) ?? { id: '', name: '', arguments: '' }
+            if (tc.id) acc.id = tc.id
+            if (tc.function?.name) acc.name += tc.function.name
+            if (tc.function?.arguments) acc.arguments += tc.function.arguments
+            toolCalls.set(idx, acc)
+          }
           if (choice?.finish_reason) finishReason = choice.finish_reason
           if (json.usage) {
             yield {
@@ -153,6 +202,14 @@ export class OpenRouterProvider implements LLMProvider {
               completionTokens: json.usage.completion_tokens ?? 0
             }
           }
+        }
+      }
+      for (const [idx, tc] of [...toolCalls.entries()].sort((a, b) => a[0] - b[0])) {
+        yield {
+          type: 'toolCall',
+          id: tc.id || `call_${idx}`,
+          name: tc.name,
+          arguments: tc.arguments || '{}'
         }
       }
       yield { type: 'done', finishReason }

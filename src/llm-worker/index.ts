@@ -21,6 +21,8 @@ let model: LlamaModel | null = null
 let loadedPath: string | null = null
 let configuredContextSize: number | undefined
 const activeChats = new Map<string, AbortController>()
+let nextCallId = 1
+const pendingToolResults = new Map<string, (result: string) => void>()
 
 async function getLlamaInstance(): Promise<Llama> {
   if (!llama) {
@@ -109,11 +111,40 @@ async function handleChat(req: Extract<WorkerRequest, { type: 'chat' }>): Promis
         ? await inst.createGrammarForJsonSchema(req.responseFormat.schema as never)
         : undefined
 
+      // Tool support: node-llama-cpp drives the call/respond loop internally;
+      // each handler round-trips to the main process for execution.
+      let functions: Record<string, unknown> | undefined
+      if (req.tools?.length && !grammar) {
+        const { defineChatSessionFunction } = await import('node-llama-cpp')
+        functions = {}
+        for (const tool of req.tools) {
+          const props = (tool.parameters as { properties?: Record<string, unknown> }).properties
+          const hasParams = props && Object.keys(props).length > 0
+          functions[tool.name] = defineChatSessionFunction({
+            description: tool.description,
+            ...(hasParams ? { params: tool.parameters as never } : {}),
+            handler: (params: unknown) =>
+              new Promise<string>((resolve) => {
+                const callId = `${req.requestId}:${nextCallId++}`
+                pendingToolResults.set(callId, resolve)
+                send({
+                  type: 'toolCall',
+                  requestId: req.requestId,
+                  callId,
+                  name: tool.name,
+                  paramsJson: JSON.stringify(params ?? {})
+                })
+              })
+          })
+        }
+      }
+
       const result = await session.prompt(last.content, {
         signal: controller.signal,
         temperature: req.temperature,
         maxTokens: req.maxTokens,
         grammar: grammar as never,
+        functions: functions as never,
         onTextChunk: (text) => {
           send({ type: 'event', requestId: req.requestId, event: { type: 'delta', text } })
         }
@@ -201,6 +232,11 @@ port.on('message', (e: { data: WorkerRequest }) => {
     case 'cancel':
       activeChats.get(msg.requestId)?.abort()
       break
+    case 'toolResult': {
+      pendingToolResults.get(msg.callId)?.(msg.result)
+      pendingToolResults.delete(msg.callId)
+      break
+    }
     case 'countTokens': {
       const count = model
         ? model.tokenize(msg.text).length

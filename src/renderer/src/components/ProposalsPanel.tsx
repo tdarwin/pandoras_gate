@@ -166,7 +166,7 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
       <div className="flex max-h-[88vh] w-full max-w-3xl flex-col rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">
         <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
           <div>
-            <h2 className="text-sm font-semibold text-zinc-200">Story bible suggestions</h2>
+            <h2 className="text-sm font-semibold text-zinc-200">Codex suggestions</h2>
             <p className="text-xs text-zinc-500">
               Review what the AI learned from your latest writing. Nothing changes until you accept
               it.
@@ -199,7 +199,8 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
           )}
           {total === 0 ? (
             <p className="py-12 text-center text-sm text-zinc-600">
-              No pending suggestions. Save a chapter and press “Update story bible”.
+              No pending suggestions. Save a chapter and press “Update Codex”, or ask the chat
+              agent to do it.
             </p>
           ) : (
             proposals.map((p) => (
