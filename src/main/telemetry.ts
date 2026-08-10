@@ -7,14 +7,16 @@ import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic
 import { logInfo, logWarn } from './log'
 
 /**
- * OpenTelemetry traces to Honeycomb (opt-in: configured with an API key in
- * Preferences → Observability). Spans cover every IPC call, LLM generations,
- * the Codex pipeline, tool calls, and model downloads. Without a key this is
- * a no-op. File logs (log.ts) stay on regardless for local debugging.
+ * OpenTelemetry traces, DEV MODE ONLY, configured entirely through the
+ * standard OTEL_* environment variables (e.g. from the project's .envrc via
+ * direnv): OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS,
+ * OTEL_SERVICE_NAME. Packaged builds never export telemetry, and no
+ * credentials are stored in the app. Spans cover every IPC call, LLM
+ * generations, the Codex pipeline, and tool calls. File logs (log.ts) stay
+ * on regardless for local debugging.
  */
 
-const SERVICE_NAME = 'pandoras-box'
-const HONEYCOMB_TRACES_URL = 'https://api.honeycomb.io/v1/traces'
+const DEFAULT_SERVICE_NAME = 'pandoras-box'
 
 let provider: NodeTracerProvider | null = null
 let activeTracer: Tracer = trace.getTracer('noop')
@@ -24,42 +26,50 @@ export function telemetryEnabled(): boolean {
   return enabled
 }
 
-/** (Re)starts the exporter; call at boot and after the key changes. */
+function otlpConfigured(): boolean {
+  return Boolean(
+    process.env['OTEL_EXPORTER_OTLP_ENDPOINT'] ||
+      process.env['OTEL_EXPORTER_OTLP_TRACES_ENDPOINT']
+  )
+}
+
+/** Starts the exporter when running in dev with OTEL_* env vars present. */
 export async function initTelemetry(): Promise<void> {
-  // Lazy imports keep this module loadable outside Electron (unit tests).
-  const { getSecret } = await import('./secrets')
+  // Lazy import keeps this module loadable outside Electron (unit tests).
   const { app } = await import('electron')
-  const key = await getSecret('honeycomb-api-key')
   if (provider) {
     await provider.shutdown().catch(() => {})
     provider = null
     activeTracer = trace.getTracer('noop')
     enabled = false
   }
-  if (!key) {
-    logInfo('telemetry', 'no Honeycomb key configured; telemetry off')
+  if (app.isPackaged) {
+    return
+  }
+  if (!otlpConfigured()) {
+    logInfo('telemetry', 'no OTEL_EXPORTER_OTLP_* env config; telemetry off')
     return
   }
   try {
     provider = new NodeTracerProvider({
       resource: resourceFromAttributes({
-        [ATTR_SERVICE_NAME]: SERVICE_NAME,
+        [ATTR_SERVICE_NAME]: process.env['OTEL_SERVICE_NAME'] ?? DEFAULT_SERVICE_NAME,
         [ATTR_SERVICE_VERSION]: app.getVersion()
       }),
       spanProcessors: [
-        new BatchSpanProcessor(
-          new OTLPTraceExporter({
-            url: HONEYCOMB_TRACES_URL,
-            headers: { 'x-honeycomb-team': key }
-          })
-        )
+        // No url/headers here: the exporter reads the standard
+        // OTEL_EXPORTER_OTLP_* environment variables itself.
+        new BatchSpanProcessor(new OTLPTraceExporter())
       ]
     })
-    // Deliberately NOT registered as the global provider (re-registration on
-    // key change is messy); we hand out our own tracer instead.
-    activeTracer = provider.getTracer(SERVICE_NAME)
+    // Deliberately NOT registered as the global provider; we hand out our
+    // own tracer instead.
+    activeTracer = provider.getTracer(DEFAULT_SERVICE_NAME)
     enabled = true
-    logInfo('telemetry', 'Honeycomb telemetry enabled')
+    logInfo(
+      'telemetry',
+      `dev telemetry enabled → ${process.env['OTEL_EXPORTER_OTLP_ENDPOINT'] ?? process.env['OTEL_EXPORTER_OTLP_TRACES_ENDPOINT']}`
+    )
   } catch (err) {
     logWarn('telemetry', 'failed to start telemetry', err)
   }

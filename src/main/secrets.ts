@@ -8,7 +8,7 @@ import { join, dirname } from 'node:path'
  * key is configured.
  */
 
-type SecretName = 'openrouter-api-key' | 'git-sync-token' | 'honeycomb-api-key'
+type SecretName = 'openrouter-api-key' | 'git-sync-token'
 
 function secretsPath(): string {
   return join(app.getPath('userData'), 'secrets.json')

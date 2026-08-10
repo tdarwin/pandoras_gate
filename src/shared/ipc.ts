@@ -258,13 +258,9 @@ export const ipcContract = {
     request: z.undefined(),
     response: z.object({ opened: z.literal(true) })
   },
-  'telemetry:configure': {
-    request: z.object({ honeycombKey: z.string() }),
-    response: z.object({ enabled: z.boolean() })
-  },
   'telemetry:status': {
     request: z.undefined(),
-    response: z.object({ enabled: z.boolean(), keyConfigured: z.boolean() })
+    response: z.object({ enabled: z.boolean() })
   },
   'chat:cancel': {
     request: z.object({ requestId: z.string() }),

@@ -237,49 +237,26 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
 }
 
 function ObservabilitySection(): React.JSX.Element {
-  const [key, setKey] = useState('')
-  const [status, setStatus] = useState<{ enabled: boolean; keyConfigured: boolean } | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
+  const [enabled, setEnabled] = useState<boolean | null>(null)
 
   useEffect(() => {
     void window.pandora.invoke('telemetry:status', undefined).then((r) => {
-      if (r.ok) setStatus(r.data)
+      if (r.ok) setEnabled(r.data.enabled)
     })
   }, [])
-
-  const save = async (): Promise<void> => {
-    const result = await window.pandora.invoke('telemetry:configure', { honeycombKey: key.trim() })
-    if (result.ok) {
-      setStatus({ enabled: result.data.enabled, keyConfigured: key.trim().length > 0 })
-      setMessage(result.data.enabled ? 'Telemetry on — traces flowing to Honeycomb.' : 'Telemetry off.')
-      setKey('')
-    } else {
-      setMessage(result.error.message)
-    }
-  }
 
   return (
     <div className="flex flex-col gap-2">
       <p className="text-xs leading-relaxed text-zinc-500">
-        Send OpenTelemetry traces (every app action, AI generation, tool call, and Codex run) to
-        Honeycomb. Paste an ingest API key to enable; save an empty key to turn it off.
-        {status?.enabled && <span className="text-emerald-400"> Currently on.</span>}
+        In development mode, OpenTelemetry traces are exported using the standard{' '}
+        <code className="text-zinc-400">OTEL_EXPORTER_OTLP_*</code> environment variables (from
+        your shell/.envrc). Packaged builds never send telemetry.{' '}
+        {enabled === null ? null : enabled ? (
+          <span className="text-emerald-400">Currently exporting.</span>
+        ) : (
+          <span className="text-zinc-600">Currently off (no OTLP endpoint in environment).</span>
+        )}
       </p>
-      <div className="flex items-center gap-2">
-        <input
-          type="password"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder={status?.keyConfigured ? 'Honeycomb key (saved — paste to replace)' : 'Honeycomb ingest key'}
-          className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
-        />
-        <button
-          onClick={() => void save()}
-          className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800"
-        >
-          Save
-        </button>
-      </div>
       <div>
         <button
           onClick={() => void window.pandora.invoke('app:openLogs', undefined)}
@@ -288,7 +265,6 @@ function ObservabilitySection(): React.JSX.Element {
           Open local log folder…
         </button>
       </div>
-      {message && <p className="text-xs text-zinc-500">{message}</p>}
     </div>
   )
 }

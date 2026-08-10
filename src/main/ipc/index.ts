@@ -31,8 +31,8 @@ import {
 } from '../store'
 import { getRemoteUrl, setRemoteUrl, pushToRemote } from '../git/sync'
 import { logWarn, logError, logsDir } from '../log'
-import { withSpan, initTelemetry, telemetryEnabled } from '../telemetry'
-import { setSecret, hasSecret, deleteSecret } from '../secrets'
+import { withSpan, telemetryEnabled } from '../telemetry'
+import { setSecret, hasSecret } from '../secrets'
 import { assembleContext } from '../context/assembler'
 import { gatherStorySource } from '../context/gather'
 import {
@@ -280,18 +280,7 @@ export function registerIpcHandlers(): void {
     return { opened: true as const }
   })
 
-  handle('telemetry:configure', async (req) => {
-    const key = req.honeycombKey.trim()
-    if (key) await setSecret('honeycomb-api-key', key)
-    else await deleteSecret('honeycomb-api-key')
-    await initTelemetry()
-    return { enabled: telemetryEnabled() }
-  })
-
-  handle('telemetry:status', async () => ({
-    enabled: telemetryEnabled(),
-    keyConfigured: await hasSecret('honeycomb-api-key')
-  }))
+  handle('telemetry:status', () => ({ enabled: telemetryEnabled() }))
 
   handle('chat:cancel', (req) => ({ cancelled: cancelChat(req.requestId) }))
 
