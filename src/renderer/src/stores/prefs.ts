@@ -1,16 +1,24 @@
 import { create } from 'zustand'
 
+export type SnapshotInterval = 0 | 5 | 10 | 15 | 20
+
 interface PrefsStore {
   autoStoryBible: boolean
   snapshotOnBlur: boolean
+  snapshotIntervalMinutes: number
   loaded: boolean
   init: () => Promise<void>
-  update: (patch: { autoStoryBible?: boolean; snapshotOnBlur?: boolean }) => Promise<void>
+  update: (patch: {
+    autoStoryBible?: boolean
+    snapshotOnBlur?: boolean
+    snapshotIntervalMinutes?: SnapshotInterval
+  }) => Promise<void>
 }
 
 export const usePrefsStore = create<PrefsStore>((set, get) => ({
   autoStoryBible: true,
   snapshotOnBlur: true,
+  snapshotIntervalMinutes: 0,
   loaded: false,
 
   init: async () => {

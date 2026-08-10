@@ -24,6 +24,7 @@ export default function Workspace(): React.JSX.Element {
   const applyNovelState = useProjectStore((s) => s.applyNovelState)
   const autoStoryBible = usePrefsStore((s) => s.autoStoryBible)
   const snapshotOnBlur = usePrefsStore((s) => s.snapshotOnBlur)
+  const snapshotIntervalMinutes = usePrefsStore((s) => s.snapshotIntervalMinutes)
   const openChapter = useProjectStore((s) => s.openChapter)
   const setError = useProjectStore((s) => s.setError)
   const [showHistory, setShowHistory] = useState(false)
@@ -69,6 +70,17 @@ export default function Workspace(): React.JSX.Element {
     window.addEventListener('blur', onBlur)
     return () => window.removeEventListener('blur', onBlur)
   }, [snapshotOnBlur, snapshotActiveChapter])
+
+  // Optional interval snapshots: no-ops (no commit) when nothing changed.
+  // Paused while the AI is drafting, which has its own commit bracketing.
+  useEffect(() => {
+    if (snapshotIntervalMinutes <= 0 || drafting || !activeFile) return
+    const t = setInterval(
+      () => void snapshotActiveChapter(),
+      snapshotIntervalMinutes * 60_000
+    )
+    return () => clearInterval(t)
+  }, [snapshotIntervalMinutes, drafting, activeFile, snapshotActiveChapter])
 
   // ⌘S fallback when focus is outside the editor.
   useEffect(() => {

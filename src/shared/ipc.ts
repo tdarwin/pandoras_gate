@@ -191,17 +191,22 @@ export const ipcContract = {
     request: z.undefined(),
     response: z.object({
       autoStoryBible: z.boolean(),
-      snapshotOnBlur: z.boolean()
+      snapshotOnBlur: z.boolean(),
+      snapshotIntervalMinutes: z.number()
     })
   },
   'prefs:set': {
     request: z.object({
       autoStoryBible: z.boolean().optional(),
-      snapshotOnBlur: z.boolean().optional()
+      snapshotOnBlur: z.boolean().optional(),
+      snapshotIntervalMinutes: z
+        .union([z.literal(0), z.literal(5), z.literal(10), z.literal(15), z.literal(20)])
+        .optional()
     }),
     response: z.object({
       autoStoryBible: z.boolean(),
-      snapshotOnBlur: z.boolean()
+      snapshotOnBlur: z.boolean(),
+      snapshotIntervalMinutes: z.number()
     })
   },
   'sync:getConfig': {

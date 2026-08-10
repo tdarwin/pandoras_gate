@@ -310,7 +310,10 @@ export function registerIpcHandlers(): void {
   handle('prefs:set', (req) =>
     writePrefs({
       ...(req.autoStoryBible !== undefined ? { autoStoryBible: req.autoStoryBible } : {}),
-      ...(req.snapshotOnBlur !== undefined ? { snapshotOnBlur: req.snapshotOnBlur } : {})
+      ...(req.snapshotOnBlur !== undefined ? { snapshotOnBlur: req.snapshotOnBlur } : {}),
+      ...(req.snapshotIntervalMinutes !== undefined
+        ? { snapshotIntervalMinutes: req.snapshotIntervalMinutes }
+        : {})
     })
   )
 

@@ -163,6 +163,31 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
             label="Snapshot when leaving the window"
             hint="Take a history snapshot when the app loses focus. ⌘S and switching chapters always snapshot."
           />
+          <div className="flex items-start justify-between gap-4 py-2">
+            <span>
+              <span className="block text-sm text-zinc-200">Regular interval snapshots</span>
+              <span className="block text-xs leading-relaxed text-zinc-500">
+                Also snapshot on a timer while you write. “No interval” keeps snapshots to ⌘S,
+                leaving the window, and switching chapters. Timer snapshots only create a history
+                entry when something actually changed.
+              </span>
+            </span>
+            <select
+              value={prefs.snapshotIntervalMinutes}
+              onChange={(e) =>
+                void prefs.update({
+                  snapshotIntervalMinutes: Number(e.target.value) as 0 | 5 | 10 | 15 | 20
+                })
+              }
+              className="mt-0.5 shrink-0 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200 outline-none"
+            >
+              <option value={0}>No interval</option>
+              <option value={5}>Every 5 minutes</option>
+              <option value={10}>Every 10 minutes</option>
+              <option value={15}>Every 15 minutes</option>
+              <option value={20}>Every 20 minutes</option>
+            </select>
+          </div>
 
           <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-zinc-500">
             OpenRouter
