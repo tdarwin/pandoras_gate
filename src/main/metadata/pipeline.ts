@@ -94,14 +94,17 @@ async function deleteProposal(novelDir: string, id: string): Promise<void> {
 /* Path safety                                                         */
 /* ------------------------------------------------------------------ */
 
-/** Model output may only touch story-bible files. */
+/** Model output may only touch story-bible and outline files. */
 export function isAllowedProposalPath(path: string): boolean {
   const n = normalize(path).replaceAll('\\', '/')
   if (n.includes('..') || n.startsWith('/')) return false
-  return (
-    (n.startsWith('metadata/') && (n.endsWith('.md') || n === 'metadata/timeline.yaml')) &&
-    n.split('/').length <= 3
-  )
+  if (n.startsWith('metadata/') && (n.endsWith('.md') || n === 'metadata/timeline.yaml')) {
+    return n.split('/').length <= 3
+  }
+  if (n.startsWith('outlines/') && n.endsWith('.md')) {
+    return n.split('/').length === 2
+  }
+  return false
 }
 
 /** Content sanity per file type — never apply unparseable docs. */
@@ -317,6 +320,154 @@ export async function runMetadataUpdate(ctx: RunContext): Promise<RunResult> {
 }
 
 /* ------------------------------------------------------------------ */
+/* Outline generation (through the same proposal machinery)            */
+/* ------------------------------------------------------------------ */
+
+const OUTLINE_SYSTEM_PROMPT = `You are a story-outlining collaborator in a novel-writing studio. You produce or revise outline documents that the author reviews before anything is saved.
+
+Outline file conventions (all paths relative to the novel folder):
+- outlines/novel.md — the whole-novel outline. Frontmatter: scope: novel, status. Body: markdown outline of acts/arcs and a bullet or two per planned chapter.
+- outlines/<chapter-file-name> — one chapter's outline (same file name as the chapter, e.g. outlines/003-the-trial.md). Frontmatter: scope: chapter, chapter: <chapters/...>, status. Body: beat-by-beat outline for that chapter (scene goals, conflicts, reveals, emotional turns).
+
+Respect what the author has already written and any existing outline structure; refine rather than replace wholesale unless asked. Respond with COMPLETE new file contents via the JSON schema — never partial edits. Only include the outline document(s) being requested.
+
+Respond ONLY with the JSON object.`
+
+export interface OutlineRequest {
+  novelDir: string
+  scope: 'novel' | 'chapter'
+  /** Required when scope is 'chapter'. */
+  chapterFile?: string
+  /** The author's direction for this outline, e.g. "three-act, slow-burn rivalry". */
+  guidance?: string
+  provider: LLMProvider
+  modelId: string
+}
+
+async function buildOutlinePrompt(req: OutlineRequest): Promise<string> {
+  const { novelDir } = req
+  const manifest = await readNovelManifest(novelDir)
+  const parts: string[] = [`# Novel: ${manifest.title}`]
+
+  if (req.scope === 'chapter') {
+    const entry = manifest.chapters.find((c) => c.file === req.chapterFile)
+    if (!entry) throw new Error(`Chapter not in manifest: ${req.chapterFile}`)
+    parts.push(
+      `# Task: outline the chapter "${entry.title}" — target file: outlines/${basename(entry.file)}`
+    )
+  } else {
+    parts.push('# Task: outline the whole novel — target file: outlines/novel.md')
+  }
+
+  const synopsis = await safeRead(join(novelDir, 'metadata/synopsis.md'))
+  if (synopsis) parts.push(`\n## Current synopsis\n\n\`\`\`\n${synopsis}\n\`\`\``)
+
+  const novelOutline = await safeRead(join(novelDir, 'outlines/novel.md'))
+  if (novelOutline) parts.push(`\n## Current outlines/novel.md\n\n\`\`\`\n${novelOutline}\n\`\`\``)
+
+  parts.push(
+    `\n## Chapters so far\n${manifest.chapters.map((c, i) => `${i + 1}. ${c.title} (${c.file}, ${c.status})`).join('\n') || '(none yet)'}`
+  )
+
+  // Chapter summaries give the model the story-so-far cheaply.
+  const listing = await listMetadata(novelDir)
+  for (const s of listing.summaries) {
+    const raw = await safeRead(join(novelDir, s.file))
+    if (raw) parts.push(`\n## Summary: ${s.title}\n\n\`\`\`\n${raw}\n\`\`\``)
+  }
+
+  if (req.scope === 'chapter' && req.chapterFile) {
+    const existing = await safeRead(join(novelDir, 'outlines', basename(req.chapterFile)))
+    if (existing) {
+      parts.push(
+        `\n## Current outlines/${basename(req.chapterFile)}\n\n\`\`\`\n${existing}\n\`\`\``
+      )
+    }
+    const chapterRaw = await safeRead(join(novelDir, req.chapterFile))
+    if (chapterRaw) {
+      const body = parseFrontmatter(chapterRaw).body.trim()
+      if (body) parts.push(`\n## Chapter text so far\n\n${body}`)
+    }
+  }
+
+  if (req.guidance?.trim()) {
+    parts.push(`\n## Author's direction\n\n${req.guidance.trim()}`)
+  }
+
+  parts.push('\nNow produce the JSON with the outline document.')
+  return parts.join('\n')
+}
+
+export async function runOutlineGeneration(req: OutlineRequest): Promise<RunResult> {
+  const { novelDir } = req
+  const manifest = await readNovelManifest(novelDir)
+  const chapterTitle =
+    req.scope === 'chapter'
+      ? (manifest.chapters.find((c) => c.file === req.chapterFile)?.title ?? 'chapter')
+      : 'the novel'
+
+  const userPrompt = await buildOutlinePrompt(req)
+
+  let raw = ''
+  const controller = new AbortController()
+  for await (const event of req.provider.chatStream(
+    {
+      modelId: req.modelId,
+      messages: [
+        { role: 'system', content: OUTLINE_SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.4,
+      responseFormat: { name: 'outline_proposals', schema: PROPOSAL_JSON_SCHEMA }
+    },
+    controller.signal
+  )) {
+    if (event.type === 'delta') raw += event.text
+    if (event.type === 'error') throw new Error(event.message)
+  }
+
+  const cleaned = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/, '')
+  let output: ModelProposalOutput
+  try {
+    output = ModelProposalOutput.parse(JSON.parse(cleaned))
+  } catch (err) {
+    throw new Error(
+      `The model's outline response was not valid JSON (${err instanceof Error ? err.message.slice(0, 120) : 'parse error'})`
+    )
+  }
+
+  const items: PendingProposalItem[] = []
+  for (const p of output.proposals) {
+    if (!isAllowedProposalPath(p.path) || !p.path.startsWith('outlines/')) continue
+    if (validateProposalContent(p.path, p.newContent) !== null) continue
+    const current = await safeRead(join(novelDir, p.path))
+    if (current !== null && current === p.newContent) continue
+    items.push({
+      path: p.path,
+      action: current === null ? 'create' : 'update',
+      newContent: p.newContent,
+      rationale: p.rationale,
+      baseHash: current === null ? '' : sha256(current)
+    })
+  }
+
+  if (items.length === 0) return { status: 'no-changes' }
+
+  const proposal: PendingProposal = {
+    id: randomUUID(),
+    chapterFile: req.scope === 'chapter' ? req.chapterFile! : 'outlines/novel.md',
+    chapterTitle: `Outline for ${chapterTitle}`,
+    createdAt: Date.now(),
+    items
+  }
+  await writeProposal(novelDir, proposal)
+  return { status: 'ran', proposalId: proposal.id, itemCount: items.length }
+}
+
+/* ------------------------------------------------------------------ */
 /* Review resolutions                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -343,9 +494,10 @@ export async function resolveProposalItem(req: ResolveRequest): Promise<{ remain
     const full = join(req.novelDir, item.path)
     await mkdir(join(full, '..'), { recursive: true })
     await writeFile(full, content, 'utf8')
+    const label = item.path.startsWith('outlines/') ? 'outline' : 'metadata'
     await commitAll(
       req.novelDir,
-      `metadata: ${basename(item.path).replace(/\.(md|yaml)$/, '')} (${proposal.chapterTitle})`,
+      `${label}: ${basename(item.path).replace(/\.(md|yaml)$/, '')} (${proposal.chapterTitle})`,
       [item.path]
     )
   } else {

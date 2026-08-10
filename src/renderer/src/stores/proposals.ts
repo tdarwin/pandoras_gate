@@ -29,6 +29,7 @@ interface ProposalsStore {
   pendingCount: () => number
   refresh: () => Promise<void>
   runForActiveChapter: (opts?: { silent?: boolean }) => Promise<void>
+  generateOutline: (scope: 'novel' | 'chapter', guidance?: string) => Promise<void>
   resolve: (
     proposalId: string,
     path: string,
@@ -88,6 +89,40 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       await get().refresh()
     } else {
       set({ running: false, ...(opts?.silent ? {} : { error: result.error.message }) })
+    }
+  },
+
+  generateOutline: async (scope, guidance) => {
+    const project = useProjectStore.getState()
+    const chat = useChatStore.getState()
+    const novel = project.novel
+    if (!novel || get().running) return
+    const model = chat.models.find((m) => m.id === chat.selectedModelId)
+    if (!model) {
+      set({ error: 'Pick a model in the chat panel first.' })
+      return
+    }
+    if (scope === 'chapter' && !project.activeFile?.startsWith('chapters/')) return
+
+    await project.saveActiveChapter()
+    set({ running: true, error: null, lastRunStatus: null })
+    const result = await window.pandora.invoke('outlines:generate', {
+      novelDir: novel.dir,
+      scope,
+      ...(scope === 'chapter' ? { chapterFile: project.activeFile! } : {}),
+      ...(guidance?.trim() ? { guidance: guidance.trim() } : {}),
+      provider: model.provider,
+      modelId: model.id
+    })
+    if (result.ok) {
+      set({
+        running: false,
+        lastRunStatus:
+          result.data.status === 'ran' ? 'Outline ready for review' : 'No outline changes suggested'
+      })
+      await get().refresh()
+    } else {
+      set({ running: false, error: result.error.message })
     }
   },
 

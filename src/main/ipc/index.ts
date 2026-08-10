@@ -21,7 +21,13 @@ import {
 import { setSecret, hasSecret } from '../secrets'
 import { assembleContext } from '../context/assembler'
 import { gatherStorySource } from '../context/gather'
-import { runMetadataUpdate, proposalsForReview, resolveProposalItem } from '../metadata/pipeline'
+import {
+  runMetadataUpdate,
+  runOutlineGeneration,
+  proposalsForReview,
+  resolveProposalItem
+} from '../metadata/pipeline'
+import { startDraft, finishDraft } from '../draft/service'
 
 /**
  * Registers a handler for a contract channel. Incoming payloads are validated
@@ -229,6 +235,47 @@ export function registerIpcHandlers(): void {
   handle('models:delete', async (req) => {
     await deleteDownloadedModel(req.modelId)
     return { deleted: true as const }
+  })
+
+  handle('chapter:setStatus', async (req) => {
+    const state = await project.setChapterStatus(req.novelDir, req.file, req.status)
+    gitService.scheduleAutocommit(req.novelDir, `status: ${basename(req.file, '.md')} → ${req.status}`, [
+      req.file,
+      'novel.yaml'
+    ])
+    return state
+  })
+
+  handle('outlines:generate', async (req) => {
+    if (req.scope === 'chapter' && !req.chapterFile) {
+      throw new Error('chapterFile is required for a chapter outline')
+    }
+    await gitService.flushAutocommit(req.novelDir)
+    return runOutlineGeneration({
+      novelDir: req.novelDir,
+      scope: req.scope,
+      ...(req.chapterFile ? { chapterFile: req.chapterFile } : {}),
+      ...(req.guidance ? { guidance: req.guidance } : {}),
+      provider: getProvider(req.provider),
+      modelId: req.modelId
+    })
+  })
+
+  handle('draft:start', (req, event) =>
+    startDraft(event.sender, {
+      requestId: req.requestId,
+      novelDir: req.novelDir,
+      chapterFile: req.chapterFile,
+      providerId: req.provider,
+      modelId: req.modelId,
+      contextTokens: req.contextTokens,
+      ...(req.instructions ? { instructions: req.instructions } : {})
+    })
+  )
+
+  handle('draft:finish', async (req) => {
+    await finishDraft(req.novelDir, req.chapterFile)
+    return { done: true as const }
   })
 
   handle('proposals:run', async (req) => {

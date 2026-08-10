@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useProjectStore } from '../stores/project'
+import { useProposalsStore } from '../stores/proposals'
+import AiPromptModal from './AiPromptModal'
 
 interface Listing {
   characters: { file: string; name: string }[]
   world: { file: string; name: string }[]
   summaries: { file: string; title: string }[]
+  outlines: { file: string; title: string }[]
   hasSynopsis: boolean
   hasGlossary: boolean
   hasTimeline: boolean
@@ -46,6 +49,9 @@ export default function StoryBible(): React.JSX.Element {
   const [listing, setListing] = useState<Listing | null>(null)
   const [adding, setAdding] = useState<'character' | 'world' | null>(null)
   const [newName, setNewName] = useState('')
+  const [showOutlineModal, setShowOutlineModal] = useState(false)
+  const generateOutline = useProposalsStore((s) => s.generateOutline)
+  const proposalsRunning = useProposalsStore((s) => s.running)
 
   const refresh = useCallback(async (): Promise<void> => {
     const result = await window.pandora.invoke('metadata:list', { novelDir: novel.dir })
@@ -99,6 +105,23 @@ export default function StoryBible(): React.JSX.Element {
         {listing.hasSynopsis && item('metadata/synopsis.md', 'Synopsis')}
         {listing.hasGlossary && item('metadata/glossary.md', 'Glossary')}
         {listing.hasTimeline && item('metadata/timeline.yaml', 'Timeline')}
+      </Section>
+
+      <Section title="Outlines">
+        {listing.outlines.map((o) => item(o.file, o.title))}
+        <li className="mt-0.5">
+          <button
+            onClick={() => setShowOutlineModal(true)}
+            disabled={proposalsRunning}
+            className="w-full rounded px-2 py-1.5 text-left text-xs text-indigo-300 hover:bg-zinc-800/60 hover:text-indigo-200 disabled:opacity-60"
+          >
+            {proposalsRunning
+              ? 'Working…'
+              : listing.outlines.some((o) => o.file === 'outlines/novel.md')
+                ? '✦ Refine novel outline with AI'
+                : '✦ Outline the novel with AI'}
+          </button>
+        </li>
       </Section>
 
       <Section title="Characters" onAdd={() => setAdding('character')}>
@@ -155,6 +178,17 @@ export default function StoryBible(): React.JSX.Element {
         <Section title="Chapter summaries">
           {listing.summaries.map((s) => item(s.file, s.title))}
         </Section>
+      )}
+
+      {showOutlineModal && (
+        <AiPromptModal
+          title="Outline the novel"
+          description="Generates or refines the whole-novel outline from your synopsis, chapters, and summaries. You review it before it's saved."
+          placeholder="Optional direction — structure, arcs, where the story should go… (⌘↵ to generate)"
+          cta="Generate outline"
+          onSubmit={(guidance) => void generateOutline('novel', guidance).then(refresh)}
+          onClose={() => setShowOutlineModal(false)}
+        />
       )}
     </div>
   )

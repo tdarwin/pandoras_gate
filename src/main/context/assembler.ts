@@ -31,6 +31,10 @@ export interface StorySource {
   novelTitle: string
   author: string
   synopsis: string | null
+  /** Body of outlines/novel.md, if present. */
+  novelOutline: string | null
+  /** Body of the active chapter's outline doc, if present. */
+  chapterOutline: string | null
   worldDocs: { name: string; content: string }[]
   characters: CharacterSource[]
   glossary: { term: string; definition: string }[]
@@ -51,6 +55,12 @@ export interface AssembleRequest {
   contextTokens: number
   /** Tokens reserved for the model's reply. */
   reservedOutput: number
+  /**
+   * 'chat' (default): writing-partner conversation.
+   * 'draft': ghost-drafting a chapter — outlines get top billing and the
+   * system prompt demands prose-only output.
+   */
+  task?: 'chat' | 'draft'
 }
 
 export type SectionStatus = 'included' | 'degraded' | 'dropped'
@@ -131,11 +141,20 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
   const fits = (tokens: number): boolean => used + tokens <= budget
 
   /* 1 — system prompt (never cut) */
-  const basePrompt = [
-    "You are a thoughtful writing partner inside Pandora's Box, a novel-writing studio.",
-    `The author${source.author ? ` (${source.author})` : ''} is working on the novel "${source.novelTitle}".`,
-    'Story materials follow; treat them as canon. Help with brainstorming, prose feedback, continuity, and craft. Be concrete.'
-  ].join(' ')
+  const task = req.task ?? 'chat'
+  const basePrompt =
+    task === 'draft'
+      ? [
+          `You are ghost-drafting prose for the novel "${source.novelTitle}"${source.author ? ` by ${source.author}` : ''}.`,
+          'Story materials follow; treat them as canon and follow the outline where one is given.',
+          'Write vivid, immersive chapter prose in markdown. Match the voice of any existing text.',
+          'Output ONLY the chapter prose — no headings for the chapter title, no commentary, no notes, no frontmatter.'
+        ].join(' ')
+      : [
+          "You are a thoughtful writing partner inside Pandora's Box, a novel-writing studio.",
+          `The author${source.author ? ` (${source.author})` : ''} is working on the novel "${source.novelTitle}".`,
+          'Story materials follow; treat them as canon. Help with brainstorming, prose feedback, continuity, and craft. Be concrete.'
+        ].join(' ')
   used += count(basePrompt)
   record('system', 'System prompt', 'included', count(basePrompt))
 
@@ -191,6 +210,38 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
     }
   }
 
+  /* 3.5 — outlines: top priority when drafting, right after synopsis in chat */
+  const addOutline = (id: string, label: string, header: string, text: string | null): void => {
+    if (!text?.trim()) return
+    const full = `## ${header}\n\n${text.trim()}`
+    const tokens = count(full)
+    if (fits(tokens)) {
+      contextParts.push(full)
+      used += tokens
+      record(id, label, 'included', tokens)
+    } else {
+      const room = Math.max(0, budget - used)
+      const truncated = truncateToTokens(full, room, count)
+      if (count(truncated) > 60) {
+        contextParts.push(truncated + '\n[… outline truncated …]')
+        used += count(truncated)
+        record(id, label, 'degraded', count(truncated))
+      } else {
+        record(id, label, 'dropped', 0)
+      }
+    }
+  }
+  const addOutlines = (): void => {
+    addOutline(
+      'outline:chapter',
+      'Chapter outline',
+      'Outline for the current chapter',
+      source.chapterOutline
+    )
+    addOutline('outline:novel', 'Novel outline', 'Novel outline', source.novelOutline)
+  }
+  if (task === 'draft') addOutlines()
+
   /* 4 — synopsis */
   if (source.synopsis?.trim()) {
     const full = `## Story synopsis\n\n${source.synopsis.trim()}`
@@ -211,6 +262,8 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
       }
     }
   }
+
+  if (task !== 'draft') addOutlines()
 
   /* 5 — world/system rules */
   for (const doc of source.worldDocs) {

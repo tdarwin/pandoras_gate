@@ -15,6 +15,8 @@ function makeSource(overrides: Partial<StorySource> = {}): StorySource {
     novelTitle: 'The Iron Gate',
     author: 'Davin',
     synopsis: 'Kael Voss, a scavenger, discovers a cultivation manual and begins his ascent.',
+    novelOutline: 'Act 1: discovery. Act 2: rivalry with Mira. Act 3: the sect trials.',
+    chapterOutline: 'Beat 1: Kael confronts Elder Wu. Beat 2: the test. Beat 3: an unexpected ally.',
     worldDocs: [
       {
         name: 'cultivation-system',
@@ -228,9 +230,26 @@ describe('assembleContext — budget pressure', () => {
     expect(nonSystem.some((m) => m.content.startsWith('Turn 9'))).toBe(true)
   })
 
+  it('includes outlines in chat mode and prioritizes them when drafting', () => {
+    const chat = assembleContext(makeRequest(), count)
+    expect(chat.messages[0]!.content).toContain('Act 1: discovery')
+    expect(chat.messages[0]!.content).toContain('Beat 1: Kael confronts Elder Wu')
+
+    const draft = assembleContext(makeRequest({ task: 'draft' }), count)
+    expect(draft.messages[0]!.content).toContain('ghost-drafting')
+    expect(draft.messages[0]!.content).toContain('Output ONLY the chapter prose')
+    // In draft mode outlines outrank the synopsis in the fill order.
+    const sys = draft.messages[0]!.content
+    expect(sys.indexOf('Beat 1: Kael confronts Elder Wu')).toBeLessThan(
+      sys.indexOf('Story synopsis')
+    )
+  })
+
   it('handles an empty project gracefully', () => {
     const source = makeSource({
       synopsis: null,
+      novelOutline: null,
+      chapterOutline: null,
       worldDocs: [],
       characters: [],
       glossary: [],

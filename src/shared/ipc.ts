@@ -92,6 +92,7 @@ export const ipcContract = {
       characters: z.array(z.object({ file: z.string(), name: z.string() })),
       world: z.array(z.object({ file: z.string(), name: z.string() })),
       summaries: z.array(z.object({ file: z.string(), title: z.string() })),
+      outlines: z.array(z.object({ file: z.string(), title: z.string() })),
       hasSynopsis: z.boolean(),
       hasGlossary: z.boolean(),
       hasTimeline: z.boolean()
@@ -212,6 +213,48 @@ export const ipcContract = {
   'models:delete': {
     request: z.object({ modelId: z.string() }),
     response: z.object({ deleted: z.literal(true) })
+  },
+  'chapter:setStatus': {
+    request: z.object({
+      novelDir: z.string(),
+      file: z.string(),
+      status: z.enum(['draft', 'ai-draft', 'revised', 'final'])
+    }),
+    response: NovelStateSchema
+  },
+  'outlines:generate': {
+    request: z.object({
+      novelDir: z.string(),
+      scope: z.enum(['novel', 'chapter']),
+      chapterFile: z.string().optional(),
+      guidance: z.string().optional(),
+      provider: z.enum(['local', 'openrouter']),
+      modelId: z.string()
+    }),
+    response: z.object({
+      status: z.enum(['ran', 'skipped-unchanged', 'no-changes']),
+      proposalId: z.string().optional(),
+      itemCount: z.number().optional()
+    })
+  },
+  'draft:start': {
+    request: z.object({
+      requestId: z.string(),
+      novelDir: z.string(),
+      chapterFile: z.string(),
+      provider: z.enum(['local', 'openrouter']),
+      modelId: z.string(),
+      contextTokens: z.number(),
+      instructions: z.string().optional()
+    }),
+    response: z.object({
+      novel: NovelStateSchema,
+      content: z.string()
+    })
+  },
+  'draft:finish': {
+    request: z.object({ novelDir: z.string(), chapterFile: z.string() }),
+    response: z.object({ done: z.literal(true) })
   },
   'proposals:run': {
     request: z.object({

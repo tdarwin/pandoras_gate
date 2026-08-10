@@ -226,6 +226,7 @@ export interface MetadataListing {
   characters: { file: string; name: string }[]
   world: { file: string; name: string }[]
   summaries: { file: string; title: string }[]
+  outlines: { file: string; title: string }[]
   hasSynopsis: boolean
   hasGlossary: boolean
   hasTimeline: boolean
@@ -248,6 +249,18 @@ async function listDocs(dir: string): Promise<{ file: string; name: string }[]> 
   }
 }
 
+/** Human title for an outline file: novel.md -> "Novel outline"; chapter files use the manifest title. */
+async function outlineTitles(novelDir: string): Promise<{ file: string; title: string }[]> {
+  const docs = await listDocs(join(novelDir, 'outlines'))
+  if (docs.length === 0) return []
+  const manifest = await readNovelManifest(novelDir).catch(() => null)
+  return docs.map((d) => {
+    if (d.file === 'novel.md') return { file: 'outlines/novel.md', title: 'Novel outline' }
+    const chapter = manifest?.chapters.find((c) => basename(c.file) === d.file)
+    return { file: `outlines/${d.file}`, title: chapter ? `${chapter.title} (outline)` : d.name }
+  })
+}
+
 export async function listMetadata(novelDir: string): Promise<MetadataListing> {
   const characters = (await listDocs(join(novelDir, 'metadata/characters'))).map((d) => ({
     file: `metadata/characters/${d.file}`,
@@ -265,10 +278,30 @@ export async function listMetadata(novelDir: string): Promise<MetadataListing> {
     characters,
     world,
     summaries,
+    outlines: await outlineTitles(novelDir),
     hasSynopsis: await exists(join(novelDir, 'metadata/synopsis.md')),
     hasGlossary: await exists(join(novelDir, 'metadata/glossary.md')),
     hasTimeline: await exists(join(novelDir, 'metadata/timeline.yaml'))
   }
+}
+
+/** Sets a chapter's status in both the manifest and its frontmatter. */
+export async function setChapterStatus(
+  novelDir: string,
+  file: string,
+  status: 'draft' | 'ai-draft' | 'revised' | 'final'
+): Promise<NovelState> {
+  const manifest = await readNovelManifest(novelDir)
+  const entry = manifest.chapters.find((c) => c.file === file)
+  if (!entry) throw new Error(`Chapter not in manifest: ${file}`)
+  entry.status = status
+  await writeNovelManifest(novelDir, manifest)
+
+  const raw = await readFile(join(novelDir, file), 'utf8')
+  const doc = parseFrontmatter(raw)
+  doc.data['status'] = status
+  await writeFile(join(novelDir, file), serializeFrontmatter(doc), 'utf8')
+  return { dir: novelDir, manifest }
 }
 
 const CHARACTER_TEMPLATE = (name: string): string =>

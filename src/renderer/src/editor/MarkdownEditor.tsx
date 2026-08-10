@@ -11,6 +11,11 @@ interface MarkdownEditorProps {
   docId: string
   value: string
   onChange: (value: string) => void
+  /**
+   * When true (AI drafting), external value changes always apply — even while
+   * focused — and the view follows the streamed text.
+   */
+  forceSync?: boolean
 }
 
 /**
@@ -22,7 +27,8 @@ interface MarkdownEditorProps {
 export default function MarkdownEditor({
   docId,
   value,
-  onChange
+  onChange,
+  forceSync = false
 }: MarkdownEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -61,15 +67,21 @@ export default function MarkdownEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId])
 
-  // External value changes (e.g. AI writes into the file) while not focused.
+  // External value changes (e.g. AI writes into the file) while not focused —
+  // or always, during forced sync (drafting).
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
     const current = view.state.doc.toString()
-    if (value !== current && !view.hasFocus) {
-      view.dispatch({ changes: { from: 0, to: current.length, insert: value } })
+    if (value !== current && (forceSync || !view.hasFocus)) {
+      view.dispatch({
+        changes: { from: 0, to: current.length, insert: value },
+        ...(forceSync
+          ? { selection: { anchor: value.length }, scrollIntoView: true }
+          : {})
+      })
     }
-  }, [value])
+  }, [value, forceSync])
 
   return <div ref={containerRef} className="h-full min-h-0" />
 }

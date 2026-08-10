@@ -11,6 +11,12 @@ interface ProjectStore {
 
   setError: (message: string | null) => void
   setNovel: (novel: NovelState) => void
+  /** Replace manifest state without touching the open buffer. */
+  applyNovelState: (novel: NovelState) => void
+  /** Replace the buffer with on-disk content (not dirty). */
+  setSavedContent: (content: string) => void
+  /** Append streamed text to the buffer (dirty; autosave picks it up). */
+  appendContent: (text: string) => void
   closeNovel: () => void
   openChapter: (file: string) => Promise<void>
   setContent: (content: string) => void
@@ -30,6 +36,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   setError: (message) => set({ lastError: message }),
 
   setNovel: (novel) => set({ novel, activeFile: null, content: '', dirty: false }),
+
+  applyNovelState: (novel) => set({ novel }),
+
+  setSavedContent: (content) => set({ content, dirty: false }),
+
+  appendContent: (text) => set((s) => ({ content: s.content + text, dirty: true })),
 
   closeNovel: () => set({ novel: null, activeFile: null, content: '', dirty: false }),
 

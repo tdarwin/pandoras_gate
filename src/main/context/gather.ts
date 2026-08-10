@@ -58,6 +58,15 @@ export async function gatherStorySource(
   const synopsisRaw = await safeRead(join(novelDir, 'metadata/synopsis.md'))
   const synopsis = synopsisRaw ? parseFrontmatter(synopsisRaw).body.trim() || null : null
 
+  /* outlines */
+  const novelOutlineRaw = await safeRead(join(novelDir, 'outlines/novel.md'))
+  const novelOutline = novelOutlineRaw ? parseFrontmatter(novelOutlineRaw).body.trim() || null : null
+  let chapterOutline: string | null = null
+  if (activeFile) {
+    const outlineRaw = await safeRead(join(novelDir, 'outlines', basename(activeFile)))
+    chapterOutline = outlineRaw ? parseFrontmatter(outlineRaw).body.trim() || null : null
+  }
+
   /* glossary: frontmatter entries[] plus body fallback */
   const glossary: { term: string; definition: string }[] = []
   const glossaryRaw = await safeRead(join(novelDir, 'metadata/glossary.md'))
@@ -124,6 +133,8 @@ export async function gatherStorySource(
     novelTitle: manifest.title,
     author: manifest.author,
     synopsis,
+    novelOutline,
+    chapterOutline,
     worldDocs,
     characters,
     glossary,

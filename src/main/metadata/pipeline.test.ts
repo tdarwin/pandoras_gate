@@ -6,6 +6,7 @@ import { createNovel, createChapter, writeChapter } from '../project/service'
 import { MockProvider } from '../llm/mock'
 import {
   runMetadataUpdate,
+  runOutlineGeneration,
   resolveProposalItem,
   proposalsForReview,
   listProposals,
@@ -60,10 +61,14 @@ const run = (): ReturnType<typeof runMetadataUpdate> =>
   runMetadataUpdate({ novelDir, chapterFile: CHAPTER, provider, modelId: 'mock-model' })
 
 describe('path and content guards', () => {
-  it('allows only story-bible paths', () => {
+  it('allows only story-bible and outline paths', () => {
     expect(isAllowedProposalPath('metadata/characters/kael.md')).toBe(true)
     expect(isAllowedProposalPath('metadata/synopsis.md')).toBe(true)
     expect(isAllowedProposalPath('metadata/timeline.yaml')).toBe(true)
+    expect(isAllowedProposalPath('outlines/novel.md')).toBe(true)
+    expect(isAllowedProposalPath('outlines/001-the-iron-gate.md')).toBe(true)
+    expect(isAllowedProposalPath('outlines/deep/nested.md')).toBe(false)
+    expect(isAllowedProposalPath('outlines/../chapters/001.md')).toBe(false)
     expect(isAllowedProposalPath('chapters/001.md')).toBe(false)
     expect(isAllowedProposalPath('metadata/../novel.yaml')).toBe(false)
     expect(isAllowedProposalPath('/etc/passwd')).toBe(false)
@@ -148,6 +153,87 @@ describe('runMetadataUpdate', () => {
     provider.queue('```json\n' + proposalJson([SUMMARY_ITEM]) + '\n```')
     const result = await run()
     expect(result.status).toBe('ran')
+  })
+})
+
+describe('runOutlineGeneration', () => {
+  const NOVEL_OUTLINE_ITEM = {
+    path: 'outlines/novel.md',
+    action: 'create',
+    newContent: '---\nscope: novel\nstatus: draft\n---\n## Act 1\n- Kael finds the manual\n',
+    rationale: 'Initial novel outline'
+  }
+
+  it('queues an outline proposal for the novel', async () => {
+    provider.queue(proposalJson([NOVEL_OUTLINE_ITEM]))
+    const result = await runOutlineGeneration({
+      novelDir,
+      scope: 'novel',
+      guidance: 'three acts',
+      provider,
+      modelId: 'mock-model'
+    })
+    expect(result.status).toBe('ran')
+    const pending = await listProposals(novelDir)
+    expect(pending[0]!.chapterTitle).toBe('Outline for the novel')
+    expect(pending[0]!.items[0]!.path).toBe('outlines/novel.md')
+    // Guidance made it into the prompt.
+    expect(provider.requests[0]!.messages[1]!.content).toContain('three acts')
+  })
+
+  it('accepting an outline proposal writes into outlines/', async () => {
+    provider.queue(proposalJson([NOVEL_OUTLINE_ITEM]))
+    const { proposalId } = await runOutlineGeneration({
+      novelDir,
+      scope: 'novel',
+      provider,
+      modelId: 'mock-model'
+    })
+    await resolveProposalItem({
+      novelDir,
+      proposalId: proposalId!,
+      path: 'outlines/novel.md',
+      resolution: 'accept'
+    })
+    expect(await readFile(join(novelDir, 'outlines/novel.md'), 'utf8')).toContain('## Act 1')
+    const log = await history(novelDir, 'outlines/novel.md')
+    expect(log[0]!.message).toContain('outline: novel')
+  })
+
+  it('drops non-outline paths from an outline run', async () => {
+    provider.queue(
+      proposalJson([
+        NOVEL_OUTLINE_ITEM,
+        { path: 'metadata/synopsis.md', action: 'update', newContent: 'sneaky', rationale: 'x' }
+      ])
+    )
+    const result = await runOutlineGeneration({
+      novelDir,
+      scope: 'novel',
+      provider,
+      modelId: 'mock-model'
+    })
+    expect(result.itemCount).toBe(1)
+  })
+
+  it('chapter outlines target the chapter file name', async () => {
+    const item = {
+      path: 'outlines/001-the-iron-gate.md',
+      action: 'create',
+      newContent: '---\nscope: chapter\nchapter: chapters/001-the-iron-gate.md\n---\n- Beat 1\n',
+      rationale: 'Chapter outline'
+    }
+    provider.queue(proposalJson([item]))
+    const result = await runOutlineGeneration({
+      novelDir,
+      scope: 'chapter',
+      chapterFile: CHAPTER,
+      provider,
+      modelId: 'mock-model'
+    })
+    expect(result.status).toBe('ran')
+    const pending = await listProposals(novelDir)
+    expect(pending[0]!.chapterTitle).toBe('Outline for The Iron Gate')
   })
 })
 
