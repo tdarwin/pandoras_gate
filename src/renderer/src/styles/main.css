@@ -1,0 +1,66 @@
+@import 'tailwindcss';
+
+/* App-wide chrome: the title bar region is draggable on macOS (hiddenInset). */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.titlebar-drag button,
+.titlebar-drag input {
+  -webkit-app-region: no-drag;
+}
+
+/* Markdown rendering inside chat bubbles. */
+.prose-chat p {
+  margin: 0 0 0.6em;
+}
+.prose-chat p:last-child {
+  margin-bottom: 0;
+}
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3 {
+  font-weight: 600;
+  margin: 0.8em 0 0.4em;
+  color: #fafafa;
+}
+.prose-chat ul,
+.prose-chat ol {
+  margin: 0.4em 0 0.6em;
+  padding-left: 1.4em;
+}
+.prose-chat ul {
+  list-style: disc;
+}
+.prose-chat ol {
+  list-style: decimal;
+}
+.prose-chat li {
+  margin: 0.15em 0;
+}
+.prose-chat code {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 0.1em 0.3em;
+  font-size: 0.85em;
+}
+.prose-chat pre {
+  background: #09090b;
+  border-radius: 8px;
+  padding: 0.6em 0.8em;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.prose-chat pre code {
+  background: none;
+  padding: 0;
+}
+.prose-chat blockquote {
+  border-left: 3px solid #52525b;
+  padding-left: 0.8em;
+  color: #a1a1aa;
+  margin: 0.5em 0;
+}
+.prose-chat a {
+  color: #a5b4fc;
+  text-decoration: underline;
+}

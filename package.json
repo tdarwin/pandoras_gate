@@ -1,0 +1,62 @@
+{
+  "name": "pandoras-box",
+  "version": "0.1.0",
+  "description": "Pandora's Box — Writer's Studio: a desktop app for writing novels with local and remote AI assistance",
+  "main": "out/main/index.js",
+  "author": "Davin Taddeo",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package": "electron-vite build && electron-builder --config electron-builder.yml",
+    "package:dir": "electron-vite build && electron-builder --config electron-builder.yml --dir"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true,
+    "electron-winstaller@5.4.0": true,
+    "electron@43.3.0": true,
+    "node-llama-cpp@3.19.1": true
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.8",
+    "@electron-toolkit/utils": "^4.0.0",
+    "@lezer/common": "^1.5.2",
+    "@lezer/markdown": "^1.7.2",
+    "codemirror": "^6.0.2",
+    "diff": "^9.0.0",
+    "immer": "^11.1.16",
+    "isomorphic-git": "^1.41.3",
+    "node-llama-cpp": "^3.19.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
+  }
+}

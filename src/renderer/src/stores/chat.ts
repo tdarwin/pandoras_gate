@@ -1,0 +1,198 @@
+import { create } from 'zustand'
+import type { ChatMessage, ModelInfo } from '@shared/llm/types'
+import type { IpcEventPayload } from '@shared/ipc'
+import { useProjectStore } from './project'
+
+export interface ContextReport {
+  budgetTokens: number
+  usedTokens: number
+  sections: {
+    id: string
+    label: string
+    status: 'included' | 'degraded' | 'dropped'
+    tokens: number
+  }[]
+}
+
+interface ChatStore {
+  models: ModelInfo[]
+  selectedModelId: string | null
+  apiKeyConfigured: boolean
+  messages: ChatMessage[]
+  streaming: boolean
+  requestId: string | null
+  usage: { promptTokens: number; completionTokens: number } | null
+  report: ContextReport | null
+  error: string | null
+
+  init: () => void
+  loadModels: () => Promise<void>
+  saveApiKey: (key: string) => Promise<boolean>
+  selectModel: (id: string) => void
+  importLocalModel: () => Promise<void>
+  send: (text: string) => Promise<void>
+  cancel: () => Promise<void>
+  clear: () => void
+}
+
+let initialized = false
+
+export const useChatStore = create<ChatStore>((set, get) => ({
+  models: [],
+  selectedModelId: null,
+  apiKeyConfigured: false,
+  messages: [],
+  streaming: false,
+  requestId: null,
+  usage: null,
+  report: null,
+  error: null,
+
+  init: () => {
+    if (initialized) return
+    initialized = true
+    window.pandora.on('chat:event', (raw) => {
+      const { requestId, event } = raw as IpcEventPayload<'chat:event'>
+      if (requestId !== get().requestId) return
+      switch (event.type) {
+        case 'delta': {
+          set((s) => {
+            const messages = [...s.messages]
+            const last = messages[messages.length - 1]
+            if (last?.role === 'assistant') {
+              messages[messages.length - 1] = {
+                role: 'assistant',
+                content: last.content + event.text
+              }
+            }
+            return { messages }
+          })
+          break
+        }
+        case 'usage':
+          set({ usage: { promptTokens: event.promptTokens, completionTokens: event.completionTokens } })
+          break
+        case 'done':
+          set({ streaming: false, requestId: null })
+          break
+        case 'error':
+          set((s) => {
+            // Drop an empty assistant bubble on failure.
+            const messages = [...s.messages]
+            if (messages[messages.length - 1]?.role === 'assistant' && !messages[messages.length - 1]!.content) {
+              messages.pop()
+            }
+            return { messages, streaming: false, requestId: null, error: event.message }
+          })
+          break
+      }
+    })
+    void window.pandora
+      .invoke('llm:hasApiKey', { provider: 'openrouter' })
+      .then((r) => {
+        if (r.ok) set({ apiKeyConfigured: r.data.configured })
+        void get().loadModels()
+      })
+  },
+
+  loadModels: async () => {
+    const result = await window.pandora.invoke('llm:listModels', undefined)
+    if (result.ok) {
+      set({ models: result.data.models })
+      const { selectedModelId } = get()
+      if (!selectedModelId) {
+        // Sensible default: a well-known strong prose model if present.
+        const preferred =
+          result.data.models.find((m) => m.id === 'anthropic/claude-sonnet-4.5') ??
+          result.data.models.find((m) => m.id.startsWith('anthropic/')) ??
+          result.data.models[0]
+        if (preferred) set({ selectedModelId: preferred.id })
+      }
+    }
+  },
+
+  saveApiKey: async (key: string) => {
+    const result = await window.pandora.invoke('llm:setApiKey', { provider: 'openrouter', key })
+    if (result.ok) {
+      set({ apiKeyConfigured: true, error: null })
+      await get().loadModels()
+      return true
+    }
+    set({ error: result.error.message })
+    return false
+  },
+
+  selectModel: (id) => set({ selectedModelId: id }),
+
+  importLocalModel: async () => {
+    const result = await window.pandora.invoke('llm:importGguf', undefined)
+    if (result.ok && result.data.model) {
+      await get().loadModels()
+      set({ selectedModelId: result.data.model.id })
+    } else if (!result.ok) {
+      set({ error: result.error.message })
+    }
+  },
+
+  send: async (text: string) => {
+    const { selectedModelId, streaming, messages, models } = get()
+    if (streaming || !selectedModelId || !text.trim()) return
+
+    const project = useProjectStore.getState()
+    const novel = project.novel
+    if (!novel) return
+
+    // Make sure the chapter on disk matches the editor before assembly.
+    await project.saveActiveChapter()
+
+    const model = models.find((m) => m.id === selectedModelId)
+    const contextTokens = model?.contextLength ?? 8192
+    const userMessage = text.trim()
+
+    const assembled = await window.pandora.invoke('context:assemble', {
+      novelDir: novel.dir,
+      activeFile: project.activeFile,
+      chatHistory: messages,
+      userMessage,
+      contextTokens,
+      reservedOutput: 2048
+    })
+    if (!assembled.ok) {
+      set({ error: assembled.error.message })
+      return
+    }
+
+    const requestId = crypto.randomUUID()
+    set({
+      messages: [...messages, { role: 'user', content: userMessage }, { role: 'assistant', content: '' }],
+      streaming: true,
+      requestId,
+      usage: null,
+      report: assembled.data.report,
+      error: null
+    })
+
+    const result = await window.pandora.invoke('chat:start', {
+      requestId,
+      provider: model?.provider ?? 'openrouter',
+      modelId: selectedModelId,
+      messages: assembled.data.messages
+    })
+    if (!result.ok) {
+      set((s) => {
+        const msgs = [...s.messages]
+        if (msgs[msgs.length - 1]?.role === 'assistant' && !msgs[msgs.length - 1]!.content) msgs.pop()
+        return { messages: msgs, streaming: false, requestId: null, error: result.error.message }
+      })
+    }
+  },
+
+  cancel: async () => {
+    const { requestId } = get()
+    if (!requestId) return
+    await window.pandora.invoke('chat:cancel', { requestId })
+    set({ streaming: false, requestId: null })
+  },
+
+  clear: () => set({ messages: [], usage: null, report: null, error: null })
+}))

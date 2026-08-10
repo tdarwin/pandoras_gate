@@ -1,0 +1,24 @@
+appId: com.davintaddeo.pandorasbox
+productName: Pandora's Box
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - '**/node_modules/@node-llama-cpp/**'
+  - '**/node_modules/node-llama-cpp/**'
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+npmRebuild: false
