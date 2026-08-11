@@ -7,6 +7,7 @@ import type {
   ToolDefinition
 } from '../../shared/llm/types'
 import { getTracer } from '../telemetry'
+import { logError } from '../log'
 
 /**
  * GenAI semantic-convention instrumentation (OTel semconv v1.40, Development).
@@ -192,6 +193,8 @@ export async function* tracedChatStream(
           errored = true
           span.setStatus({ code: SpanStatusCode.ERROR, message: event.message })
           span.setAttribute('error.type', 'provider_error')
+          span.setAttribute('error.message', truncate(event.message))
+          logError('llm', `provider error (${meta.providerId}/${req.modelId})`, event.message)
           break
         default:
           break
@@ -200,11 +203,11 @@ export async function* tracedChatStream(
     }
   } catch (err) {
     errored = true
-    span.setStatus({
-      code: SpanStatusCode.ERROR,
-      message: err instanceof Error ? err.message : String(err)
-    })
+    const message = err instanceof Error ? err.message : String(err)
+    span.setStatus({ code: SpanStatusCode.ERROR, message })
     span.setAttribute('error.type', err instanceof Error ? err.name : 'Error')
+    span.setAttribute('error.message', truncate(message))
+    logError('llm', `stream failed (${meta.providerId}/${req.modelId})`, err)
     throw err
   } finally {
     if (signal.aborted) finishReason = 'cancelled'

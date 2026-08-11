@@ -260,6 +260,14 @@ export const ipcContract = {
     request: z.undefined(),
     response: z.object({ opened: z.literal(true) })
   },
+  'app:rendererError': {
+    request: z.object({
+      message: z.string(),
+      stack: z.string().optional(),
+      source: z.string().optional()
+    }),
+    response: z.object({ logged: z.literal(true) })
+  },
   'telemetry:status': {
     request: z.undefined(),
     response: z.object({ enabled: z.boolean() })

@@ -91,12 +91,23 @@ function isRevealed(ranges: LineRange[], from: number, to: number): boolean {
   return ranges.some((r) => from <= r.to && to >= r.from)
 }
 
+export interface LivePreviewSets {
+  decorations: DecorationSet
+  /**
+   * Replace decorations only — registered as atomic ranges so the cursor
+   * steps over hidden syntax instead of getting trapped inside it (the cause
+   * of caret "bouncing" between lines).
+   */
+  atomic: DecorationSet
+}
+
 /**
  * Pure decoration computation over an EditorState — exported separately from
  * the ViewPlugin so tests can exercise it without a DOM.
  */
-export function computeDecorations(state: EditorState, visible: LineRange[]): DecorationSet {
+export function computeDecorations(state: EditorState, visible: LineRange[]): LivePreviewSets {
   const builder = new RangeSetBuilder<Decoration>()
+  const atomicBuilder = new RangeSetBuilder<Decoration>()
   const revealed = revealedRanges(state)
   const doc = state.doc
 
@@ -248,23 +259,46 @@ export function computeDecorations(state: EditorState, visible: LineRange[]): De
   // RangeSetBuilder requires strictly ordered, and line decorations must come
   // before marks at the same position — the sort above plus stable insertion
   // keeps that invariant.
-  for (const m of marks) builder.add(m.from, m.to, m.deco)
-  return builder.finish()
+  const isReplace = (deco: Decoration): boolean =>
+    deco === hide || deco.spec['widget'] !== undefined
+  for (const m of marks) {
+    builder.add(m.from, m.to, m.deco)
+    if (isReplace(m.deco) && m.from < m.to) atomicBuilder.add(m.from, m.to, m.deco)
+  }
+  return { decorations: builder.finish(), atomic: atomicBuilder.finish() }
 }
 
-export const livePreviewPlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet
+class LivePreviewPluginValue {
+  decorations: DecorationSet
+  atomic: DecorationSet
 
-    constructor(view: EditorView) {
-      this.decorations = computeDecorations(view.state, [...view.visibleRanges])
-    }
+  constructor(view: EditorView) {
+    const sets = this.safeCompute(view)
+    this.decorations = sets.decorations
+    this.atomic = sets.atomic
+  }
 
-    update(update: ViewUpdate): void {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        this.decorations = computeDecorations(update.view.state, [...update.view.visibleRanges])
-      }
+  update(update: ViewUpdate): void {
+    if (update.docChanged || update.selectionSet || update.viewportChanged) {
+      const sets = this.safeCompute(update.view)
+      this.decorations = sets.decorations
+      this.atomic = sets.atomic
     }
-  },
-  { decorations: (v) => v.decorations }
-)
+  }
+
+  /** Decoration bugs must degrade to plain markdown, never a blank app. */
+  private safeCompute(view: EditorView): LivePreviewSets {
+    try {
+      return computeDecorations(view.state, [...view.visibleRanges])
+    } catch (err) {
+      console.error('live-preview decoration failure', err)
+      return { decorations: Decoration.none, atomic: Decoration.none }
+    }
+  }
+}
+
+export const livePreviewPlugin = ViewPlugin.fromClass(LivePreviewPluginValue, {
+  decorations: (v) => v.decorations,
+  provide: (plugin) =>
+    EditorView.atomicRanges.of((view) => view.plugin(plugin)?.atomic ?? Decoration.none)
+})

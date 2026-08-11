@@ -281,6 +281,11 @@ export function registerIpcHandlers(): void {
     return { opened: true as const }
   })
 
+  handle('app:rendererError', (req) => {
+    logError('renderer', `${req.source ?? 'error'}: ${req.message}`, req.stack)
+    return { logged: true as const }
+  })
+
   handle('telemetry:status', () => ({ enabled: telemetryEnabled() }))
 
   handle('chat:cancel', (req) => ({ cancelled: cancelChat(req.requestId) }))

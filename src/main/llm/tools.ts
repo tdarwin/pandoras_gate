@@ -14,6 +14,7 @@ import { parseFrontmatter } from '../../shared/frontmatter'
 import { flushAutocommit, commitAll } from '../git/service'
 import { logInfo, logError } from '../log'
 import { withSpan } from '../telemetry'
+import { SpanStatusCode } from '@opentelemetry/api'
 
 /**
  * Tools the chat agent can call. Every tool that changes the story funnels
@@ -207,7 +208,14 @@ export async function executeTool(
     async (span) => {
       const result = await executeToolInner(ctx, name, argsJson)
       span.setAttribute('gen_ai.tool.call.result', result.slice(0, 4000))
-      if (result.startsWith('Error')) span.setAttribute('app.tool.errored', true)
+      if (result.startsWith('Error') || result.startsWith('Nothing queued')) {
+        // Tool-level failures return strings (so the model can react), but
+        // observability needs them as real errors with the message attached.
+        span.setStatus({ code: SpanStatusCode.ERROR, message: result.slice(0, 500) })
+        span.setAttribute('error.type', 'tool_error')
+        span.setAttribute('error.message', result.slice(0, 4000))
+        logError('tools', `${name} returned an error result`, result.slice(0, 500))
+      }
       return result
     }
   )
@@ -546,6 +554,8 @@ You also have chapter tools:
 - edit_chapter(instructions): full-chapter rewrite via a separate generation. Only for sweeping revisions (POV/tense/whole-tone changes) where section edits are impractical.
 
 Discipline: call each tool at most once per distinct purpose, verify with list_chapters/list_codex_docs BEFORE creating anything, and never create a chapter or document that already exists. When a tool returns an Error, fix your arguments and retry once — do not switch to creating new things. After your tools succeed, STOP and reply to the author.
+
+Do not stall. When the author asks you to rewrite, revise, or edit a chapter, the conversation almost always already contains enough direction — synthesize it into instructions and CALL edit_chapter or edit_chapter_section NOW. Never respond with only "how would you like me to edit it?" — at most, act on your best understanding and mention what you assumed. A request to edit the chapter is NOT a Codex request: do not substitute update_codex or write_codex_doc for a chapter edit.
 
 Codex file conventions for write_codex_doc:
 - metadata/characters/<slug>.md — frontmatter: name, aliases (list), role, status, first_appearance, attributes (map; stats/level/realm for LitRPG), relationships (list of {character, type}). Body: ## Appearance / ## Personality / ## Arc notes prose.

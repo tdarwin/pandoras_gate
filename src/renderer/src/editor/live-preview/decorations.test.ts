@@ -19,7 +19,7 @@ function decorate(doc: string, cursor = doc.length): DecoInfo[] {
     extensions: [markdown({ base: markdownLanguage })]
   })
   ensureSyntaxTree(state, doc.length, 5000)
-  const set = computeDecorations(state, [{ from: 0, to: doc.length }])
+  const set = computeDecorations(state, [{ from: 0, to: doc.length }]).decorations
   const out: DecoInfo[] = []
   const iter = set.iter()
   while (iter.value) {

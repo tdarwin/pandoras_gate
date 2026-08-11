@@ -41,9 +41,19 @@ function getLlamaInstance(): Promise<Llama> {
 
 async function ensureModel(modelPath: string): Promise<LlamaModel> {
   if (model && loadedPath === modelPath) return model
-  // One resident model at a time: unload before switching.
+  // One resident model at a time: unload before switching — but NEVER while a
+  // generation still holds the old model ("Object is disposed" crashes).
   if (model) {
-    await model.dispose()
+    if (activeChats.size > 0) {
+      throw new Error(
+        'Another generation is still running with the current model. Stop it (or let it finish) before switching models.'
+      )
+    }
+    try {
+      await model.dispose()
+    } catch {
+      // Already disposed or mid-teardown — proceed to load fresh.
+    }
     model = null
     loadedPath = null
   }
@@ -207,10 +217,15 @@ async function handleChat(req: Extract<WorkerRequest, { type: 'chat' }>): Promis
         event: { type: 'done', finishReason: 'cancelled' }
       })
     } else {
+      const raw = err instanceof Error ? err.message : String(err)
+      // Translate llama.cpp internals into something actionable.
+      const message = raw.includes('disposed')
+        ? 'The model was unloaded mid-generation (usually a model switch during a running task). Try again.'
+        : raw
       send({
         type: 'event',
         requestId: req.requestId,
-        event: { type: 'error', message: err instanceof Error ? err.message : String(err) }
+        event: { type: 'error', message }
       })
     }
   } finally {
