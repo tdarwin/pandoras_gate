@@ -344,18 +344,20 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
 /**
  * Queues author-visible proposals from content produced directly by the chat
  * agent (no pipeline run). Same guards as pipeline output: path allowlist,
- * content validation, no-op suppression.
+ * content validation, no-op suppression. `pathFilter` overrides the default
+ * Codex allowlist for special flows (chapter edits target one exact file).
  */
 export async function enqueueProposalItems(
   novelDir: string,
   sourceTitle: string,
-  proposals: { path: string; newContent: string; rationale: string }[]
+  proposals: { path: string; newContent: string; rationale: string }[],
+  pathFilter: (path: string) => boolean = isAllowedProposalPath
 ): Promise<{ queued: number; rejected: string[] }> {
   const items: PendingProposalItem[] = []
   const rejected: string[] = []
   for (const p of proposals) {
-    if (!isAllowedProposalPath(p.path)) {
-      rejected.push(`${p.path}: not an allowed Codex path`)
+    if (!pathFilter(p.path)) {
+      rejected.push(`${p.path}: not an allowed path`)
       continue
     }
     const problem = validateProposalContent(p.path, p.newContent)
@@ -386,6 +388,90 @@ export async function enqueueProposalItems(
     })
   }
   return { queued: items.length, rejected }
+}
+
+/* ------------------------------------------------------------------ */
+/* Chapter revision (edit_chapter tool)                                */
+/* ------------------------------------------------------------------ */
+
+const CHAPTER_EDIT_SYSTEM = `You are revising one chapter of a novel exactly as the author instructed. You receive the chapter's current text and the author's instructions.
+
+Output the COMPLETE revised chapter body in markdown — every paragraph, including ones you did not change. Preserve the author's voice, tense, and point of view. Make only changes consistent with the instructions; do not embellish elsewhere. Output ONLY the chapter prose: no YAML frontmatter, no chapter-title heading, no commentary, no explanations.`
+
+export interface ChapterEditRequest {
+  novelDir: string
+  chapterFile: string
+  instructions: string
+  provider: LLMProvider
+  modelId: string
+}
+
+/**
+ * Generates a revised version of a chapter per the author's instructions and
+ * queues it as a reviewable proposal (word-level diff in the review panel).
+ * The chapter file itself is untouched until the author accepts.
+ */
+export async function runChapterEdit(req: ChapterEditRequest): Promise<RunResult> {
+  return withSpan(
+    'chapter edit',
+    { 'llm.model': req.modelId, 'chapter.file': req.chapterFile },
+    async (span) => {
+      const manifest = await readNovelManifest(req.novelDir)
+      const entry = manifest.chapters.find((c) => c.file === req.chapterFile)
+      if (!entry) throw new Error(`Chapter not in manifest: ${req.chapterFile}`)
+
+      const raw = await readChapter(req.novelDir, req.chapterFile)
+      const body = parseFrontmatter(raw).body
+      // Everything before the body (the frontmatter block) is preserved verbatim.
+      const frontmatterPrefix = raw.slice(0, raw.length - body.length)
+      if (!body.trim()) {
+        throw new Error('The chapter is empty — use drafting to write new prose instead.')
+      }
+
+      let revised = ''
+      const controller = new AbortController()
+      for await (const event of req.provider.chatStream(
+        {
+          modelId: req.modelId,
+          messages: [
+            { role: 'system', content: CHAPTER_EDIT_SYSTEM },
+            {
+              role: 'user',
+              content: `# Chapter: ${entry.title}\n\n## Current text\n\n${body.trim()}\n\n## Author's instructions\n\n${req.instructions.trim()}\n\nNow output the complete revised chapter body.`
+            }
+          ],
+          temperature: 0.4
+        },
+        controller.signal
+      )) {
+        if (event.type === 'delta') revised += event.text
+        if (event.type === 'error') throw new Error(event.message)
+      }
+
+      revised = revised.trim()
+      if (!revised) throw new Error('The model returned an empty revision')
+      const newContent = `${frontmatterPrefix}${revised}\n`
+
+      const { queued, rejected } = await enqueueProposalItems(
+        req.novelDir,
+        `Chapter edit: ${entry.title}`,
+        [
+          {
+            path: req.chapterFile,
+            newContent,
+            rationale: req.instructions.trim().slice(0, 200)
+          }
+        ],
+        (p) => p === req.chapterFile
+      )
+      span.setAttribute('chapter.edit_queued', queued > 0)
+      logInfo('chapter-edit', `${req.chapterFile}: queued=${queued}`, rejected)
+      if (queued === 0) {
+        return { status: 'no-changes' }
+      }
+      return { status: 'ran', itemCount: 1 }
+    }
+  )
 }
 
 /* ------------------------------------------------------------------ */
@@ -576,7 +662,11 @@ export async function resolveProposalItem(req: ResolveRequest): Promise<{ remain
     const full = join(req.novelDir, item.path)
     await mkdir(join(full, '..'), { recursive: true })
     await writeFile(full, content, 'utf8')
-    const label = item.path.startsWith('outlines/') ? 'outline' : 'metadata'
+    const label = item.path.startsWith('outlines/')
+      ? 'outline'
+      : item.path.startsWith('chapters/')
+        ? 'chapter edit'
+        : 'metadata'
     await commitAll(
       req.novelDir,
       `${label}: ${basename(item.path).replace(/\.(md|yaml)$/, '')} (${proposal.chapterTitle})`,

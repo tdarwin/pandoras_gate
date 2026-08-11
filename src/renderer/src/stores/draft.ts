@@ -16,11 +16,25 @@ interface DraftStore {
   error: string | null
 
   init: () => void
-  start: (instructions?: string) => Promise<void>
+  start: (instructions?: string, chapterFile?: string) => Promise<void>
   stop: () => Promise<void>
 }
 
 let initialized = false
+
+/** Runs `fn` once the chat stream is idle (immediately if it already is). */
+function whenChatIdle(fn: () => void): void {
+  if (!useChatStore.getState().streaming) {
+    fn()
+    return
+  }
+  const unsubscribe = useChatStore.subscribe((state) => {
+    if (!state.streaming) {
+      unsubscribe()
+      fn()
+    }
+  })
+}
 
 export const useDraftStore = create<DraftStore>((set, get) => ({
   drafting: false,
@@ -31,6 +45,11 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
   init: () => {
     if (initialized) return
     initialized = true
+    // The chat agent's draft_chapter tool: begin once its reply finishes.
+    window.pandora.on('draft:requested', (raw) => {
+      const { chapterFile, instructions } = raw as { chapterFile: string; instructions: string }
+      whenChatIdle(() => void get().start(instructions || undefined, chapterFile))
+    })
     window.pandora.on('chat:event', (raw) => {
       const { requestId, event } = raw as IpcEventPayload<'chat:event'>
       if (requestId !== get().requestId) return
@@ -61,11 +80,20 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
     })
   },
 
-  start: async (instructions) => {
-    const project = useProjectStore.getState()
+  start: async (instructions, chapterFile) => {
+    let project = useProjectStore.getState()
     const chat = useChatStore.getState()
-    const { novel, activeFile } = project
-    if (!novel || !activeFile?.startsWith('chapters/') || get().drafting) return
+    const { novel } = project
+    if (!novel || get().drafting) return
+
+    // Agent-initiated drafts may target a chapter that isn't open yet.
+    if (chapterFile && chapterFile !== project.activeFile) {
+      await project.openChapter(chapterFile)
+      project = useProjectStore.getState()
+    }
+    const activeFile = project.activeFile
+    if (!activeFile?.startsWith('chapters/')) return
+
     const model = chat.models.find((m) => m.id === chat.selectedModelId)
     if (!model) {
       set({ error: 'Pick a model in the chat panel first.' })

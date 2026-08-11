@@ -479,7 +479,14 @@ export const ipcEvents = {
     error: z.string().optional()
   }),
   /** Fired when the agent (or a pipeline run) created new proposals. */
-  'proposals:changed': z.object({})
+  'proposals:changed': z.object({}),
+  /** Manifest changed outside the renderer (e.g. agent created a chapter). */
+  'novel:updated': NovelStateSchema,
+  /** The agent asked for an AI draft; renderer starts it when chat is idle. */
+  'draft:requested': z.object({
+    chapterFile: z.string(),
+    instructions: z.string()
+  })
 } as const satisfies Record<string, z.ZodType>
 
 export type IpcEventChannel = keyof typeof ipcEvents

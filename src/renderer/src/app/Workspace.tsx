@@ -47,14 +47,16 @@ export default function Workspace(): React.JSX.Element {
 
   const loadForNovel = useChatStore((s) => s.loadForNovel)
   const initProposals = useProposalsStore((s) => s.init)
+  const initProject = useProjectStore((s) => s.init)
 
   useEffect(() => {
+    initProject()
     initDraft()
     initProposals()
     void refreshProposals()
     // Restore the model last used with this novel (and warm it up).
     void loadForNovel(novel.dir)
-  }, [initDraft, initProposals, refreshProposals, loadForNovel, novel.dir])
+  }, [initProject, initDraft, initProposals, refreshProposals, loadForNovel, novel.dir])
 
   // Crash-safety writes: quiet disk write a few seconds after typing pauses.
   // These do NOT create history entries — snapshots happen on ⌘S, window

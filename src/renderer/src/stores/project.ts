@@ -1,7 +1,11 @@
 import { create } from 'zustand'
 import type { NovelState } from '@shared/schemas/project'
 
+let subscribed = false
+
 interface ProjectStore {
+  /** One-time event subscriptions (manifest changes made in main). */
+  init: () => void
   novel: NovelState | null
   activeFile: string | null
   /** Editor buffer for the active chapter. */
@@ -37,6 +41,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   content: '',
   dirty: false,
   lastError: null,
+
+  init: () => {
+    if (subscribed) return
+    subscribed = true
+    window.pandora.on('novel:updated', (raw) => {
+      const novel = raw as NovelState
+      // Only adopt updates for the novel that's actually open.
+      if (get().novel?.dir === novel.dir) set({ novel })
+    })
+  },
 
   setError: (message) => set({ lastError: message }),
 

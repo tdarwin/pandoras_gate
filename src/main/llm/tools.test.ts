@@ -52,16 +52,23 @@ describe('chatToolDefinitions', () => {
       'list_codex_docs',
       'read_codex_doc',
       'update_codex',
+      'list_chapters',
+      'create_chapter',
+      'draft_chapter',
+      'edit_chapter',
       'generate_outline'
     ])
   })
 
-  it('drops only update_codex when no chapter is open', () => {
+  it('drops open-chapter tools when no chapter is open', () => {
     const tools = chatToolDefinitions(ctx(null))
     expect(tools.map((t) => t.name)).toEqual([
       'write_codex_doc',
       'list_codex_docs',
       'read_codex_doc',
+      'list_chapters',
+      'create_chapter',
+      'draft_chapter',
       'generate_outline'
     ])
   })
@@ -99,7 +106,7 @@ describe('write_codex_doc', () => {
       'write_codex_doc',
       JSON.stringify({ path: 'novel.yaml', content: 'pwned', rationale: 'x' })
     )
-    expect(bad).toContain('not an allowed Codex path')
+    expect(bad).toContain('not an allowed path')
 
     const badYaml = await executeTool(
       ctx(null),
@@ -117,6 +124,89 @@ describe('write_codex_doc', () => {
       JSON.stringify({ path: 'metadata/synopsis.md' })
     )
     expect(result).toContain('required')
+  })
+})
+
+describe('chapter tools', () => {
+  it('list_chapters shows order, status, and the open chapter', async () => {
+    const result = await executeTool(ctx('chapters/001-the-iron-gate.md'), 'list_chapters', '{}')
+    expect(result).toContain('1. The Iron Gate (chapters/001-the-iron-gate.md, status: draft, OPEN IN EDITOR)')
+  })
+
+  it('create_chapter adds an empty chapter and notifies the renderer', async () => {
+    const result = await executeTool(
+      ctx(null),
+      'create_chapter',
+      JSON.stringify({ title: 'First Breakthrough' })
+    )
+    expect(result).toContain('Created chapter 2')
+    expect(result).toContain('chapters/002-first-breakthrough.md')
+    const notify = sent.find((args) => (args as unknown[])[0] === 'novel:updated')
+    expect(notify).toBeDefined()
+    const state = (notify as unknown[])[1] as { manifest: { chapters: { title: string }[] } }
+    expect(state.manifest.chapters.map((c) => c.title)).toEqual([
+      'The Iron Gate',
+      'First Breakthrough'
+    ])
+  })
+
+  it('draft_chapter emits a draft request for a valid chapter', async () => {
+    const result = await executeTool(
+      ctx('chapters/001-the-iron-gate.md'),
+      'draft_chapter',
+      JSON.stringify({ instructions: 'Open with the storm.' })
+    )
+    expect(result).toContain('will start streaming')
+    const req = sent.find((args) => (args as unknown[])[0] === 'draft:requested')
+    expect((req as unknown[])[1]).toEqual({
+      chapterFile: 'chapters/001-the-iron-gate.md',
+      instructions: 'Open with the storm.'
+    })
+  })
+
+  it('draft_chapter rejects unknown chapters', async () => {
+    const result = await executeTool(
+      ctx(null),
+      'draft_chapter',
+      JSON.stringify({ chapterFile: 'chapters/099-nope.md' })
+    )
+    expect(result).toContain('Error')
+    expect(sent.some((args) => (args as unknown[])[0] === 'draft:requested')).toBe(false)
+  })
+
+  it('edit_chapter queues a full revision as a reviewable proposal', async () => {
+    // The revision generation returns raw prose (not JSON).
+    provider.queue('Kael crept through the ruins at night, rain hammering the shattered stone.')
+    const result = await executeTool(
+      ctx('chapters/001-the-iron-gate.md'),
+      'edit_chapter',
+      JSON.stringify({ instructions: 'Set the scene at night, in the rain.' })
+    )
+    expect(result).toContain('review queue')
+
+    const proposals = await listProposals(novelDir)
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0]!.chapterTitle).toBe('Chapter edit: The Iron Gate')
+    const item = proposals[0]!.items[0]!
+    expect(item.path).toBe('chapters/001-the-iron-gate.md')
+    expect(item.action).toBe('update')
+    // Frontmatter preserved verbatim, body replaced.
+    expect(item.newContent).toContain('title: The Iron Gate')
+    expect(item.newContent).toContain('rain hammering the shattered stone')
+    expect(item.newContent).not.toContain('Kael crept through the ruins.\n')
+    // The revision request carried the chapter text and instructions.
+    const prompt = provider.requests[0]!.messages.at(-1)!.content
+    expect(prompt).toContain('Kael crept through the ruins.')
+    expect(prompt).toContain('Set the scene at night, in the rain.')
+  })
+
+  it('edit_chapter requires instructions and an open chapter', async () => {
+    expect(await executeTool(ctx('chapters/001-the-iron-gate.md'), 'edit_chapter', '{}')).toContain(
+      'required'
+    )
+    expect(
+      await executeTool(ctx(null), 'edit_chapter', JSON.stringify({ instructions: 'x' }))
+    ).toContain('no chapter is open')
   })
 })
 

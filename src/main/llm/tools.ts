@@ -5,11 +5,12 @@ import type { LLMProvider, ToolDefinition } from '../../shared/llm/types'
 import {
   runMetadataUpdate,
   runOutlineGeneration,
+  runChapterEdit,
   enqueueProposalItems,
   isAllowedProposalPath
 } from '../metadata/pipeline'
-import { listMetadata } from '../project/service'
-import { flushAutocommit } from '../git/service'
+import { listMetadata, createChapter, readNovelManifest } from '../project/service'
+import { flushAutocommit, commitAll } from '../git/service'
 import { logInfo, logError } from '../log'
 import { withSpan } from '../telemetry'
 
@@ -68,6 +69,47 @@ export function chatToolDefinitions(ctx: ToolContext): ToolDefinition[] {
       parameters: { type: 'object', properties: {}, additionalProperties: false }
     },
     {
+      name: 'list_chapters',
+      description:
+        'List the novel\'s chapters in order with their file paths, statuses, and which one is open in the editor.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false }
+    },
+    {
+      name: 'create_chapter',
+      description:
+        'Create a new, empty chapter at the end of the novel with the given title. It appears in the sidebar immediately. Use draft_chapter afterwards if the author wants prose written into it.',
+      parameters: {
+        type: 'object',
+        properties: { title: { type: 'string' } },
+        required: ['title'],
+        additionalProperties: false
+      }
+    },
+    {
+      name: 'draft_chapter',
+      description:
+        'Start an AI prose draft that streams directly into a chapter in the editor (with an automatic pre-draft snapshot). Use for writing NEW prose or continuing a chapter; to revise existing text use edit_chapter. The draft begins right after your reply finishes, so keep the reply brief. chapterFile defaults to the open chapter; instructions carry the author\'s direction (beats, tone, POV).',
+      parameters: {
+        type: 'object',
+        properties: {
+          instructions: { type: 'string' },
+          chapterFile: { type: 'string' }
+        },
+        additionalProperties: false
+      }
+    },
+    {
+      name: 'edit_chapter',
+      description:
+        'Revise the currently open chapter according to the author\'s instructions ("make the fight happen at night", "tighten the dialogue in the opening"). Produces a complete revision the author reviews as a word-level diff — the chapter file is untouched until they accept. Synthesize the instructions from the conversation so they are specific and self-contained.',
+      parameters: {
+        type: 'object',
+        properties: { instructions: { type: 'string' } },
+        required: ['instructions'],
+        additionalProperties: false
+      }
+    },
+    {
       name: 'generate_outline',
       description:
         'Generate or refine an outline as a reviewable suggestion. Use scope "chapter" for the currently open chapter, or "novel" for the whole-novel outline. Optional guidance carries the author\'s direction.',
@@ -82,15 +124,20 @@ export function chatToolDefinitions(ctx: ToolContext): ToolDefinition[] {
       }
     }
   ]
-  // The full-sweep tool needs an open chapter to analyze.
+  // Tools that operate on "the open chapter" need one to be open.
+  const needsOpenChapter = new Set(['update_codex', 'edit_chapter'])
   return ctx.activeFile?.startsWith('chapters/')
     ? tools
-    : tools.filter((t) => t.name !== 'update_codex')
+    : tools.filter((t) => !needsOpenChapter.has(t.name))
 }
 
 /** Tells the renderer new proposals may exist (badge + list refresh). */
 function notifyProposalsChanged(sender: WebContents): void {
   if (!sender.isDestroyed()) sender.send('proposals:changed', {})
+}
+
+function send(sender: WebContents, channel: string, payload: unknown): void {
+  if (!sender.isDestroyed()) sender.send(channel, payload)
 }
 
 export async function executeTool(
@@ -173,6 +220,75 @@ export async function executeTool(
           }
           return 'The chapter was analyzed but produced no Codex changes worth suggesting.'
         }
+        case 'list_chapters': {
+          const manifest = await readNovelManifest(ctx.novelDir)
+          if (manifest.chapters.length === 0) return 'The novel has no chapters yet.'
+          return manifest.chapters
+            .map(
+              (c, i) =>
+                `${i + 1}. ${c.title} (${c.file}, status: ${c.status}${
+                  c.file === ctx.activeFile ? ', OPEN IN EDITOR' : ''
+                })`
+            )
+            .join('\n')
+        }
+        case 'create_chapter': {
+          let args: { title?: string } = {}
+          try {
+            args = JSON.parse(argsJson || '{}')
+          } catch {
+            return 'Error: could not parse the tool arguments.'
+          }
+          if (!args.title?.trim()) return 'Error: "title" is required.'
+          const state = await createChapter(ctx.novelDir, args.title.trim())
+          await commitAll(ctx.novelDir, `chapter created: ${args.title.trim()}`, ['novel.yaml'])
+          send(ctx.sender, 'novel:updated', state)
+          const created = state.manifest.chapters.at(-1)
+          return `Created chapter ${state.manifest.chapters.length}: "${args.title.trim()}" (${created?.file}). It is empty — use draft_chapter if the author wants prose written into it.`
+        }
+        case 'draft_chapter': {
+          let args: { instructions?: string; chapterFile?: string } = {}
+          try {
+            args = JSON.parse(argsJson || '{}')
+          } catch {
+            return 'Error: could not parse the tool arguments.'
+          }
+          const manifest = await readNovelManifest(ctx.novelDir)
+          const target = args.chapterFile ?? ctx.activeFile ?? undefined
+          if (!target || !manifest.chapters.some((c) => c.file === target)) {
+            return 'Error: no valid target chapter — pass chapterFile from list_chapters or have the author open a chapter.'
+          }
+          send(ctx.sender, 'draft:requested', {
+            chapterFile: target,
+            instructions: args.instructions ?? ''
+          })
+          return `The AI draft for ${target} will start streaming into the editor as soon as this reply finishes (a pre-draft snapshot is taken automatically). Keep your reply to one short sentence.`
+        }
+        case 'edit_chapter': {
+          let args: { instructions?: string } = {}
+          try {
+            args = JSON.parse(argsJson || '{}')
+          } catch {
+            return 'Error: could not parse the tool arguments.'
+          }
+          if (!args.instructions?.trim()) return 'Error: "instructions" is required.'
+          if (!ctx.activeFile?.startsWith('chapters/')) {
+            return 'Error: no chapter is open in the editor.'
+          }
+          await flushAutocommit(ctx.novelDir)
+          const result = await runChapterEdit({
+            novelDir: ctx.novelDir,
+            chapterFile: ctx.activeFile,
+            instructions: args.instructions,
+            provider: ctx.provider,
+            modelId: ctx.modelId
+          })
+          notifyProposalsChanged(ctx.sender)
+          if (result.status === 'ran') {
+            return 'Done: the revised chapter is in the review queue as a word-level diff (the suggestions badge). The chapter file is untouched until the author accepts it.'
+          }
+          return 'The revision came back identical to the current chapter — nothing to suggest.'
+        }
         case 'generate_outline': {
           let args: { scope?: string; guidance?: string } = {}
           try {
@@ -217,6 +333,12 @@ Choosing a tool:
 - One specific document (e.g. "create a profile for Mira", "write up the magic system we just discussed"): call list_codex_docs first to check what exists (and read_codex_doc if updating), then write_codex_doc with the COMPLETE new file content.
 - A broad sweep from the open chapter ("update the codex from this chapter"): update_codex.
 - Outlines: generate_outline, or write_codex_doc when the author dictated the outline content in chat.
+
+You also have chapter tools:
+- list_chapters: the novel's structure (paths, statuses, which chapter is open).
+- create_chapter(title): adds a new empty chapter to the end of the novel.
+- draft_chapter(instructions, chapterFile?): streams NEW prose into a chapter in the editor. Use for "write/draft/continue the chapter". Synthesize instructions from the conversation. Keep your reply short — the draft starts when it ends.
+- edit_chapter(instructions): revises the OPEN chapter's existing text per the author's instructions; delivered as a reviewable word-diff, nothing changes until accepted. Use for "change/revise/tighten/fix the chapter". Make the instructions specific and self-contained (include names, scenes, and the outcome the author wants).
 
 Codex file conventions for write_codex_doc:
 - metadata/characters/<slug>.md — frontmatter: name, aliases (list), role, status, first_appearance, attributes (map; stats/level/realm for LitRPG), relationships (list of {character, type}). Body: ## Appearance / ## Personality / ## Arc notes prose.

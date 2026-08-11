@@ -138,7 +138,8 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
   },
 
   resolve: async (proposalId, path, resolution, editedContent) => {
-    const novel = useProjectStore.getState().novel
+    const project = useProjectStore.getState()
+    const novel = project.novel
     if (!novel) return
     const result = await window.pandora.invoke('proposals:resolve', {
       novelDir: novel.dir,
@@ -147,7 +148,15 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       resolution,
       ...(editedContent !== undefined ? { editedContent } : {})
     })
-    if (result.ok) await get().refresh()
-    else set({ error: result.error.message })
+    if (result.ok) {
+      // Accepting an edit to the open document must refresh the editor buffer.
+      if (resolution === 'accept' && path === project.activeFile) {
+        const read = await window.pandora.invoke('chapter:read', { novelDir: novel.dir, file: path })
+        if (read.ok) project.setSavedContent(read.data.content)
+      }
+      await get().refresh()
+    } else {
+      set({ error: result.error.message })
+    }
   }
 }))
