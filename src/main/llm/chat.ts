@@ -44,6 +44,24 @@ export interface ChatContext {
 
 const MAX_TOOL_ROUNDS = 4
 
+function toolStatusText(name: string): string {
+  switch (name) {
+    case 'update_codex':
+      return 'Updating the Codex…'
+    case 'generate_outline':
+      return 'Generating an outline…'
+    case 'edit_chapter':
+    case 'edit_chapter_section':
+      return 'Revising the chapter…'
+    case 'create_chapter':
+      return 'Creating a chapter…'
+    case 'append_to_chapter':
+      return 'Adding to a chapter…'
+    default:
+      return `Running ${name}…`
+  }
+}
+
 export function startChat(
   sender: WebContents,
   requestId: string,
@@ -84,6 +102,18 @@ export function startChat(
         messages[0] = { ...messages[0], content: messages[0].content + TOOL_SYSTEM_NOTE }
       }
 
+      // Duplicate/abort guards shared by both providers' tool paths.
+      const seenCalls = new Set<string>()
+      const guardedExecute = async (name: string, argsJson: string): Promise<string> => {
+        if (controller.signal.aborted) return 'Cancelled by the author. Stop immediately.'
+        const key = `${name}:${argsJson}`
+        if (seenCalls.has(key)) {
+          return 'You already called this tool with identical arguments in this reply and have its result. Do not repeat tool calls — answer the author now.'
+        }
+        seenCalls.add(key)
+        return executeTool(toolCtx!, name, argsJson)
+      }
+
       let toolRounds = 0
       try {
         for (;;) {
@@ -100,16 +130,10 @@ export function startChat(
             ...(toolCtx
               ? {
                   toolExecutor: async (name: string, argsJson: string): Promise<string> => {
-                    send({
-                      type: 'toolStatus',
-                      text:
-                        name === 'update_codex'
-                          ? 'Updating the Codex…'
-                          : name === 'generate_outline'
-                            ? 'Generating an outline…'
-                            : `Running ${name}…`
-                    })
-                    return executeTool(toolCtx, name, argsJson)
+                    if (!controller.signal.aborted) {
+                      send({ type: 'toolStatus', text: toolStatusText(name) })
+                    }
+                    return guardedExecute(name, argsJson)
                   }
                 }
               : {})
@@ -151,17 +175,9 @@ export function startChat(
           toolRounds += 1
           messages.push({ role: 'assistant', content: assistantText, toolCalls: pendingCalls })
           for (const call of pendingCalls) {
-            send({
-              type: 'toolStatus',
-              text:
-                call.name === 'update_codex'
-                  ? 'Updating the Codex…'
-                  : call.name === 'generate_outline'
-                    ? 'Generating an outline…'
-                    : `Running ${call.name}…`
-            })
+            send({ type: 'toolStatus', text: toolStatusText(call.name) })
             logInfo('chat', `tool round ${toolRounds}: ${call.name}`)
-            const result = await executeTool(toolCtx, call.name, call.arguments)
+            const result = await guardedExecute(call.name, call.arguments)
             messages.push({ role: 'tool', content: result, toolCallId: call.id })
           }
         }

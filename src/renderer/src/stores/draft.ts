@@ -46,9 +46,21 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
     if (initialized) return
     initialized = true
     // The chat agent's draft_chapter tool: begin once its reply finishes.
+    // Only ONE pending request is kept (latest wins) and only one idle-watcher
+    // runs — a runaway agent calling draft_chapter repeatedly must not queue
+    // a stampede of drafts that all fire when the chat stops.
+    let pendingDraft: { chapterFile: string; instructions: string } | null = null
+    let watching = false
     window.pandora.on('draft:requested', (raw) => {
-      const { chapterFile, instructions } = raw as { chapterFile: string; instructions: string }
-      whenChatIdle(() => void get().start(instructions || undefined, chapterFile))
+      pendingDraft = raw as { chapterFile: string; instructions: string }
+      if (watching) return
+      watching = true
+      whenChatIdle(() => {
+        watching = false
+        const p = pendingDraft
+        pendingDraft = null
+        if (p) void get().start(p.instructions || undefined, p.chapterFile)
+      })
     })
     window.pandora.on('chat:event', (raw) => {
       const { requestId, event } = raw as IpcEventPayload<'chat:event'>

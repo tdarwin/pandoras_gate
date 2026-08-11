@@ -4,7 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
 import { flushAllAutocommits } from './git/service'
 import { initTelemetry, shutdownTelemetry } from './telemetry'
-import { logInfo } from './log'
+import { logInfo, logError } from './log'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -27,6 +27,12 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  // A crashed renderer must recover visibly instead of leaving a blank window.
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logError('app', 'renderer process gone — reloading window', details)
+    if (!mainWindow.isDestroyed()) mainWindow.webContents.reload()
+  })
+
   // All external links open in the system browser, never in-app.
   mainWindow.webContents.setWindowOpenHandler((details) => {
     void shell.openExternal(details.url)
@@ -44,6 +50,10 @@ function createWindow(): void {
     void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+
+app.on('child-process-gone', (_event, details) => {
+  logError('app', 'child process gone', details)
+})
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.davintaddeo.pandorasbox')

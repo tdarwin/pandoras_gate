@@ -16,20 +16,27 @@ function send(msg: WorkerResponse): void {
   port.postMessage(msg)
 }
 
-let llama: Llama | null = null
+let llamaPromise: Promise<Llama> | null = null
 let model: LlamaModel | null = null
 let loadedPath: string | null = null
 let configuredContextSize: number | undefined
 const activeChats = new Map<string, AbortController>()
 let nextCallId = 1
 const pendingToolResults = new Map<string, (result: string) => void>()
+/** callIds in flight per chat request, so cancel can unwind tool waits. */
+const pendingByRequest = new Map<string, Set<string>>()
 
-async function getLlamaInstance(): Promise<Llama> {
-  if (!llama) {
-    const { getLlama } = await import('node-llama-cpp')
-    llama = await getLlama()
+/** Runaway-agent guard: max tool calls per single chat reply. */
+const TOOL_CALL_BUDGET = 10
+
+// Cache the PROMISE, not the instance — concurrent first calls must not
+// create two Llama instances (grammars from one are invalid for models
+// loaded with the other).
+function getLlamaInstance(): Promise<Llama> {
+  if (!llamaPromise) {
+    llamaPromise = import('node-llama-cpp').then((m) => m.getLlama())
   }
-  return llama
+  return llamaPromise
 }
 
 async function ensureModel(modelPath: string): Promise<LlamaModel> {
@@ -112,10 +119,14 @@ async function handleChat(req: Extract<WorkerRequest, { type: 'chat' }>): Promis
         : undefined
 
       // Tool support: node-llama-cpp drives the call/respond loop internally;
-      // each handler round-trips to the main process for execution.
+      // each handler round-trips to the main process for execution. A budget
+      // and duplicate-call detection stop runaway agent loops — small local
+      // models will otherwise chain tool calls forever.
       let functions: Record<string, unknown> | undefined
       if (req.tools?.length && !grammar) {
         const { defineChatSessionFunction } = await import('node-llama-cpp')
+        let callCount = 0
+        const seenCalls = new Set<string>()
         functions = {}
         for (const tool of req.tools) {
           const props = (tool.parameters as { properties?: Record<string, unknown> }).properties
@@ -123,18 +134,39 @@ async function handleChat(req: Extract<WorkerRequest, { type: 'chat' }>): Promis
           functions[tool.name] = defineChatSessionFunction({
             description: tool.description,
             ...(hasParams ? { params: tool.parameters as never } : {}),
-            handler: (params: unknown) =>
-              new Promise<string>((resolve) => {
+            handler: (params: unknown) => {
+              const paramsJson = JSON.stringify(params ?? {})
+              callCount += 1
+              if (callCount > TOOL_CALL_BUDGET) {
+                return Promise.resolve(
+                  'TOOL BUDGET EXHAUSTED for this reply. Do not call any more tools. Summarize what you have done so far and answer the author now.'
+                )
+              }
+              const key = `${tool.name}:${paramsJson}`
+              if (seenCalls.has(key)) {
+                return Promise.resolve(
+                  'You already called this tool with identical arguments in this reply and have its result. Do not repeat tool calls — answer the author now.'
+                )
+              }
+              seenCalls.add(key)
+              return new Promise<string>((resolve) => {
                 const callId = `${req.requestId}:${nextCallId++}`
                 pendingToolResults.set(callId, resolve)
+                let pending = pendingByRequest.get(req.requestId)
+                if (!pending) {
+                  pending = new Set()
+                  pendingByRequest.set(req.requestId, pending)
+                }
+                pending.add(callId)
                 send({
                   type: 'toolCall',
                   requestId: req.requestId,
                   callId,
                   name: tool.name,
-                  paramsJson: JSON.stringify(params ?? {})
+                  paramsJson
                 })
               })
+            }
           })
         }
       }
@@ -183,6 +215,7 @@ async function handleChat(req: Extract<WorkerRequest, { type: 'chat' }>): Promis
     }
   } finally {
     activeChats.delete(req.requestId)
+    pendingByRequest.delete(req.requestId)
   }
 }
 
@@ -229,12 +262,24 @@ port.on('message', (e: { data: WorkerRequest }) => {
     case 'chat':
       void handleChat(msg)
       break
-    case 'cancel':
+    case 'cancel': {
       activeChats.get(msg.requestId)?.abort()
+      // Unwind any tool handler awaiting main — otherwise the prompt cannot
+      // observe the abort and generation never actually stops.
+      const pending = pendingByRequest.get(msg.requestId)
+      if (pending) {
+        for (const callId of pending) {
+          pendingToolResults.get(callId)?.('Cancelled by the author. Stop immediately.')
+          pendingToolResults.delete(callId)
+        }
+        pendingByRequest.delete(msg.requestId)
+      }
       break
+    }
     case 'toolResult': {
       pendingToolResults.get(msg.callId)?.(msg.result)
       pendingToolResults.delete(msg.callId)
+      for (const pending of pendingByRequest.values()) pending.delete(msg.callId)
       break
     }
     case 'countTokens': {

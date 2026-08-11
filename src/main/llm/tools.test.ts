@@ -58,6 +58,7 @@ describe('chatToolDefinitions', () => {
       'edit_chapter',
       'find_in_chapter',
       'edit_chapter_section',
+      'append_to_chapter',
       'generate_outline'
     ])
   })
@@ -72,6 +73,8 @@ describe('chatToolDefinitions', () => {
       'create_chapter',
       'draft_chapter',
       'find_in_chapter',
+      'edit_chapter_section',
+      'append_to_chapter',
       'generate_outline'
     ])
   })
@@ -165,6 +168,46 @@ describe('chapter tools', () => {
       chapterFile: 'chapters/001-the-iron-gate.md',
       instructions: 'Open with the storm.'
     })
+  })
+
+  it('create_chapter refuses duplicate titles', async () => {
+    const result = await executeTool(
+      ctx(null),
+      'create_chapter',
+      JSON.stringify({ title: 'the iron gate' })
+    )
+    expect(result).toContain('already exists')
+    expect(result).toContain('chapters/001-the-iron-gate.md')
+    const manifest = await executeTool(ctx(null), 'list_chapters', '{}')
+    expect(manifest.split('\n')).toHaveLength(1)
+  })
+
+  it('append_to_chapter targets an existing (empty) chapter through review', async () => {
+    await executeTool(ctx(null), 'create_chapter', JSON.stringify({ title: 'The Trial' }))
+    const result = await executeTool(
+      ctx(null),
+      'append_to_chapter',
+      JSON.stringify({
+        chapterFile: 'chapters/002-the-trial.md',
+        content: 'The moved scene lands here.',
+        rationale: 'Moving the scene from chapter one'
+      })
+    )
+    expect(result).toContain('review queue')
+    const proposals = await listProposals(novelDir)
+    const item = proposals[0]!.items[0]!
+    expect(item.path).toBe('chapters/002-the-trial.md')
+    expect(item.newContent).toContain('The moved scene lands here.')
+  })
+
+  it('append_to_chapter refuses nonexistent chapters instead of inviting creation', async () => {
+    const result = await executeTool(
+      ctx(null),
+      'append_to_chapter',
+      JSON.stringify({ chapterFile: 'chapters/099-nope.md', content: 'x' })
+    )
+    expect(result).toContain('does not exist')
+    expect(result).toContain('Do NOT create')
   })
 
   it('draft_chapter rejects unknown chapters', async () => {
@@ -285,6 +328,26 @@ describe('find_in_chapter / edit_chapter_section', () => {
     )
     expect(result).toContain('appears 2 times')
     expect(await listProposals(novelDir)).toHaveLength(0)
+  })
+
+  it('edits a chapter other than the open one via chapterFile', async () => {
+    await executeTool(ctx(null), 'create_chapter', JSON.stringify({ title: 'Elsewhere' }))
+    await writeFile(
+      join(novelDir, 'chapters/002-elsewhere.md'),
+      '---\ntitle: Elsewhere\nstatus: draft\n---\nA quiet paragraph sits here.\n'
+    )
+    const result = await executeTool(
+      ctx(CHAPTER),
+      'edit_chapter_section',
+      JSON.stringify({
+        chapterFile: 'chapters/002-elsewhere.md',
+        find: 'A quiet paragraph sits here.',
+        replacement: 'A louder paragraph stands here.'
+      })
+    )
+    expect(result).toContain('review queue')
+    const proposals = await listProposals(novelDir)
+    expect(proposals[0]!.items[0]!.path).toBe('chapters/002-elsewhere.md')
   })
 
   it('supports deletion via empty replacement', async () => {

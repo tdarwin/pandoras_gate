@@ -2,6 +2,7 @@ import { utilityProcess, type UtilityProcess } from 'electron'
 import { join } from 'node:path'
 import type { WorkerRequest, WorkerResponse } from '../../shared/llm/workerProtocol'
 import type { StreamEvent } from '../../shared/llm/types'
+import { logWarn } from '../log'
 
 /**
  * Supervises the llm-worker utility process: lazy start, crash recovery, and
@@ -181,8 +182,18 @@ class LlmWorkerHost {
       notify?.()
     })
 
+    let killTimer: NodeJS.Timeout | null = null
     const onAbort = (): void => {
       this.send({ type: 'cancel', requestId: req.requestId })
+      // Kill switch: if the worker doesn't confirm the cancel promptly, it is
+      // wedged — restart it rather than leave the GPU spinning.
+      killTimer = setTimeout(() => {
+        if (this.chatSinks.has(req.requestId)) {
+          logWarn('llm-worker', 'cancel not honored within 8s — restarting the worker')
+          this.stop()
+          this.handleExit(-1)
+        }
+      }, 8000)
       notify?.()
     }
     signal.addEventListener('abort', onAbort, { once: true })
@@ -201,6 +212,7 @@ class LlmWorkerHost {
         notify = null
       }
     } finally {
+      if (killTimer) clearTimeout(killTimer)
       signal.removeEventListener('abort', onAbort)
       this.chatSinks.delete(req.requestId)
       this.toolExecutors.delete(req.requestId)

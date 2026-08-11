@@ -127,15 +127,31 @@ export function chatToolDefinitions(ctx: ToolContext): ToolDefinition[] {
     {
       name: 'edit_chapter_section',
       description:
-        'Replace ONE specific passage in the currently open chapter. "find" must be the EXACT text currently in the chapter (copy it verbatim — use find_in_chapter if unsure) and must match exactly one place; include a sentence of surrounding text if the passage could appear twice. "replacement" is your revised text for exactly that span (empty string deletes it). The author reviews the change as a small diff before anything is saved. Preferred over edit_chapter for all targeted changes.',
+        'Replace ONE specific passage in a chapter. "find" must be the EXACT text currently in the chapter (copy it verbatim — use find_in_chapter if unsure) and must match exactly one place; include a sentence of surrounding text if the passage could appear twice. "replacement" is your revised text for exactly that span (empty string deletes it — that is how you cut a section when moving it). chapterFile defaults to the open chapter. The author reviews the change as a small diff before anything is saved. Preferred over edit_chapter for all targeted changes.',
       parameters: {
         type: 'object',
         properties: {
           find: { type: 'string' },
           replacement: { type: 'string' },
+          chapterFile: { type: 'string' },
           rationale: { type: 'string' }
         },
         required: ['find', 'replacement'],
+        additionalProperties: false
+      }
+    },
+    {
+      name: 'append_to_chapter',
+      description:
+        'Append content to the END of a chapter (works on empty chapters). Use together with edit_chapter_section to MOVE a passage between chapters: first edit_chapter_section on the source with an empty replacement (cut), then append_to_chapter on the destination with the same text (paste). Both changes go to the review queue. Do NOT create a new chapter for this — use an existing one from list_chapters.',
+      parameters: {
+        type: 'object',
+        properties: {
+          chapterFile: { type: 'string' },
+          content: { type: 'string' },
+          rationale: { type: 'string' }
+        },
+        required: ['chapterFile', 'content'],
         additionalProperties: false
       }
     },
@@ -155,7 +171,7 @@ export function chatToolDefinitions(ctx: ToolContext): ToolDefinition[] {
     }
   ]
   // Tools that operate on "the open chapter" need one to be open.
-  const needsOpenChapter = new Set(['update_codex', 'edit_chapter', 'edit_chapter_section'])
+  const needsOpenChapter = new Set(['update_codex', 'edit_chapter'])
   return ctx.activeFile?.startsWith('chapters/')
     ? tools
     : tools.filter((t) => !needsOpenChapter.has(t.name))
@@ -270,6 +286,13 @@ export async function executeTool(
             return 'Error: could not parse the tool arguments.'
           }
           if (!args.title?.trim()) return 'Error: "title" is required.'
+          const existingManifest = await readNovelManifest(ctx.novelDir)
+          const duplicate = existingManifest.chapters.find(
+            (c) => c.title.trim().toLowerCase() === args.title!.trim().toLowerCase()
+          )
+          if (duplicate) {
+            return `Error: a chapter titled "${duplicate.title}" already exists (${duplicate.file}). Use that chapter — do NOT create another one.`
+          }
           const state = await createChapter(ctx.novelDir, args.title.trim())
           await commitAll(ctx.novelDir, `chapter created: ${args.title.trim()}`, ['novel.yaml'])
           send(ctx.sender, 'novel:updated', state)
@@ -327,7 +350,7 @@ export async function executeTool(
           return `${hits.length} match(es) in ${target}. Quote text EXACTLY as shown when using edit_chapter_section.\n\n${hits.join('\n\n')}`
         }
         case 'edit_chapter_section': {
-          let args: { find?: string; replacement?: string; rationale?: string } = {}
+          let args: { find?: string; replacement?: string; chapterFile?: string; rationale?: string } = {}
           try {
             args = JSON.parse(argsJson || '{}')
           } catch {
@@ -336,11 +359,13 @@ export async function executeTool(
           if (!args.find || args.replacement === undefined) {
             return 'Error: both "find" and "replacement" are required.'
           }
-          if (!ctx.activeFile?.startsWith('chapters/')) {
-            return 'Error: no chapter is open in the editor.'
+          const manifest = await readNovelManifest(ctx.novelDir)
+          const target = args.chapterFile ?? ctx.activeFile ?? undefined
+          if (!target || !manifest.chapters.some((c) => c.file === target)) {
+            return 'Error: no valid chapter — pass chapterFile from list_chapters or have the author open one.'
           }
           await flushAutocommit(ctx.novelDir)
-          const raw = await readFile(join(ctx.novelDir, ctx.activeFile), 'utf8')
+          const raw = await readFile(join(ctx.novelDir, target), 'utf8')
           const body = parseFrontmatter(raw).body
           const frontmatterPrefix = raw.slice(0, raw.length - body.length)
 
@@ -355,25 +380,63 @@ export async function executeTool(
             return 'Error: the replacement is identical to the original text.'
           }
 
-          const manifest = await readNovelManifest(ctx.novelDir)
-          const title =
-            manifest.chapters.find((c) => c.file === ctx.activeFile)?.title ?? ctx.activeFile
+          const title = manifest.chapters.find((c) => c.file === target)?.title ?? target
           const newContent = frontmatterPrefix + body.replace(args.find, args.replacement)
           const { queued, rejected } = await enqueueProposalItems(
             ctx.novelDir,
             `Chapter edit: ${title}`,
             [
               {
-                path: ctx.activeFile,
+                path: target,
                 newContent,
                 rationale: args.rationale ?? 'Targeted section edit from chat'
               }
             ],
-            (p) => p === ctx.activeFile
+            (p) => p === target
           )
           notifyProposalsChanged(ctx.sender)
           if (queued > 0) {
             return 'Done: the section edit is in the review queue as a small diff (the suggestions badge). The chapter is untouched until the author accepts it.'
+          }
+          return `Nothing queued — ${rejected.join('; ')}`
+        }
+        case 'append_to_chapter': {
+          let args: { chapterFile?: string; content?: string; rationale?: string } = {}
+          try {
+            args = JSON.parse(argsJson || '{}')
+          } catch {
+            return 'Error: could not parse the tool arguments.'
+          }
+          if (!args.chapterFile || !args.content?.trim()) {
+            return 'Error: both "chapterFile" and "content" are required.'
+          }
+          const manifest = await readNovelManifest(ctx.novelDir)
+          const entry = manifest.chapters.find((c) => c.file === args.chapterFile)
+          if (!entry) {
+            return 'Error: that chapter does not exist — check list_chapters. Do NOT create a new chapter unless the author asked for one.'
+          }
+          await flushAutocommit(ctx.novelDir)
+          const raw = await readFile(join(ctx.novelDir, args.chapterFile), 'utf8')
+          const body = parseFrontmatter(raw).body
+          const frontmatterPrefix = raw.slice(0, raw.length - body.length)
+          const joined = body.trim()
+            ? `${body.replace(/\s+$/, '')}\n\n${args.content.trim()}\n`
+            : `\n${args.content.trim()}\n`
+          const { queued, rejected } = await enqueueProposalItems(
+            ctx.novelDir,
+            `Chapter edit: ${entry.title}`,
+            [
+              {
+                path: args.chapterFile,
+                newContent: frontmatterPrefix + joined,
+                rationale: args.rationale ?? 'Content appended from chat'
+              }
+            ],
+            (p) => p === args.chapterFile
+          )
+          notifyProposalsChanged(ctx.sender)
+          if (queued > 0) {
+            return `Done: the addition to "${entry.title}" is in the review queue. The chapter is untouched until the author accepts it.`
           }
           return `Nothing queued — ${rejected.join('; ')}`
         }
@@ -451,9 +514,13 @@ You also have chapter tools:
 - list_chapters: the novel's structure (paths, statuses, which chapter is open).
 - create_chapter(title): adds a new empty chapter to the end of the novel.
 - draft_chapter(instructions, chapterFile?): streams NEW prose into a chapter in the editor. Use for "write/draft/continue the chapter". Synthesize instructions from the conversation. Keep your reply short — the draft starts when it ends.
-- edit_chapter_section(find, replacement): THE DEFAULT for revisions. Replace one exact passage of the open chapter — quote "find" verbatim from the chapter (find_in_chapter fetches exact text), author the replacement yourself from the conversation. Small reviewable diff; repeat for multiple spots.
+- edit_chapter_section(find, replacement, chapterFile?): THE DEFAULT for revisions. Replace one exact passage — quote "find" verbatim from the chapter (find_in_chapter fetches exact text), author the replacement yourself from the conversation. Small reviewable diff; repeat for multiple spots.
+- append_to_chapter(chapterFile, content): add content to the end of an existing chapter (fine on empty ones).
+- To MOVE a passage between chapters: find_in_chapter to get the exact text → edit_chapter_section on the source with replacement "" (cut) → append_to_chapter on the destination with that text (paste). Two review items; NEVER create a new chapter for a move.
 - find_in_chapter(query, chapterFile?): locate passages and get their exact wording with context.
 - edit_chapter(instructions): full-chapter rewrite via a separate generation. Only for sweeping revisions (POV/tense/whole-tone changes) where section edits are impractical.
+
+Discipline: call each tool at most once per distinct purpose, verify with list_chapters/list_codex_docs BEFORE creating anything, and never create a chapter or document that already exists. When a tool returns an Error, fix your arguments and retry once — do not switch to creating new things. After your tools succeed, STOP and reply to the author.
 
 Codex file conventions for write_codex_doc:
 - metadata/characters/<slug>.md — frontmatter: name, aliases (list), role, status, first_appearance, attributes (map; stats/level/realm for LitRPG), relationships (list of {character, type}). Body: ## Appearance / ## Personality / ## Arc notes prose.
