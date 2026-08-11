@@ -60,6 +60,36 @@ function ModelSetupPrompt({ onOpenModels }: { onOpenModels: () => void }): React
   )
 }
 
+const PANEL_MIN = 300
+const PANEL_MAX = 900
+const INPUT_MIN = 40
+const INPUT_MAX = 400
+
+function readStoredSize(key: string, fallback: number): number {
+  const raw = Number(localStorage.getItem(key))
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback
+}
+
+/** Generic pointer-drag helper: calls onMove with cursor deltas until mouseup. */
+function startDrag(
+  e: React.MouseEvent,
+  onMove: (dx: number, dy: number) => void,
+  onDone: () => void
+): void {
+  e.preventDefault()
+  const startX = e.clientX
+  const startY = e.clientY
+  const move = (ev: MouseEvent): void => onMove(ev.clientX - startX, ev.clientY - startY)
+  const up = (): void => {
+    document.removeEventListener('mousemove', move)
+    document.removeEventListener('mouseup', up)
+    document.body.style.cursor = ''
+    onDone()
+  }
+  document.addEventListener('mousemove', move)
+  document.addEventListener('mouseup', up)
+}
+
 export default function ChatPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
   const {
     models,
@@ -82,6 +112,37 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
   const [showModels, setShowModels] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
+  // Both dimensions are user-resizable and remembered.
+  const [panelWidth, setPanelWidth] = useState(() => readStoredSize('chat.panelWidth', 416))
+  const [inputHeight, setInputHeight] = useState(() => readStoredSize('chat.inputHeight', 0))
+  const widthRef = useRef(panelWidth)
+  widthRef.current = panelWidth
+  const inputHeightRef = useRef(inputHeight)
+  inputHeightRef.current = inputHeight
+
+  const clampW = (w: number): number => Math.min(PANEL_MAX, Math.max(PANEL_MIN, w))
+  const clampH = (h: number): number => Math.min(INPUT_MAX, Math.max(INPUT_MIN, h))
+
+  const dragWidth = (e: React.MouseEvent): void => {
+    const start = widthRef.current
+    document.body.style.cursor = 'col-resize'
+    startDrag(
+      e,
+      (dx) => setPanelWidth(clampW(start - dx)),
+      () => localStorage.setItem('chat.panelWidth', String(widthRef.current))
+    )
+  }
+
+  const dragInputHeight = (e: React.MouseEvent): void => {
+    const start = inputHeightRef.current || 40
+    document.body.style.cursor = 'row-resize'
+    startDrag(
+      e,
+      (_dx, dy) => setInputHeight(clampH(start - dy)),
+      () => localStorage.setItem('chat.inputHeight', String(inputHeightRef.current))
+    )
+  }
+
   useEffect(() => init(), [init])
 
   useEffect(() => {
@@ -95,7 +156,16 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
   }
 
   return (
-    <aside className="flex w-[26rem] shrink-0 flex-col border-l border-zinc-800 bg-zinc-900/60">
+    <aside
+      style={{ width: panelWidth }}
+      className="relative flex shrink-0 flex-col border-l border-zinc-800 bg-zinc-900/60"
+    >
+      {/* Drag the panel's left edge to resize the whole chat pane. */}
+      <div
+        onMouseDown={dragWidth}
+        title="Drag to resize"
+        className="absolute -left-1 top-0 z-10 h-full w-2 cursor-col-resize hover:bg-indigo-500/30"
+      />
       <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-zinc-800 px-3">
         <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">Chat</h2>
         <div className="flex min-w-0 items-center gap-1">
@@ -197,7 +267,19 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
           </div>
 
           {report && <ContextInspector report={report} />}
-          <div className="shrink-0 border-t border-zinc-800 p-3">
+          {/* Drag to give yourself more typing room. */}
+          <div
+            onMouseDown={dragInputHeight}
+            onDoubleClick={() => {
+              setInputHeight(0)
+              localStorage.removeItem('chat.inputHeight')
+            }}
+            title="Drag to resize the message box (double-click to reset)"
+            className="group flex h-2 shrink-0 cursor-row-resize items-center justify-center border-t border-zinc-800 hover:bg-indigo-500/20"
+          >
+            <span className="h-0.5 w-8 rounded-full bg-zinc-700 group-hover:bg-indigo-400" />
+          </div>
+          <div className="shrink-0 p-3 pt-1.5">
             {usage && (
               <div className="mb-1.5 text-right text-[10px] text-zinc-600">
                 {usage.promptTokens.toLocaleString()} in · {usage.completionTokens.toLocaleString()}{' '}
@@ -214,7 +296,9 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
                     submit()
                   }
                 }}
-                rows={Math.min(6, Math.max(1, draft.split('\n').length))}
+                {...(inputHeight > 0
+                  ? { style: { height: inputHeight } }
+                  : { rows: Math.min(6, Math.max(1, draft.split('\n').length)) })}
                 placeholder="Message… (Enter to send, Shift+Enter for newline)"
                 className="min-h-9 flex-1 resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
               />
