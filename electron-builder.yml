@@ -36,4 +36,7 @@ publish:
   provider: github
   owner: tdarwin
   repo: pandoras_gate
+  # Publish directly to the tag's release — the draft default splits assets
+  # across duplicate drafts and leaves the release invisible.
+  releaseType: release
 npmRebuild: false
