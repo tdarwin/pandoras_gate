@@ -20,13 +20,13 @@ This repository doubles as a Homebrew tap:
 
 ```bash
 brew tap tdarwin/pandora https://github.com/tdarwin/pandoras_gate
-brew install --cask --no-quarantine tdarwin/pandora/pandoras-gate
+brew install --cask tdarwin/pandora/pandoras-gate
 ```
 
-`--no-quarantine` is needed while releases are unsigned — macOS Gatekeeper
-otherwise reports the app as damaged. Once releases are signed and notarized
-with a Developer ID, drop the flag. Alternatively, download the DMG from
-[Releases](https://github.com/tdarwin/pandoras_gate/releases) and run
+Releases are not yet signed with an Apple Developer ID, so the cask clears
+macOS's quarantine flag after install (otherwise Gatekeeper reports the app
+as damaged). If you instead download the DMG from
+[Releases](https://github.com/tdarwin/pandoras_gate/releases) manually, run
 `xattr -cr "/Applications/Pandora's Gate.app"` after copying it in.
 
 Releases are produced by `.github/workflows/release.yml` on every `v*` tag:
