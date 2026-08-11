@@ -53,13 +53,13 @@ export default class ErrorBoundary extends React.Component<
   override render(): React.ReactNode {
     if (!this.state.error) return this.props.children
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-zinc-950 p-8 text-center">
-        <h1 className="text-lg font-semibold text-zinc-200">Something broke in the interface</h1>
-        <p className="max-w-md text-sm leading-relaxed text-zinc-500">
+      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-surface p-8 text-center">
+        <h1 className="text-lg font-semibold text-ink">Something broke in the interface</h1>
+        <p className="max-w-md text-sm leading-relaxed text-ink-faint">
           Your writing is safe on disk — this was a display error, and it has been written to the
           log file (Preferences → Observability → Open local log folder).
         </p>
-        <pre className="max-h-40 max-w-xl overflow-auto rounded-lg bg-zinc-900 p-3 text-left font-mono text-xs text-red-300">
+        <pre className="max-h-40 max-w-xl overflow-auto rounded-lg bg-panel p-3 text-left font-mono text-xs text-red-300">
           {this.state.error.message}
         </pre>
         <button

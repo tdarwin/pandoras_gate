@@ -1,5 +1,70 @@
 @import 'tailwindcss';
 
+/* Semantic theme tokens — utilities like bg-surface / text-ink resolve to
+   these, and the palettes swap via data-theme on <html>. */
+@theme inline {
+  --color-surface: var(--t-surface);
+  --color-panel: var(--t-panel);
+  --color-raised: var(--t-raised);
+  --color-line: var(--t-line);
+  --color-line-strong: var(--t-line-strong);
+  --color-ink: var(--t-ink);
+  --color-ink-strong: var(--t-ink-strong);
+  --color-ink-muted: var(--t-ink-muted);
+  --color-ink-faint: var(--t-ink-faint);
+}
+
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --t-surface: #09090b;
+  --t-panel: #18181b;
+  --t-raised: #27272a;
+  --t-line: #27272a;
+  --t-line-strong: #3f3f46;
+  --t-ink: #e4e4e7;
+  --t-ink-strong: #fafafa;
+  --t-ink-muted: #a1a1aa;
+  --t-ink-faint: #71717a;
+  --ed-caret: #a5b4fc;
+  --ed-sel: rgba(99, 102, 241, 0.25);
+  --ed-head: #fafafa;
+  --ed-strike: #a1a1aa;
+  --ed-code-bg: rgba(255, 255, 255, 0.08);
+  --ed-link: #a5b4fc;
+  --ed-bullet: #818cf8;
+  --ed-quote: #52525b;
+  --ed-quote-text: #a1a1aa;
+  --ed-hr: #3f3f46;
+  --ed-fm: #71717a;
+  --ed-fm-border: #27272a;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --t-surface: #fafaf9;
+  --t-panel: #ffffff;
+  --t-raised: #e7e5e4;
+  --t-line: #e7e5e4;
+  --t-line-strong: #d6d3d1;
+  --t-ink: #292524;
+  --t-ink-strong: #0c0a09;
+  --t-ink-muted: #57534e;
+  --t-ink-faint: #a8a29e;
+  --ed-caret: #4f46e5;
+  --ed-sel: rgba(99, 102, 241, 0.2);
+  --ed-head: #1c1917;
+  --ed-strike: #78716c;
+  --ed-code-bg: rgba(0, 0, 0, 0.06);
+  --ed-link: #4f46e5;
+  --ed-bullet: #4f46e5;
+  --ed-quote: #d6d3d1;
+  --ed-quote-text: #57534e;
+  --ed-hr: #d6d3d1;
+  --ed-fm: #78716c;
+  --ed-fm-border: #e7e5e4;
+}
+
 /* App-wide chrome: the title bar region is draggable on macOS (hiddenInset). */
 .titlebar-drag {
   -webkit-app-region: drag;

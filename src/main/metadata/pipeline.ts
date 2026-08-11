@@ -160,6 +160,8 @@ interface RunContext {
   force?: boolean
   /** gen_ai.conversation.id when triggered from a chat session. */
   conversationId?: string
+  /** Live progress callback ("Asking the model…"). */
+  onStatus?: (text: string) => void
 }
 
 async function buildUserPrompt(novelDir: string, chapterFile: string): Promise<string> {
@@ -275,7 +277,9 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
   const manifest = await readNovelManifest(novelDir)
   const chapterTitle = manifest.chapters.find((c) => c.file === chapterFile)?.title ?? chapterFile
 
+  ctx.onStatus?.(`Reading “${chapterTitle}” and the Codex…`)
   const userPrompt = await buildUserPrompt(novelDir, chapterFile)
+  ctx.onStatus?.(`Asking the model to analyze “${chapterTitle}”…`)
 
   // Collect the full response (schema-constrained where supported).
   let raw = ''
@@ -311,6 +315,8 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
       `The model's metadata response was not valid JSON (${err instanceof Error ? err.message.slice(0, 120) : 'parse error'})`
     )
   }
+
+  ctx.onStatus?.(`Reviewing ${output.proposals.length} suggested change(s)…`)
 
   // Filter: unsafe paths, invalid content, no-ops, previously rejected.
   const rejected = new Set(state.rejectedProposals ?? [])

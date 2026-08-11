@@ -14,13 +14,16 @@ export interface ContextReport {
   }[]
 }
 
+/** Transcript entry: real chat message, or a UI-only tool-activity chip. */
+export type ChatEntry = ChatMessage & { uiKind?: 'tool' }
+
 interface ChatStore {
   models: ModelInfo[]
   selectedModelId: string | null
   apiKeyConfigured: boolean
   /** Session id shared by all telemetry spans of this conversation. */
   conversationId: string
-  messages: ChatMessage[]
+  messages: ChatEntry[]
   streaming: boolean
   requestId: string | null
   usage: { promptTokens: number; completionTokens: number } | null
@@ -86,7 +89,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           break
         }
         case 'toolStatus':
-          set({ toolStatus: event.text })
+          // Live indicator now + a permanent chip in the transcript, placed
+          // before the assistant bubble currently being streamed.
+          set((s) => {
+            const messages = [...s.messages]
+            const last = messages[messages.length - 1]
+            const chip: ChatEntry = { role: 'assistant', content: event.text, uiKind: 'tool' }
+            if (last?.role === 'assistant' && !last.uiKind) {
+              messages.splice(messages.length - 1, 0, chip)
+            } else {
+              messages.push(chip)
+            }
+            return { messages, toolStatus: event.text }
+          })
           break
         case 'usage':
           set({ usage: { promptTokens: event.promptTokens, completionTokens: event.completionTokens } })
@@ -198,7 +213,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const assembled = await window.pandora.invoke('context:assemble', {
       novelDir: novel.dir,
       activeFile: project.activeFile,
-      chatHistory: messages,
+      // Tool-activity chips are UI-only — never part of the model's history.
+      chatHistory: messages.filter((m) => !m.uiKind).map(({ uiKind: _uiKind, ...m }) => m),
       userMessage,
       contextTokens,
       reservedOutput: 2048

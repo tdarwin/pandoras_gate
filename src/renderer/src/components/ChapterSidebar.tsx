@@ -1,6 +1,82 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useProjectStore } from '../stores/project'
 import StoryBible from './StoryBible'
+
+function ArchiveSection(): React.JSX.Element | null {
+  const novel = useProjectStore((s) => s.novel)!
+  const applyNovelState = useProjectStore((s) => s.applyNovelState)
+  const setError = useProjectStore((s) => s.setError)
+  const [chapters, setChapters] = useState<{ file: string; title: string }[]>([])
+  const [open, setOpen] = useState(false)
+
+  const refresh = useCallback(async () => {
+    const result = await window.pandora.invoke('archive:list', { novelDir: novel.dir })
+    if (result.ok) setChapters(result.data.chapters)
+  }, [novel.dir])
+
+  // Chapter count changes when something is archived — re-list then.
+  const chapterCount = novel.manifest.chapters.length
+  useEffect(() => {
+    void refresh()
+  }, [refresh, chapterCount])
+
+  if (chapters.length === 0) return null
+
+  const restore = async (file: string): Promise<void> => {
+    const result = await window.pandora.invoke('archive:restore', { novelDir: novel.dir, file })
+    if (result.ok) {
+      applyNovelState(result.data)
+      await refresh()
+    } else {
+      setError(result.error.message)
+    }
+  }
+
+  const remove = async (file: string): Promise<void> => {
+    const result = await window.pandora.invoke('archive:delete', { novelDir: novel.dir, file })
+    if (result.ok) await refresh()
+    else setError(result.error.message)
+  }
+
+  return (
+    <div className="mt-2 border-t border-line px-2 pt-2">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-1 text-xs font-medium uppercase tracking-wide text-ink-faint hover:text-ink-muted"
+      >
+        <span>Archive ({chapters.length})</span>
+        <span>{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <ul className="mt-1 pb-2">
+          {chapters.map((c) => (
+            <li key={c.file} className="group flex items-center rounded px-2 py-1 text-sm text-ink-faint">
+              <span className="min-w-0 flex-1 truncate" title={c.title}>
+                {c.title}
+              </span>
+              <span className="hidden shrink-0 gap-1 group-hover:flex">
+                <button
+                  onClick={() => void restore(c.file)}
+                  title="Restore to the end of the novel"
+                  className="rounded px-1 text-xs text-ink-muted hover:text-emerald-400"
+                >
+                  Restore
+                </button>
+                <button
+                  onClick={() => void remove(c.file)}
+                  title="Delete permanently (still in history)"
+                  className="rounded px-1 text-xs text-ink-faint hover:text-red-400"
+                >
+                  Delete
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
 
 export default function ChapterSidebar(): React.JSX.Element {
   const [tab, setTab] = useState<'chapters' | 'bible'>('chapters')
@@ -51,18 +127,18 @@ export default function ChapterSidebar(): React.JSX.Element {
   }
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-zinc-800 bg-zinc-900/60">
+    <aside className="flex w-64 shrink-0 flex-col border-r border-line bg-panel/60">
       <div className="flex items-center justify-between px-3 pt-3">
         <div className="min-w-0">
           {novel.seriesTitle && (
-            <div className="truncate text-xs text-zinc-500">{novel.seriesTitle}</div>
+            <div className="truncate text-xs text-ink-faint">{novel.seriesTitle}</div>
           )}
-          <div className="truncate text-sm font-medium text-zinc-200">{novel.manifest.title}</div>
+          <div className="truncate text-sm font-medium text-ink">{novel.manifest.title}</div>
         </div>
         <button
           onClick={closeNovel}
           title="Close novel"
-          className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+          className="rounded p-1 text-ink-faint hover:bg-raised hover:text-ink-muted"
         >
           ✕
         </button>
@@ -72,7 +148,7 @@ export default function ChapterSidebar(): React.JSX.Element {
         <button
           onClick={() => setTab('chapters')}
           className={`flex-1 rounded-md px-2 py-1 text-xs font-medium ${
-            tab === 'chapters' ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'
+            tab === 'chapters' ? 'bg-raised text-ink' : 'text-ink-faint hover:text-ink-muted'
           }`}
         >
           Chapters
@@ -80,7 +156,7 @@ export default function ChapterSidebar(): React.JSX.Element {
         <button
           onClick={() => setTab('bible')}
           className={`flex-1 rounded-md px-2 py-1 text-xs font-medium ${
-            tab === 'bible' ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'
+            tab === 'bible' ? 'bg-raised text-ink' : 'text-ink-faint hover:text-ink-muted'
           }`}
         >
           Codex
@@ -92,11 +168,11 @@ export default function ChapterSidebar(): React.JSX.Element {
       ) : (
         <>
           <div className="mt-4 flex items-center justify-between px-3">
-            <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">Chapters</h2>
+            <h2 className="text-xs font-medium uppercase tracking-wide text-ink-faint">Chapters</h2>
             <button
               onClick={() => setAdding(true)}
               title="New chapter"
-              className="rounded px-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+              className="rounded px-1.5 text-ink-muted hover:bg-raised hover:text-ink"
             >
               +
             </button>
@@ -123,7 +199,7 @@ export default function ChapterSidebar(): React.JSX.Element {
                       if (e.key === 'Enter') void submitRename(ch.file)
                       if (e.key === 'Escape') setRenaming(null)
                     }}
-                    className="w-full rounded border border-indigo-500 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 outline-none"
+                    className="w-full rounded border border-indigo-500 bg-panel px-2 py-1 text-sm text-ink outline-none"
                   />
                 ) : (
                   <div
@@ -150,8 +226,8 @@ export default function ChapterSidebar(): React.JSX.Element {
                     }}
                     className={`flex cursor-grab items-center rounded px-2 py-1.5 text-sm active:cursor-grabbing ${
                       activeFile === ch.file
-                        ? 'bg-zinc-800 text-zinc-100'
-                        : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+                        ? 'bg-raised text-ink'
+                        : 'text-ink-muted hover:bg-raised/60 hover:text-ink'
                     } ${dragIndex === i ? 'opacity-40' : ''}`}
                   >
                     <button
@@ -163,7 +239,7 @@ export default function ChapterSidebar(): React.JSX.Element {
                       className="min-w-0 flex-1 truncate text-left"
                       title={ch.title}
                     >
-                      <span className="mr-1.5 text-xs text-zinc-600">{i + 1}.</span>
+                      <span className="mr-1.5 text-xs text-ink-faint">{i + 1}.</span>
                       {ch.title}
                     </button>
                     <button
@@ -173,7 +249,7 @@ export default function ChapterSidebar(): React.JSX.Element {
                         setConfirmDelete(null)
                       }}
                       title="Chapter actions"
-                      className="hidden shrink-0 rounded px-1 text-zinc-500 hover:text-zinc-200 group-hover:block"
+                      className="hidden shrink-0 rounded px-1 text-ink-faint hover:text-ink group-hover:block"
                     >
                       ⋯
                     </button>
@@ -189,14 +265,14 @@ export default function ChapterSidebar(): React.JSX.Element {
                         setConfirmDelete(null)
                       }}
                     />
-                  <div className="absolute right-1 top-8 z-20 w-44 rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-xl">
+                  <div className="absolute right-1 top-8 z-20 w-44 rounded-lg border border-line-strong bg-panel py-1 shadow-xl">
                     <button
                       onClick={() => {
                         setMenuFor(null)
                         setRenaming(ch.file)
                         setRenameValue(ch.title)
                       }}
-                      className="block w-full px-3 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-800"
+                      className="block w-full px-3 py-1.5 text-left text-xs text-ink-muted hover:bg-raised"
                     >
                       Rename
                     </button>
@@ -205,10 +281,10 @@ export default function ChapterSidebar(): React.JSX.Element {
                         setMenuFor(null)
                         void archiveChapter(ch.file)
                       }}
-                      className="block w-full px-3 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-800"
+                      className="block w-full px-3 py-1.5 text-left text-xs text-ink-muted hover:bg-raised"
                     >
                       Archive
-                      <span className="block text-[10px] text-zinc-600">
+                      <span className="block text-[10px] text-ink-faint">
                         Moves the file to archive/, keeps history
                       </span>
                     </button>
@@ -226,7 +302,7 @@ export default function ChapterSidebar(): React.JSX.Element {
                     ) : (
                       <button
                         onClick={() => setConfirmDelete(ch.file)}
-                        className="block w-full px-3 py-1.5 text-left text-xs text-red-400/80 hover:bg-zinc-800"
+                        className="block w-full px-3 py-1.5 text-left text-xs text-red-400/80 hover:bg-raised"
                       >
                         Delete…
                       </button>
@@ -256,11 +332,12 @@ export default function ChapterSidebar(): React.JSX.Element {
                     }
                   }}
                   placeholder="Chapter title…"
-                  className="w-full rounded border border-indigo-500 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 outline-none"
+                  className="w-full rounded border border-indigo-500 bg-panel px-2 py-1 text-sm text-ink outline-none"
                 />
               </li>
             )}
           </ul>
+          <ArchiveSection />
         </>
       )}
     </aside>

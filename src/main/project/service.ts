@@ -254,6 +254,56 @@ export async function deleteChapter(novelDir: string, file: string): Promise<Nov
   return { dir: novelDir, manifest }
 }
 
+/** Archived chapters: archive/*.md with their frontmatter titles. */
+export async function listArchivedChapters(
+  novelDir: string
+): Promise<{ file: string; title: string }[]> {
+  try {
+    const { readdir } = await import('node:fs/promises')
+    const files = (await readdir(join(novelDir, 'archive'))).filter((f) => f.endsWith('.md')).sort()
+    const out: { file: string; title: string }[] = []
+    for (const f of files) {
+      const raw = await readFile(join(novelDir, 'archive', f), 'utf8').catch(() => '')
+      const { data } = parseFrontmatter(raw)
+      out.push({
+        file: `archive/${f}`,
+        title: typeof data['title'] === 'string' && data['title'] ? data['title'] : basename(f, '.md')
+      })
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+/** Moves an archived chapter back into the manifest (at the end). */
+export async function restoreArchivedChapter(novelDir: string, file: string): Promise<NovelState> {
+  if (!file.startsWith('archive/')) throw new Error('Not an archived chapter')
+  const raw = await readFile(join(novelDir, file), 'utf8')
+  const { data } = parseFrontmatter(raw)
+  const title =
+    typeof data['title'] === 'string' && data['title'] ? data['title'] : basename(file, '.md')
+
+  const manifest = await readNovelManifest(novelDir)
+  const n = manifest.chapters.length + 1
+  let target = `chapters/${chapterPrefix(n)}-${slugify(title)}.md`
+  let attempt = n
+  while (await exists(join(novelDir, target))) {
+    target = `chapters/${chapterPrefix(++attempt)}-${slugify(title)}.md`
+  }
+  await rename(join(novelDir, file), join(novelDir, target))
+  manifest.chapters.push(ChapterEntry.parse({ file: target, title, status: 'draft' }))
+  await writeNovelManifest(novelDir, manifest)
+  return { dir: novelDir, manifest }
+}
+
+/** Permanently removes an archived chapter file (history stays in git). */
+export async function deleteArchivedChapter(novelDir: string, file: string): Promise<void> {
+  if (!file.startsWith('archive/')) throw new Error('Not an archived chapter')
+  const { rm } = await import('node:fs/promises')
+  await rm(join(novelDir, file), { force: true })
+}
+
 /* ------------------------------------------------------------------ */
 /* Story bible (metadata docs)                                         */
 /* ------------------------------------------------------------------ */

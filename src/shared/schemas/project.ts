@@ -21,6 +21,11 @@ export const NovelManifest = z.object({
   author: z.string().default(''),
   /** Relative path to a series.yaml when this novel is part of a series. */
   series: z.string().optional(),
+  /**
+   * Author's standing instructions for the AI on this novel (voice, tense,
+   * content boundaries…) — appended to every system prompt.
+   */
+  chatInstructions: z.string().optional(),
   chapters: z.array(ChapterEntry).default([])
 })
 export type NovelManifest = z.infer<typeof NovelManifest>

@@ -132,6 +132,7 @@ export async function gatherStorySource(
   return {
     novelTitle: manifest.title,
     author: manifest.author,
+    customInstructions: manifest.chatInstructions?.trim() || null,
     synopsis,
     novelOutline,
     chapterOutline,

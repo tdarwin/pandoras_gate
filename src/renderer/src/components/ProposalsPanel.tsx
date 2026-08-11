@@ -5,7 +5,7 @@ import { useProposalsStore, type ReviewItem } from '../stores/proposals'
 function WordDiff({ oldText, newText }: { oldText: string; newText: string }): React.JSX.Element {
   const parts = diffWords(oldText, newText)
   return (
-    <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-zinc-950 p-3 font-mono text-[11.5px] leading-relaxed">
+    <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-surface p-3 font-mono text-[11.5px] leading-relaxed">
       {parts.map((p, i) =>
         p.added ? (
           <span key={i} className="rounded bg-emerald-950 text-emerald-300">
@@ -16,7 +16,7 @@ function WordDiff({ oldText, newText }: { oldText: string; newText: string }): R
             {p.value}
           </span>
         ) : (
-          <span key={i} className="text-zinc-500">
+          <span key={i} className="text-ink-faint">
             {p.value}
           </span>
         )
@@ -27,10 +27,12 @@ function WordDiff({ oldText, newText }: { oldText: string; newText: string }): R
 
 function ItemCard({
   proposalId,
-  item
+  item,
+  onReview
 }: {
   proposalId: string
   item: ReviewItem
+  onReview: () => void
 }): React.JSX.Element {
   const resolve = useProposalsStore((s) => s.resolve)
   const [editing, setEditing] = useState(false)
@@ -44,11 +46,11 @@ function ItemCard({
   }
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
+    <div className="rounded-lg border border-line bg-panel/60 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate font-mono text-xs text-zinc-300">{item.path}</span>
+            <span className="truncate font-mono text-xs text-ink-muted">{item.path}</span>
             <span
               className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
                 item.action === 'create'
@@ -67,7 +69,7 @@ function ItemCard({
               </span>
             )}
           </div>
-          <p className="mt-1 text-xs text-zinc-500">{item.rationale}</p>
+          <p className="mt-1 text-xs text-ink-faint">{item.rationale}</p>
         </div>
       </div>
 
@@ -77,10 +79,10 @@ function ItemCard({
             value={edited}
             onChange={(e) => setEdited(e.target.value)}
             rows={12}
-            className="w-full resize-y rounded border border-indigo-700 bg-zinc-950 p-3 font-mono text-[11.5px] leading-relaxed text-zinc-200 outline-none"
+            className="w-full resize-y rounded border border-indigo-700 bg-surface p-3 font-mono text-[11.5px] leading-relaxed text-ink outline-none"
           />
         ) : item.action === 'create' ? (
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-zinc-950 p-3 font-mono text-[11.5px] leading-relaxed text-emerald-300/90">
+          <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-surface p-3 font-mono text-[11.5px] leading-relaxed text-emerald-300/90">
             {item.newContent}
           </pre>
         ) : (
@@ -93,7 +95,7 @@ function ItemCard({
           <>
             <button
               onClick={() => setEditing(false)}
-              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+              className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink-muted hover:bg-raised"
             >
               Cancel edit
             </button>
@@ -110,7 +112,7 @@ function ItemCard({
             <button
               disabled={busy}
               onClick={() => void act('reject')}
-              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-red-300"
+              className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink-muted hover:bg-raised hover:text-red-300"
             >
               Reject
             </button>
@@ -120,16 +122,24 @@ function ItemCard({
                 setEdited(item.newContent)
                 setEditing(true)
               }}
-              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+              className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink-muted hover:bg-raised"
             >
               Edit
+            </button>
+            <button
+              disabled={busy}
+              onClick={onReview}
+              title="Open in the editor with inline accept/reject for each change"
+              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
+            >
+              Review in editor
             </button>
             <button
               disabled={busy}
               onClick={() => void act('accept')}
               className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
             >
-              Accept
+              Accept all
             </button>
           </>
         )}
@@ -142,6 +152,7 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
   const proposals = useProposalsStore((s) => s.proposals)
   const refresh = useProposalsStore((s) => s.refresh)
   const resolve = useProposalsStore((s) => s.resolve)
+  const enterReview = useProposalsStore((s) => s.enterReview)
   const error = useProposalsStore((s) => s.error)
   const [busyAll, setBusyAll] = useState(false)
 
@@ -163,11 +174,11 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
-      <div className="flex max-h-[88vh] w-full max-w-3xl flex-col rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+      <div className="flex max-h-[88vh] w-full max-w-3xl flex-col rounded-xl border border-line bg-panel shadow-2xl">
+        <div className="flex items-center justify-between border-b border-line px-5 py-3">
           <div>
-            <h2 className="text-sm font-semibold text-zinc-200">Codex suggestions</h2>
-            <p className="text-xs text-zinc-500">
+            <h2 className="text-sm font-semibold text-ink">Codex suggestions</h2>
+            <p className="text-xs text-ink-faint">
               Review what the AI learned from your latest writing. Nothing changes until you accept
               it.
             </p>
@@ -184,7 +195,7 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
             )}
             <button
               onClick={onClose}
-              className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+              className="rounded p-1 text-ink-faint hover:bg-raised hover:text-ink-muted"
             >
               ✕
             </button>
@@ -198,19 +209,27 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
             </div>
           )}
           {total === 0 ? (
-            <p className="py-12 text-center text-sm text-zinc-600">
+            <p className="py-12 text-center text-sm text-ink-faint">
               No pending suggestions. Save a chapter and press “Update Codex”, or ask the chat
               agent to do it.
             </p>
           ) : (
             proposals.map((p) => (
               <div key={p.id} className="mb-5">
-                <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-faint">
                   From “{p.chapterTitle}”
                 </h3>
                 <div className="flex flex-col gap-3">
                   {p.items.map((item) => (
-                    <ItemCard key={item.path} proposalId={p.id} item={item} />
+                    <ItemCard
+                      key={item.path}
+                      proposalId={p.id}
+                      item={item}
+                      onReview={() => {
+                        enterReview(p.id, item.path)
+                        onClose()
+                      }}
+                    />
                   ))}
                 </div>
               </div>

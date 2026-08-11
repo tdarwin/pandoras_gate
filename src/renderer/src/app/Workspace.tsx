@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useProjectStore } from '../stores/project'
 import { useProposalsStore } from '../stores/proposals'
 import { useDraftStore } from '../stores/draft'
@@ -10,8 +10,59 @@ import HistoryPanel from '../components/HistoryPanel'
 import ProposalsPanel from '../components/ProposalsPanel'
 import AiPromptModal from '../components/AiPromptModal'
 import MarkdownEditor from '../editor/MarkdownEditor'
+import type { EditorView } from '@codemirror/view'
+import { toggleInline, setHeading, toggleLinePrefix } from '../editor/commands'
+import { parseFrontmatter } from '@shared/frontmatter'
 
 const AUTO_METADATA_DELAY_MS = 15_000
+
+function wordCount(content: string): { words: number; readMinutes: number } {
+  const body = parseFrontmatter(content).body
+  const words = body.split(/\s+/).filter((w) => /\w/.test(w)).length
+  return { words, readMinutes: Math.max(1, Math.round(words / 230)) }
+}
+
+function StyleToolbar({ viewRef }: { viewRef: React.RefObject<EditorView | null> }): React.JSX.Element {
+  const run = (fn: (view: EditorView) => void): void => {
+    if (viewRef.current) fn(viewRef.current)
+  }
+  const btn =
+    'rounded px-1.5 py-0.5 text-xs text-ink-faint hover:bg-raised hover:text-ink'
+  return (
+    <span className="flex items-center gap-0.5 border-r border-line pr-2">
+      <select
+        value=""
+        onChange={(e) => {
+          const v = e.target.value
+          if (v !== '') run((view) => setHeading(view, Number(v)))
+          e.target.value = ''
+        }}
+        title="Paragraph style"
+        className="rounded border border-line bg-panel px-1 py-0.5 text-xs text-ink-muted outline-none"
+      >
+        <option value="" disabled>
+          Style
+        </option>
+        <option value="0">Body text</option>
+        <option value="1">Heading 1</option>
+        <option value="2">Heading 2</option>
+        <option value="3">Heading 3</option>
+      </select>
+      <button onClick={() => run((v) => toggleInline(v, '**'))} title="Bold (⌘B style)" className={`${btn} font-bold`}>
+        B
+      </button>
+      <button onClick={() => run((v) => toggleInline(v, '*'))} title="Italic" className={`${btn} italic`}>
+        I
+      </button>
+      <button onClick={() => run((v) => toggleLinePrefix(v, '> '))} title="Quote" className={btn}>
+        ❝
+      </button>
+      <button onClick={() => run((v) => toggleLinePrefix(v, '- '))} title="Bullet list" className={btn}>
+        •
+      </button>
+    </span>
+  )
+}
 
 export default function Workspace(): React.JSX.Element {
   const novel = useProjectStore((s) => s.novel)!
@@ -33,7 +84,14 @@ export default function Workspace(): React.JSX.Element {
   const [modal, setModal] = useState<'draft' | 'outline-chapter' | null>(null)
 
   const proposalsRunning = useProposalsStore((s) => s.running)
+  const runningStatus = useProposalsStore((s) => s.runningStatus)
   const lastRunStatus = useProposalsStore((s) => s.lastRunStatus)
+  const review = useProposalsStore((s) => s.review)
+  const updateReviewBuffer = useProposalsStore((s) => s.updateReviewBuffer)
+  const applyReview = useProposalsStore((s) => s.applyReview)
+  const rejectReview = useProposalsStore((s) => s.rejectReview)
+  const exitReview = useProposalsStore((s) => s.exitReview)
+  const editorViewRef = useRef<EditorView | null>(null)
   const pendingCount = useProposalsStore((s) => s.proposals.reduce((n, p) => n + p.items.length, 0))
   const runProposals = useProposalsStore((s) => s.runForActiveChapter)
   const generateOutline = useProposalsStore((s) => s.generateOutline)
@@ -129,22 +187,85 @@ export default function Workspace(): React.JSX.Element {
     }
   }
 
+  const stats = isChapter ? wordCount(content) : null
+
+  // Inline review mode replaces the whole editor column.
+  if (review) {
+    return (
+      <div className="flex min-h-0 flex-1">
+        <ChapterSidebar />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-amber-900 bg-amber-950/40 px-4 py-2">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium text-amber-200">
+                Reviewing suggestion for {review.path}
+              </div>
+              <div className="truncate text-xs text-amber-200/70">
+                {review.sourceTitle} — {review.rationale}. Use the ✓/✕ on each change, then Apply.
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                onClick={() => void rejectReview()}
+                className="rounded-lg border border-amber-800 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-900"
+              >
+                Reject all
+              </button>
+              <button
+                onClick={exitReview}
+                className="rounded-lg border border-amber-800 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-900"
+              >
+                Later
+              </button>
+              <button
+                onClick={() => void applyReview()}
+                className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <MarkdownEditor
+              docId={`review:${review.proposalId}:${review.path}`}
+              value={review.buffer}
+              onChange={updateReviewBuffer}
+              mergeOriginal={review.original}
+            />
+          </div>
+        </div>
+        {showChat && <ChatPanel onClose={() => setShowChat(false)} />}
+      </div>
+    )
+  }
+
   return (
     <div className="flex min-h-0 flex-1">
       <ChapterSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         {activeFile ? (
           <>
-            <div className="flex h-9 shrink-0 items-center justify-between border-b border-zinc-800 px-4">
-              <span className="truncate text-sm text-zinc-400">{activeLabel}</span>
+            <div className="flex h-9 shrink-0 items-center justify-between border-b border-line px-4">
+              <span className="flex min-w-0 items-center gap-3">
+                <span className="truncate text-sm text-ink-muted">{activeLabel}</span>
+                {stats && (
+                  <span
+                    className="shrink-0 text-xs tabular-nums text-ink-faint"
+                    title={`~${stats.readMinutes} min read`}
+                  >
+                    {stats.words.toLocaleString()} words
+                  </span>
+                )}
+              </span>
               <span className="flex items-center gap-2">
-                <span className="text-xs text-zinc-600">{dirty ? 'Editing…' : 'Saved'}</span>
+                {isChapter && !drafting && <StyleToolbar viewRef={editorViewRef} />}
+                <span className="text-xs text-ink-faint">{dirty ? 'Editing…' : 'Saved'}</span>
                 {isChapter && !drafting && (
                   <>
                     <button
                       onClick={() => setModal('draft')}
                       title="Have the AI write or continue this chapter — you review and revise"
-                      className="rounded px-2 py-0.5 text-xs text-indigo-300 hover:bg-zinc-800 hover:text-indigo-200"
+                      className="rounded px-2 py-0.5 text-xs text-indigo-300 hover:bg-raised hover:text-indigo-200"
                     >
                       ✦ Draft
                     </button>
@@ -152,7 +273,7 @@ export default function Workspace(): React.JSX.Element {
                       onClick={() => setModal('outline-chapter')}
                       disabled={proposalsRunning}
                       title="Generate or refine this chapter's outline (goes to review)"
-                      className="rounded px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 disabled:opacity-60"
+                      className="rounded px-2 py-0.5 text-xs text-ink-faint hover:bg-raised hover:text-ink-muted disabled:opacity-60"
                     >
                       Outline
                     </button>
@@ -160,9 +281,11 @@ export default function Workspace(): React.JSX.Element {
                       onClick={() => void runProposals()}
                       disabled={proposalsRunning}
                       title="Ask the AI to update character profiles, summaries, and world docs from this chapter"
-                      className="rounded px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 disabled:opacity-60"
+                      className="rounded px-2 py-0.5 text-xs text-ink-faint hover:bg-raised hover:text-ink-muted disabled:opacity-60"
                     >
-                      {proposalsRunning ? 'Working…' : (lastRunStatus ?? 'Update Codex')}
+                      {proposalsRunning
+                        ? (runningStatus ?? 'Working…')
+                        : (lastRunStatus ?? 'Update Codex')}
                     </button>
                   </>
                 )}
@@ -178,8 +301,8 @@ export default function Workspace(): React.JSX.Element {
                   onClick={() => setShowHistory((v) => !v)}
                   className={`rounded px-2 py-0.5 text-xs ${
                     showHistory
-                      ? 'bg-zinc-800 text-zinc-200'
-                      : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300'
+                      ? 'bg-raised text-ink'
+                      : 'text-ink-faint hover:bg-raised hover:text-ink-muted'
                   }`}
                 >
                   History
@@ -188,8 +311,8 @@ export default function Workspace(): React.JSX.Element {
                   onClick={() => setShowChat((v) => !v)}
                   className={`rounded px-2 py-0.5 text-xs ${
                     showChat
-                      ? 'bg-zinc-800 text-zinc-200'
-                      : 'text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300'
+                      ? 'bg-raised text-ink'
+                      : 'text-ink-faint hover:bg-raised hover:text-ink-muted'
                   }`}
                 >
                   Chat
@@ -237,11 +360,14 @@ export default function Workspace(): React.JSX.Element {
                 onChange={setContent}
                 forceSync={drafting}
                 onSave={() => void snapshotActiveChapter()}
+                onViewReady={(view) => {
+                  editorViewRef.current = view
+                }}
               />
             </div>
           </>
         ) : (
-          <div className="flex flex-1 items-center justify-center text-zinc-600">
+          <div className="flex flex-1 items-center justify-center text-ink-faint">
             {novel.manifest.chapters.length === 0
               ? 'Create your first chapter to start writing.'
               : 'Select a chapter to start writing.'}

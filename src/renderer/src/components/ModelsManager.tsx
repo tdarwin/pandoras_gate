@@ -115,11 +115,11 @@ function HuggingFaceBrowser({
   }
 
   return (
-    <div className="mt-6 border-t border-zinc-800 pt-4">
-      <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+    <div className="mt-6 border-t border-line pt-4">
+      <h3 className="text-xs font-medium uppercase tracking-wide text-ink-faint">
         Browse Hugging Face
       </h3>
-      <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">
+      <p className="mt-1 text-[11px] leading-relaxed text-ink-faint">
         Search the Hub for any GGUF model — community fine-tunes, new releases, anything. Pick a
         quantization sized for your machine.
       </p>
@@ -131,7 +131,7 @@ function HuggingFaceBrowser({
             if (e.key === 'Enter') void search()
           }}
           placeholder="e.g. Qwen3 14B, Mistral Small, dark fantasy writer…"
-          className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+          className="flex-1 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-sm text-ink outline-none focus:border-indigo-500"
         />
         <button
           onClick={() => void search()}
@@ -149,7 +149,7 @@ function HuggingFaceBrowser({
       )}
 
       {repos && repos.length === 0 && (
-        <p className="mt-3 text-xs text-zinc-600">No GGUF models found for that search.</p>
+        <p className="mt-3 text-xs text-ink-faint">No GGUF models found for that search.</p>
       )}
 
       {repos && repos.length > 0 && (
@@ -157,24 +157,24 @@ function HuggingFaceBrowser({
           {repos.map((r) => {
             const repoFiles = files[r.id]
             return (
-              <li key={r.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60">
+              <li key={r.id} className="rounded-lg border border-line bg-surface/60">
                 <button
                   onClick={() => void toggleRepo(r.id)}
                   className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
                 >
-                  <span className="min-w-0 truncate font-mono text-xs text-zinc-300">{r.id}</span>
-                  <span className="flex shrink-0 items-center gap-2 text-[10px] text-zinc-600">
+                  <span className="min-w-0 truncate font-mono text-xs text-ink-muted">{r.id}</span>
+                  <span className="flex shrink-0 items-center gap-2 text-[10px] text-ink-faint">
                     {r.gated && <span className="text-amber-500">gated</span>}
                     <span>↓ {count(r.downloads)}</span>
                     <span>♥ {count(r.likes)}</span>
-                    <span className="text-zinc-500">{expanded === r.id ? '▾' : '▸'}</span>
+                    <span className="text-ink-faint">{expanded === r.id ? '▾' : '▸'}</span>
                   </span>
                 </button>
 
                 {expanded === r.id && (
-                  <div className="border-t border-zinc-800 px-3 py-2">
+                  <div className="border-t border-line px-3 py-2">
                     {repoFiles === 'loading' && (
-                      <p className="py-1 text-xs text-zinc-600">Loading files…</p>
+                      <p className="py-1 text-xs text-ink-faint">Loading files…</p>
                     )}
                     {repoFiles === 'gated' && (
                       <p className="py-1 text-xs leading-relaxed text-amber-400/80">
@@ -183,7 +183,7 @@ function HuggingFaceBrowser({
                       </p>
                     )}
                     {Array.isArray(repoFiles) && repoFiles.length === 0 && (
-                      <p className="py-1 text-xs text-zinc-600">No GGUF files in this repo.</p>
+                      <p className="py-1 text-xs text-ink-faint">No GGUF files in this repo.</p>
                     )}
                     {Array.isArray(repoFiles) && repoFiles.length > 0 && (
                       <ul className="flex flex-col">
@@ -206,8 +206,8 @@ function HuggingFaceBrowser({
                               className="flex items-center justify-between gap-3 py-1"
                             >
                               <span className="min-w-0 flex-1">
-                                <span className="font-mono text-xs text-zinc-300">{f.quant}</span>
-                                <span className="ml-2 text-[10px] text-zinc-600">
+                                <span className="font-mono text-xs text-ink-muted">{f.quant}</span>
+                                <span className="ml-2 text-[10px] text-ink-faint">
                                   {gb(f.sizeBytes)}
                                   {f.parts > 1 ? ` · ${f.parts} parts` : ''} ·{' '}
                                   <span className={fit.cls}>{fit.text}</span>
@@ -215,13 +215,13 @@ function HuggingFaceBrowser({
                               </span>
                               {progress ? (
                                 <span className="flex shrink-0 items-center gap-2">
-                                  <span className="h-1 w-20 overflow-hidden rounded-full bg-zinc-800">
+                                  <span className="h-1 w-20 overflow-hidden rounded-full bg-raised">
                                     <span
                                       className="block h-full rounded-full bg-indigo-500 transition-all"
                                       style={{ width: `${pct}%` }}
                                     />
                                   </span>
-                                  <span className="text-[10px] text-zinc-500">{pct}%</span>
+                                  <span className="text-[10px] text-ink-faint">{pct}%</span>
                                 </span>
                               ) : (
                                 <button
@@ -257,7 +257,7 @@ function Section({
 }): React.JSX.Element {
   return (
     <section className="mt-5 first:mt-0">
-      <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">{title}</h3>
+      <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-faint">{title}</h3>
       {children}
     </section>
   )
@@ -345,12 +345,12 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
-      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-line bg-panel shadow-2xl">
+        <div className="flex items-center justify-between border-b border-line px-5 py-3">
           <div>
-            <h2 className="text-sm font-semibold text-zinc-200">Local models</h2>
+            <h2 className="text-sm font-semibold text-ink">Local models</h2>
             {hardware && (
-              <p className="text-xs text-zinc-500">
+              <p className="text-xs text-ink-faint">
                 {hardware.appleSilicon ? 'Apple Silicon' : hardware.arch} ·{' '}
                 {hardware.totalMemoryGB} GB memory
               </p>
@@ -358,7 +358,7 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
           </div>
           <button
             onClick={onClose}
-            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+            className="rounded p-1 text-ink-faint hover:bg-raised hover:text-ink-muted"
           >
             ✕
           </button>
@@ -373,7 +373,7 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
 
           <Section title="Your models">
             {localModels.length === 0 ? (
-              <p className="text-xs text-zinc-600">
+              <p className="text-xs text-ink-faint">
                 Nothing downloaded yet — grab a recommended model below, or search Hugging Face.
               </p>
             ) : (
@@ -381,11 +381,11 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
                 {localModels.map((m) => (
                   <li
                     key={m.id}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2"
+                    className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface/60 px-3 py-2"
                   >
                     <span className="min-w-0">
-                      <span className="block truncate text-sm text-zinc-200">{m.name}</span>
-                      <span className="text-[10px] text-zinc-600">
+                      <span className="block truncate text-sm text-ink">{m.name}</span>
+                      <span className="text-[10px] text-ink-faint">
                         {Math.round(m.contextLength / 1024)}k context
                       </span>
                     </span>
@@ -395,14 +395,14 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
                       ) : (
                         <button
                           onClick={() => selectModel(m.id)}
-                          className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-zinc-800"
+                          className="rounded border border-line-strong px-2 py-0.5 text-[11px] text-ink-muted hover:bg-raised"
                         >
                           Use
                         </button>
                       )}
                       <button
                         onClick={() => void removeLocal(m.id)}
-                        className="text-[11px] text-zinc-500 hover:text-red-400"
+                        className="text-[11px] text-ink-faint hover:text-red-400"
                       >
                         Remove
                       </button>
@@ -425,21 +425,21 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
                       ? Math.min(100, Math.round((progress.downloadedBytes / e.sizeBytes) * 100))
                       : 0
                   return (
-                    <li key={e.id} className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-4">
+                    <li key={e.id} className="rounded-lg border border-line bg-surface/60 p-4">
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <h4 className="font-medium text-zinc-200">{e.name}</h4>
+                            <h4 className="font-medium text-ink">{e.name}</h4>
                             {e.tags.includes('recommended') && (
                               <span className="rounded-full bg-indigo-950 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-indigo-300">
                                 Popular
                               </span>
                             )}
                           </div>
-                          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                          <p className="mt-1 text-xs leading-relaxed text-ink-faint">
                             {e.description}
                           </p>
-                          <p className="mt-1.5 text-[11px] text-zinc-600">
+                          <p className="mt-1.5 text-[11px] text-ink-faint">
                             {gb(e.sizeBytes)} · {Math.round(e.contextLength / 1024)}k context ·{' '}
                             {e.license} · <span className={fit.cls}>{fit.text}</span>
                           </p>
@@ -448,7 +448,7 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
                           {progress ? (
                             <button
                               onClick={() => void cancel(e.id)}
-                              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+                              className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink-muted hover:bg-raised"
                             >
                               Cancel
                             </button>
@@ -465,13 +465,13 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
                       </div>
                       {progress && (
                         <div className="mt-3">
-                          <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                          <div className="h-1.5 overflow-hidden rounded-full bg-raised">
                             <div
                               className="h-full rounded-full bg-indigo-500 transition-all"
                               style={{ width: `${pct}%` }}
                             />
                           </div>
-                          <p className="mt-1 tabular-nums text-[11px] text-zinc-500">
+                          <p className="mt-1 tabular-nums text-[11px] text-ink-faint">
                             {gb(progress.downloadedBytes)} of {gb(e.sizeBytes)} ({pct}%)
                             {progress.speedBps > 0 && <> · {formatSpeed(progress.speedBps)}</>}
                             {progress.etaSeconds !== null && (
@@ -492,7 +492,7 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
           </Section>
 
           <Section title="Remote models — OpenRouter">
-            <p className="text-xs leading-relaxed text-zinc-600">
+            <p className="text-xs leading-relaxed text-ink-faint">
               {apiKeyConfigured
                 ? 'Connected. Remote models appear in the chat model picker.'
                 : 'Bring your own OpenRouter API key to use hosted models (Claude, GPT, and more). The key is stored encrypted in your system keychain.'}
@@ -503,7 +503,7 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
                 value={orKey}
                 onChange={(e) => setOrKey(e.target.value)}
                 placeholder={apiKeyConfigured ? 'API key (saved — paste to replace)' : 'sk-or-…'}
-                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+                className="flex-1 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-sm text-ink outline-none focus:border-indigo-500"
               />
               <button
                 onClick={() => {
@@ -512,7 +512,7 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
                   })
                 }}
                 disabled={!orKey.trim()}
-                className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+                className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink hover:bg-raised disabled:opacity-50"
               >
                 {apiKeyConfigured ? 'Replace' : 'Connect'}
               </button>
@@ -522,7 +522,7 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
           <Section title="Have a GGUF file already?">
             <button
               onClick={() => void importLocalModel()}
-              className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+              className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink-muted hover:bg-raised"
             >
               Import a .gguf file…
             </button>

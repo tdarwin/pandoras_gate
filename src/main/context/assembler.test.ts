@@ -14,6 +14,7 @@ function makeSource(overrides: Partial<StorySource> = {}): StorySource {
   return {
     novelTitle: 'The Iron Gate',
     author: 'Davin',
+    customInstructions: null,
     synopsis: 'Kael Voss, a scavenger, discovers a cultivation manual and begins his ascent.',
     novelOutline: 'Act 1: discovery. Act 2: rivalry with Mira. Act 3: the sect trials.',
     chapterOutline: 'Beat 1: Kael confronts Elder Wu. Beat 2: the test. Beat 3: an unexpected ally.',

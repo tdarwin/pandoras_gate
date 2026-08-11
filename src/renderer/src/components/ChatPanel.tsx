@@ -13,10 +13,10 @@ function ContextInspector({ report }: { report: ContextReport }): React.JSX.Elem
   } as const
 
   return (
-    <div className="border-t border-zinc-800 px-3 py-1.5">
+    <div className="border-t border-line px-3 py-1.5">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between text-[11px] text-zinc-500 hover:text-zinc-300"
+        className="flex w-full items-center justify-between text-[11px] text-ink-faint hover:text-ink-muted"
       >
         <span>
           Context: {report.usedTokens.toLocaleString()} / {report.budgetTokens.toLocaleString()}{' '}
@@ -25,18 +25,25 @@ function ContextInspector({ report }: { report: ContextReport }): React.JSX.Elem
         <span>{open ? '▾' : '▸'}</span>
       </button>
       {open && (
-        <ul className="mt-1.5 max-h-40 overflow-y-auto pb-1">
-          {report.sections.map((s) => (
-            <li key={s.id} className="flex items-center gap-2 py-0.5 text-[11px]">
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDot[s.status]}`} />
-              <span className="min-w-0 flex-1 truncate text-zinc-400">{s.label}</span>
-              <span className="shrink-0 text-zinc-600">
-                {s.status === 'dropped' ? 'dropped' : `${s.tokens.toLocaleString()} tok`}
-                {s.status === 'degraded' ? ' (trimmed)' : ''}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="mt-1.5 max-h-40 overflow-y-auto pb-1">
+            {report.sections.map((s) => (
+              <li key={s.id} className="flex items-center gap-2 py-0.5 text-[11px]">
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDot[s.status]}`} />
+                <span className="min-w-0 flex-1 truncate text-ink-muted">{s.label}</span>
+                <span className="shrink-0 text-ink-faint">
+                  {s.status === 'dropped' ? 'dropped' : `${s.tokens.toLocaleString()} tok`}
+                  {s.status === 'degraded' ? ' (trimmed)' : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="pb-1.5 text-[10px] leading-relaxed text-ink-faint">
+            Story context (chapter, Codex, outlines) is rebuilt and resent with every message —
+            that&apos;s most of this number. “Clear” starts a fresh conversation but doesn&apos;t
+            shrink story context. Token counts are estimates (≈4 chars/token).
+          </p>
+        </>
       )}
     </div>
   )
@@ -45,8 +52,8 @@ function ContextInspector({ report }: { report: ContextReport }): React.JSX.Elem
 function ModelSetupPrompt({ onOpenModels }: { onOpenModels: () => void }): React.JSX.Element {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-      <h3 className="text-sm font-medium text-zinc-300">No model connected yet</h3>
-      <p className="text-xs leading-relaxed text-zinc-500">
+      <h3 className="text-sm font-medium text-ink-muted">No model connected yet</h3>
+      <p className="text-xs leading-relaxed text-ink-faint">
         Download a local model that runs entirely on this machine, connect OpenRouter for hosted
         models, or import a GGUF file you already have.
       </p>
@@ -158,7 +165,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
   return (
     <aside
       style={{ width: panelWidth }}
-      className="relative flex shrink-0 flex-col border-l border-zinc-800 bg-zinc-900/60"
+      className="relative flex shrink-0 flex-col border-l border-line bg-panel/60"
     >
       {/* Drag the panel's left edge to resize the whole chat pane. */}
       <div
@@ -166,14 +173,14 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
         title="Drag to resize"
         className="absolute -left-1 top-0 z-10 h-full w-2 cursor-col-resize hover:bg-indigo-500/30"
       />
-      <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-zinc-800 px-3">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">Chat</h2>
+      <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-line px-3">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-ink-faint">Chat</h2>
         <div className="flex min-w-0 items-center gap-1">
           {models.length > 0 && (
             <select
               value={selectedModelId ?? ''}
               onChange={(e) => selectModel(e.target.value)}
-              className="max-w-48 truncate rounded border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300 outline-none"
+              className="max-w-48 truncate rounded border border-line bg-panel px-1.5 py-0.5 text-xs text-ink-muted outline-none"
             >
               {models.some((m) => m.provider === 'local') && (
                 <optgroup label="On this machine">
@@ -202,7 +209,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
           <button
             onClick={() => setShowModels(true)}
             title="Manage local models"
-            className="rounded p-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+            className="rounded p-1 text-xs text-ink-faint hover:bg-raised hover:text-ink-muted"
           >
             Models
           </button>
@@ -210,14 +217,14 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
             <button
               onClick={clear}
               title="Clear conversation"
-              className="rounded p-1 text-xs text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+              className="rounded p-1 text-xs text-ink-faint hover:bg-raised hover:text-ink-muted"
             >
               Clear
             </button>
           )}
           <button
             onClick={onClose}
-            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+            className="rounded p-1 text-ink-faint hover:bg-raised hover:text-ink-muted"
           >
             ✕
           </button>
@@ -231,7 +238,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
         <>
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-3">
             {messages.length === 0 && (
-              <p className="mt-8 text-center text-xs leading-relaxed text-zinc-600">
+              <p className="mt-8 text-center text-xs leading-relaxed text-ink-faint">
                 Ask about your story, brainstorm plot points,
                 <br />
                 or talk through a scene.
@@ -239,12 +246,18 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
             )}
             {messages.map((m, i) => (
               <div key={i} className={`mb-3 ${m.role === 'user' ? 'flex justify-end' : ''}`}>
-                {m.role === 'user' ? (
+                {m.uiKind === 'tool' ? (
+                  <div className="flex items-center gap-2 text-xs text-indigo-400">
+                    <span className="rounded-full border border-indigo-800/60 bg-indigo-950/40 px-2 py-0.5">
+                      🛠 {m.content}
+                    </span>
+                  </div>
+                ) : m.role === 'user' ? (
                   <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-indigo-600/80 px-3 py-2 text-sm text-white">
                     {m.content}
                   </div>
                 ) : (
-                  <div className="prose-chat max-w-none text-sm leading-relaxed text-zinc-200">
+                  <div className="prose-chat max-w-none text-sm leading-relaxed text-ink">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
                     {streaming && i === messages.length - 1 && (
                       <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-indigo-400 align-text-bottom" />
@@ -275,13 +288,13 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
               localStorage.removeItem('chat.inputHeight')
             }}
             title="Drag to resize the message box (double-click to reset)"
-            className="group flex h-2 shrink-0 cursor-row-resize items-center justify-center border-t border-zinc-800 hover:bg-indigo-500/20"
+            className="group flex h-2 shrink-0 cursor-row-resize items-center justify-center border-t border-line hover:bg-indigo-500/20"
           >
-            <span className="h-0.5 w-8 rounded-full bg-zinc-700 group-hover:bg-indigo-400" />
+            <span className="h-0.5 w-8 rounded-full bg-raised group-hover:bg-indigo-400" />
           </div>
           <div className="shrink-0 p-3 pt-1.5">
             {usage && (
-              <div className="mb-1.5 text-right text-[10px] text-zinc-600">
+              <div className="mb-1.5 text-right text-[10px] text-ink-faint">
                 {usage.promptTokens.toLocaleString()} in · {usage.completionTokens.toLocaleString()}{' '}
                 out
               </div>
@@ -300,12 +313,12 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
                   ? { style: { height: inputHeight } }
                   : { rows: Math.min(6, Math.max(1, draft.split('\n').length)) })}
                 placeholder="Message… (Enter to send, Shift+Enter for newline)"
-                className="min-h-9 flex-1 resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+                className="min-h-9 flex-1 resize-none rounded-lg border border-line-strong bg-panel px-3 py-2 text-sm text-ink outline-none focus:border-indigo-500"
               />
               {streaming ? (
                 <button
                   onClick={() => void cancel()}
-                  className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
+                  className="rounded-lg border border-line-strong px-3 py-2 text-sm text-ink-muted hover:bg-raised"
                 >
                   Stop
                 </button>

@@ -25,11 +25,11 @@ function Section({
   return (
     <div className="mt-4">
       <div className="flex items-center justify-between px-3">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-500">{title}</h3>
+        <h3 className="text-xs font-medium uppercase tracking-wide text-ink-faint">{title}</h3>
         {onAdd && (
           <button
             onClick={onAdd}
-            className="rounded px-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded px-1.5 text-ink-muted hover:bg-raised hover:text-ink"
           >
             +
           </button>
@@ -93,8 +93,8 @@ export default function StoryBible(): React.JSX.Element {
         onClick={() => void openChapter(file)}
         className={`w-full truncate rounded px-2 py-1.5 text-left text-sm ${
           activeFile === file
-            ? 'bg-zinc-800 text-zinc-100'
-            : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+            ? 'bg-raised text-ink'
+            : 'text-ink-muted hover:bg-raised/60 hover:text-ink'
         }`}
         title={label}
       >
@@ -103,7 +103,7 @@ export default function StoryBible(): React.JSX.Element {
     </li>
   )
 
-  if (!listing) return <p className="p-4 text-sm text-zinc-600">Loading…</p>
+  if (!listing) return <p className="p-4 text-sm text-ink-faint">Loading…</p>
 
   return (
     <div className="flex-1 overflow-y-auto pb-3">
@@ -119,7 +119,7 @@ export default function StoryBible(): React.JSX.Element {
           <button
             onClick={() => setShowOutlineModal(true)}
             disabled={proposalsRunning}
-            className="w-full rounded px-2 py-1.5 text-left text-xs text-indigo-300 hover:bg-zinc-800/60 hover:text-indigo-200 disabled:opacity-60"
+            className="w-full rounded px-2 py-1.5 text-left text-xs text-indigo-300 hover:bg-raised/60 hover:text-indigo-200 disabled:opacity-60"
           >
             {proposalsRunning
               ? 'Working…'
@@ -144,12 +144,12 @@ export default function StoryBible(): React.JSX.Element {
                 if (e.key === 'Escape') setAdding(null)
               }}
               placeholder="Character name…"
-              className="w-full rounded border border-indigo-500 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 outline-none"
+              className="w-full rounded border border-indigo-500 bg-panel px-2 py-1 text-sm text-ink outline-none"
             />
           </li>
         )}
         {listing.characters.length === 0 && adding !== 'character' && (
-          <li className="px-2 py-1 text-xs text-zinc-600">
+          <li className="px-2 py-1 text-xs text-ink-faint">
             No profiles yet — the AI proposes them as you write.
           </li>
         )}
@@ -169,12 +169,12 @@ export default function StoryBible(): React.JSX.Element {
                 if (e.key === 'Escape') setAdding(null)
               }}
               placeholder="System name (e.g. Cultivation)…"
-              className="w-full rounded border border-indigo-500 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 outline-none"
+              className="w-full rounded border border-indigo-500 bg-panel px-2 py-1 text-sm text-ink outline-none"
             />
           </li>
         )}
         {listing.world.length === 0 && adding !== 'world' && (
-          <li className="px-2 py-1 text-xs text-zinc-600">
+          <li className="px-2 py-1 text-xs text-ink-faint">
             Magic systems, factions, rules of the world.
           </li>
         )}

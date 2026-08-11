@@ -114,6 +114,20 @@ export const ipcContract = {
     request: z.object({ novelDir: z.string(), file: z.string() }),
     response: NovelStateSchema
   },
+  'archive:list': {
+    request: z.object({ novelDir: z.string() }),
+    response: z.object({
+      chapters: z.array(z.object({ file: z.string(), title: z.string() }))
+    })
+  },
+  'archive:restore': {
+    request: z.object({ novelDir: z.string(), file: z.string() }),
+    response: NovelStateSchema
+  },
+  'archive:delete': {
+    request: z.object({ novelDir: z.string(), file: z.string() }),
+    response: z.object({ deleted: z.literal(true) })
+  },
   'metadata:list': {
     request: z.object({ novelDir: z.string() }),
     response: z.object({
@@ -203,7 +217,8 @@ export const ipcContract = {
     response: z.object({
       autoStoryBible: z.boolean(),
       snapshotOnBlur: z.boolean(),
-      snapshotIntervalMinutes: z.number()
+      snapshotIntervalMinutes: z.number(),
+      theme: z.enum(['dark', 'light', 'system'])
     })
   },
   'prefs:set': {
@@ -212,12 +227,14 @@ export const ipcContract = {
       snapshotOnBlur: z.boolean().optional(),
       snapshotIntervalMinutes: z
         .union([z.literal(0), z.literal(5), z.literal(10), z.literal(15), z.literal(20)])
-        .optional()
+        .optional(),
+      theme: z.enum(['dark', 'light', 'system']).optional()
     }),
     response: z.object({
       autoStoryBible: z.boolean(),
       snapshotOnBlur: z.boolean(),
-      snapshotIntervalMinutes: z.number()
+      snapshotIntervalMinutes: z.number(),
+      theme: z.enum(['dark', 'light', 'system'])
     })
   },
   'sync:getConfig': {
@@ -352,6 +369,10 @@ export const ipcContract = {
   'models:delete': {
     request: z.object({ modelId: z.string() }),
     response: z.object({ deleted: z.literal(true) })
+  },
+  'project:setChatInstructions': {
+    request: z.object({ novelDir: z.string(), instructions: z.string() }),
+    response: NovelStateSchema
   },
   'chapter:setStatus': {
     request: z.object({
@@ -491,6 +512,8 @@ export const ipcEvents = {
   }),
   /** Fired when the agent (or a pipeline run) created new proposals. */
   'proposals:changed': z.object({}),
+  /** Live phase text while a Codex/outline pipeline run is working. */
+  'pipeline:status': z.object({ text: z.string() }),
   /** Manifest changed outside the renderer (e.g. agent created a chapter). */
   'novel:updated': NovelStateSchema,
   /** The agent asked for an AI draft; renderer starts it when chat is idle. */

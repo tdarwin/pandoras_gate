@@ -30,6 +30,8 @@ export interface CharacterSource {
 export interface StorySource {
   novelTitle: string
   author: string
+  /** Author's standing instructions from novel.yaml (never cut). */
+  customInstructions: string | null
   synopsis: string | null
   /** Body of outlines/novel.md, if present. */
   novelOutline: string | null
@@ -142,8 +144,12 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
 
   /* 1 — system prompt (never cut) */
   const task = req.task ?? 'chat'
+  const custom = source.customInstructions?.trim()
+  const customSuffix = custom
+    ? `\n\nAuthor's standing instructions for this novel (always follow):\n${custom}`
+    : ''
   const basePrompt =
-    task === 'draft'
+    (task === 'draft'
       ? [
           `You are ghost-drafting prose for the novel "${source.novelTitle}"${source.author ? ` by ${source.author}` : ''}.`,
           'Story materials follow; treat them as canon and follow the outline where one is given.',
@@ -155,7 +161,7 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
           `The author${source.author ? ` (${source.author})` : ''} is working on the novel "${source.novelTitle}".`,
           'You help with brainstorming, prose feedback, continuity, and craft — and you can ACT on the novel itself: revising and drafting chapters, and maintaining the Codex (the story bible of characters, world rules, outlines, and summaries).',
           'Story materials follow; treat them as canon. Be concrete.'
-        ].join(' ')
+        ].join(' ')) + customSuffix
   used += count(basePrompt)
   record('system', 'System prompt', 'included', count(basePrompt))
 

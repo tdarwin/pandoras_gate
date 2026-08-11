@@ -17,15 +17,15 @@ function Toggle({
   return (
     <label className="flex cursor-pointer items-start justify-between gap-4 py-2">
       <span>
-        <span className="block text-sm text-zinc-200">{label}</span>
-        <span className="block text-xs leading-relaxed text-zinc-500">{hint}</span>
+        <span className="block text-sm text-ink">{label}</span>
+        <span className="block text-xs leading-relaxed text-ink-faint">{hint}</span>
       </span>
       <button
         role="switch"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
         className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors ${
-          checked ? 'bg-indigo-600' : 'bg-zinc-700'
+          checked ? 'bg-indigo-600' : 'bg-raised'
         }`}
       >
         <span
@@ -58,7 +58,7 @@ function SyncSection(): React.JSX.Element {
 
   if (!novel) {
     return (
-      <p className="text-xs text-zinc-600">Open a novel to configure its remote repository.</p>
+      <p className="text-xs text-ink-faint">Open a novel to configure its remote repository.</p>
     )
   }
 
@@ -90,7 +90,7 @@ function SyncSection(): React.JSX.Element {
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-xs leading-relaxed text-zinc-500">
+      <p className="text-xs leading-relaxed text-ink-faint">
         Back up “{novel.manifest.title}” to a remote git repository over HTTPS. Create an empty
         repository (GitHub, GitLab, …) and an access token with write permission — the token is
         stored encrypted in your system keychain.
@@ -99,20 +99,20 @@ function SyncSection(): React.JSX.Element {
         value={remoteUrl}
         onChange={(e) => setRemoteUrl(e.target.value)}
         placeholder="https://github.com/you/my-novel.git  (git@… is converted)"
-        className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+        className="rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-indigo-500"
       />
       <input
         type="password"
         value={token}
         onChange={(e) => setToken(e.target.value)}
         placeholder={tokenConfigured ? 'Access token (saved — paste to replace)' : 'Access token'}
-        className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+        className="rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-indigo-500"
       />
       <div className="flex items-center gap-2">
         <button
           onClick={() => void save()}
           disabled={busy || !remoteUrl.trim()}
-          className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+          className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink hover:bg-raised disabled:opacity-50"
         >
           Save
         </button>
@@ -123,7 +123,7 @@ function SyncSection(): React.JSX.Element {
         >
           Push now
         </button>
-        {status && <span className="min-w-0 truncate text-xs text-zinc-500">{status}</span>}
+        {status && <span className="min-w-0 truncate text-xs text-ink-faint">{status}</span>}
       </div>
     </div>
   )
@@ -138,19 +138,36 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
-      <div className="flex max-h-[85vh] w-full max-w-xl flex-col rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
-          <h2 className="text-sm font-semibold text-zinc-200">Preferences</h2>
+      <div className="flex max-h-[85vh] w-full max-w-xl flex-col rounded-xl border border-line bg-panel shadow-2xl">
+        <div className="flex items-center justify-between border-b border-line px-5 py-3">
+          <h2 className="text-sm font-semibold text-ink">Preferences</h2>
           <button
             onClick={onClose}
-            className="rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+            className="rounded p-1 text-ink-faint hover:bg-raised hover:text-ink-muted"
           >
             ✕
           </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-500">Writing</h3>
+          <h3 className="text-xs font-medium uppercase tracking-wide text-ink-faint">Appearance</h3>
+          <div className="flex items-center justify-between py-2">
+            <span>
+              <span className="block text-sm text-ink">Theme</span>
+              <span className="block text-xs text-ink-faint">System follows your OS setting.</span>
+            </span>
+            <select
+              value={prefs.theme}
+              onChange={(e) => void prefs.update({ theme: e.target.value as 'dark' | 'light' | 'system' })}
+              className="rounded-lg border border-line-strong bg-surface px-2 py-1.5 text-xs text-ink outline-none"
+            >
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+              <option value="system">System</option>
+            </select>
+          </div>
+
+          <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-ink-faint">Writing</h3>
           <Toggle
             checked={prefs.autoStoryBible}
             onChange={(v) => void prefs.update({ autoStoryBible: v })}
@@ -165,8 +182,8 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
           />
           <div className="flex items-start justify-between gap-4 py-2">
             <span>
-              <span className="block text-sm text-zinc-200">Regular interval snapshots</span>
-              <span className="block text-xs leading-relaxed text-zinc-500">
+              <span className="block text-sm text-ink">Regular interval snapshots</span>
+              <span className="block text-xs leading-relaxed text-ink-faint">
                 Also snapshot on a timer while you write. “No interval” keeps snapshots to ⌘S,
                 leaving the window, and switching chapters. Timer snapshots only create a history
                 entry when something actually changed.
@@ -179,7 +196,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
                   snapshotIntervalMinutes: Number(e.target.value) as 0 | 5 | 10 | 15 | 20
                 })
               }
-              className="mt-0.5 shrink-0 rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200 outline-none"
+              className="mt-0.5 shrink-0 rounded-lg border border-line-strong bg-surface px-2 py-1.5 text-xs text-ink outline-none"
             >
               <option value={0}>No interval</option>
               <option value={5}>Every 5 minutes</option>
@@ -189,7 +206,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
             </select>
           </div>
 
-          <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-zinc-500">
+          <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-ink-faint">
             OpenRouter
           </h3>
           <div className="mt-2 flex items-center gap-2">
@@ -200,7 +217,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
               placeholder={
                 apiKeyConfigured ? 'API key (saved — paste to replace)' : 'API key (sk-or-…)'
               }
-              className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+              className="flex-1 rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-indigo-500"
             />
             <button
               onClick={() => {
@@ -210,27 +227,84 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
                 })
               }}
               disabled={!key.trim()}
-              className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800 disabled:opacity-50"
+              className="rounded-lg border border-line-strong px-3 py-2 text-xs text-ink hover:bg-raised disabled:opacity-50"
             >
               Save
             </button>
           </div>
-          {keyStatus && <p className="mt-1 text-xs text-zinc-500">{keyStatus}</p>}
+          {keyStatus && <p className="mt-1 text-xs text-ink-faint">{keyStatus}</p>}
 
-          <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-zinc-500">
+          <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-ink-faint">
+            AI instructions (this novel)
+          </h3>
+          <div className="mt-2">
+            <NovelInstructionsSection />
+          </div>
+
+          <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-ink-faint">
             Sync (this novel)
           </h3>
           <div className="mt-2">
             <SyncSection />
           </div>
 
-          <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-zinc-500">
+          <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-ink-faint">
             Observability
           </h3>
           <div className="mt-2">
             <ObservabilitySection />
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function NovelInstructionsSection(): React.JSX.Element {
+  const novel = useProjectStore((s) => s.novel)
+  const applyNovelState = useProjectStore((s) => s.applyNovelState)
+  const [text, setText] = useState(novel?.manifest.chatInstructions ?? '')
+  const [status, setStatus] = useState<string | null>(null)
+
+  if (!novel) {
+    return <p className="text-xs text-ink-faint">Open a novel to set its AI instructions.</p>
+  }
+
+  const save = async (): Promise<void> => {
+    const result = await window.pandora.invoke('project:setChatInstructions', {
+      novelDir: novel.dir,
+      instructions: text
+    })
+    if (result.ok) {
+      applyNovelState({ ...result.data, seriesTitle: novel.seriesTitle })
+      setStatus('Saved — applied to every chat, draft, and Codex run for this novel.')
+    } else {
+      setStatus(result.error.message)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs leading-relaxed text-ink-faint">
+        Standing instructions appended to the AI&apos;s system prompt for “
+        {novel.manifest.title}” — voice, tense, POV rules, content boundaries, style dos and
+        don&apos;ts. Stored in novel.yaml.
+      </p>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={5}
+        placeholder={'e.g. Past tense, third person limited (Kael POV).\nNo modern slang. Keep chapters under 3,000 words.'}
+        className="w-full resize-y rounded-lg border border-line-strong bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-indigo-500"
+      />
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => void save()}
+          className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink hover:bg-raised"
+        >
+          Save instructions
+        </button>
+        {status && <span className="min-w-0 truncate text-xs text-ink-faint">{status}</span>}
       </div>
     </div>
   )
@@ -247,20 +321,20 @@ function ObservabilitySection(): React.JSX.Element {
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-xs leading-relaxed text-zinc-500">
+      <p className="text-xs leading-relaxed text-ink-faint">
         In development mode, OpenTelemetry traces are exported using the standard{' '}
-        <code className="text-zinc-400">OTEL_EXPORTER_OTLP_*</code> environment variables (from
+        <code className="text-ink-muted">OTEL_EXPORTER_OTLP_*</code> environment variables (from
         your shell/.envrc). Packaged builds never send telemetry.{' '}
         {enabled === null ? null : enabled ? (
           <span className="text-emerald-400">Currently exporting.</span>
         ) : (
-          <span className="text-zinc-600">Currently off (no OTLP endpoint in environment).</span>
+          <span className="text-ink-faint">Currently off (no OTLP endpoint in environment).</span>
         )}
       </p>
       <div>
         <button
           onClick={() => void window.pandora.invoke('app:openLogs', undefined)}
-          className="text-xs text-zinc-400 underline-offset-2 hover:text-zinc-200 hover:underline"
+          className="text-xs text-ink-muted underline-offset-2 hover:text-ink hover:underline"
         >
           Open local log folder…
         </button>

@@ -172,6 +172,24 @@ export function registerIpcHandlers(): void {
     return state
   })
 
+  handle('archive:list', async (req) => ({
+    chapters: await project.listArchivedChapters(req.novelDir)
+  }))
+
+  handle('archive:restore', async (req) => {
+    const state = await project.restoreArchivedChapter(req.novelDir, req.file)
+    await gitService.commitAll(req.novelDir, `chapter restored from archive: ${basename(req.file, '.md')}`, [
+      'novel.yaml'
+    ])
+    return state
+  })
+
+  handle('archive:delete', async (req) => {
+    await project.deleteArchivedChapter(req.novelDir, req.file)
+    await gitService.commitAll(req.novelDir, `archived chapter deleted: ${basename(req.file, '.md')}`, [])
+    return { deleted: true as const }
+  })
+
   handle('metadata:list', (req) => project.listMetadata(req.novelDir))
 
   handle('metadata:create', async (req) => {
@@ -345,7 +363,8 @@ export function registerIpcHandlers(): void {
       ...(req.snapshotOnBlur !== undefined ? { snapshotOnBlur: req.snapshotOnBlur } : {}),
       ...(req.snapshotIntervalMinutes !== undefined
         ? { snapshotIntervalMinutes: req.snapshotIntervalMinutes }
-        : {})
+        : {}),
+      ...(req.theme !== undefined ? { theme: req.theme } : {})
     })
   )
 
@@ -368,6 +387,15 @@ export function registerIpcHandlers(): void {
   handle('models:delete', async (req) => {
     await deleteDownloadedModel(req.modelId)
     return { deleted: true as const }
+  })
+
+  handle('project:setChatInstructions', async (req) => {
+    const manifest = await project.readNovelManifest(req.novelDir)
+    if (req.instructions.trim()) manifest.chatInstructions = req.instructions.trim()
+    else delete manifest.chatInstructions
+    await project.writeNovelManifest(req.novelDir, manifest)
+    gitService.scheduleAutocommit(req.novelDir, 'novel: AI instructions updated', ['novel.yaml'])
+    return { dir: req.novelDir, manifest }
   })
 
   handle('chapter:setStatus', async (req) => {
@@ -411,13 +439,16 @@ export function registerIpcHandlers(): void {
     return { done: true as const }
   })
 
-  handle('proposals:run', async (req) => {
+  handle('proposals:run', async (req, event) => {
     await gitService.flushAutocommit(req.novelDir)
     return runMetadataUpdate({
       novelDir: req.novelDir,
       chapterFile: req.chapterFile,
       provider: getProvider(req.provider),
-      modelId: req.modelId
+      modelId: req.modelId,
+      onStatus: (text) => {
+        if (!event.sender.isDestroyed()) event.sender.send('pipeline:status', { text })
+      }
     })
   })
 

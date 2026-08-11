@@ -13,6 +13,7 @@ export default function App(): React.JSX.Element {
   const setError = useProjectStore((s) => s.setError)
   const initDownloads = useDownloadsStore((s) => s.init)
   const initPrefs = usePrefsStore((s) => s.init)
+  const theme = usePrefsStore((s) => s.theme)
   const [showPrefs, setShowPrefs] = useState(false)
 
   useEffect(() => {
@@ -20,16 +21,31 @@ export default function App(): React.JSX.Element {
     void initPrefs()
   }, [initDownloads, initPrefs])
 
+  // Apply the theme to <html data-theme>; 'system' follows the OS setting.
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: light)')
+    const apply = (): void => {
+      document.documentElement.dataset['theme'] =
+        theme === 'system' ? (mq.matches ? 'light' : 'dark') : theme
+    }
+    apply()
+    if (theme === 'system') {
+      mq.addEventListener('change', apply)
+      return () => mq.removeEventListener('change', apply)
+    }
+    return undefined
+  }, [theme])
+
   return (
     <div className="flex h-screen flex-col">
-      <header className="titlebar-drag relative flex h-10 shrink-0 items-center justify-center border-b border-zinc-800">
-        <span className="text-sm font-medium text-zinc-400">
+      <header className="titlebar-drag relative flex h-10 shrink-0 items-center justify-center border-b border-line">
+        <span className="text-sm font-medium text-ink-muted">
           {novel ? novel.manifest.title : "Pandora's Box"}
         </span>
         <button
           onClick={() => setShowPrefs(true)}
           title="Preferences"
-          className="absolute right-3 rounded p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+          className="absolute right-3 rounded p-1 text-ink-faint hover:bg-raised hover:text-ink-muted"
         >
           ⚙
         </button>

@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, highlightActiveLine } from '@codemirror/view'
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { unifiedMergeView } from '@codemirror/merge'
 import { livePreviewPlugin } from './live-preview/decorations'
 import { editorTheme } from './theme'
 
@@ -18,6 +19,13 @@ interface MarkdownEditorProps {
   forceSync?: boolean
   /** ⌘S / Ctrl+S inside the editor. */
   onSave?: () => void
+  /** Access to the underlying view (style toolbar commands). */
+  onViewReady?: (view: EditorView | null) => void
+  /**
+   * Review mode: the buffer holds PROPOSED content and this is the current
+   * on-disk content — differences render as inline accept/reject chunks.
+   */
+  mergeOriginal?: string
 }
 
 /**
@@ -31,7 +39,9 @@ export default function MarkdownEditor({
   value,
   onChange,
   forceSync = false,
-  onSave
+  onSave,
+  onViewReady,
+  mergeOriginal
 }: MarkdownEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -58,11 +68,21 @@ export default function MarkdownEditor({
               return true
             }
           },
+          // Explicit first-position bindings so undo/redo can never be
+          // shadowed by other handlers.
+          { key: 'Mod-z', run: undo, preventDefault: true },
+          { key: 'Mod-Shift-z', run: redo, preventDefault: true },
+          { key: 'Mod-y', run: redo, preventDefault: true },
           ...defaultKeymap,
           ...historyKeymap
         ]),
         markdown({ base: markdownLanguage }),
-        livePreviewPlugin,
+        // In review mode the live-preview conceals the very syntax being
+        // diffed — show raw markdown with merge chunks instead.
+        ...(mergeOriginal === undefined ? [livePreviewPlugin] : []),
+        ...(mergeOriginal !== undefined
+          ? [unifiedMergeView({ original: mergeOriginal, mergeControls: true })]
+          : []),
         editorTheme,
         EditorView.lineWrapping,
         EditorView.updateListener.of((update) => {
@@ -73,15 +93,17 @@ export default function MarkdownEditor({
 
     const view = new EditorView({ state, parent: containerRef.current })
     viewRef.current = view
+    onViewReady?.(view)
     view.focus()
 
     return () => {
       view.destroy()
       viewRef.current = null
+      onViewReady?.(null)
     }
     // Recreate the editor only when switching documents.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docId])
+  }, [docId, mergeOriginal])
 
   // External value changes (e.g. AI writes into the file) while not focused —
   // or always, during forced sync (drafting).
