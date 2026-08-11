@@ -56,6 +56,8 @@ describe('chatToolDefinitions', () => {
       'create_chapter',
       'draft_chapter',
       'edit_chapter',
+      'find_in_chapter',
+      'edit_chapter_section',
       'generate_outline'
     ])
   })
@@ -69,6 +71,7 @@ describe('chatToolDefinitions', () => {
       'list_chapters',
       'create_chapter',
       'draft_chapter',
+      'find_in_chapter',
       'generate_outline'
     ])
   })
@@ -207,6 +210,95 @@ describe('chapter tools', () => {
     expect(
       await executeTool(ctx(null), 'edit_chapter', JSON.stringify({ instructions: 'x' }))
     ).toContain('no chapter is open')
+  })
+})
+
+describe('find_in_chapter / edit_chapter_section', () => {
+  const CHAPTER = 'chapters/001-the-iron-gate.md'
+  const BODY =
+    'Kael crept through the ruins.\n\nThe elder waited at the gate, arms folded against the wind.\n\nRain began to fall as Kael spoke his first words.\n'
+
+  beforeEach(async () => {
+    await writeFile(
+      join(novelDir, CHAPTER),
+      `---\ntitle: The Iron Gate\nstatus: draft\n---\n${BODY}`
+    )
+  })
+
+  it('find_in_chapter returns matching paragraphs with context and position', async () => {
+    const result = await executeTool(
+      ctx(CHAPTER),
+      'find_in_chapter',
+      JSON.stringify({ query: 'elder' })
+    )
+    expect(result).toContain('1 match(es)')
+    expect(result).toContain('paragraph 2 of 3')
+    expect(result).toContain('The elder waited at the gate')
+    // Context includes neighboring paragraphs.
+    expect(result).toContain('Kael crept through the ruins.')
+  })
+
+  it('find_in_chapter reports no matches politely', async () => {
+    const result = await executeTool(
+      ctx(CHAPTER),
+      'find_in_chapter',
+      JSON.stringify({ query: 'dragon' })
+    )
+    expect(result).toContain('No matches')
+  })
+
+  it('edit_chapter_section splices a unique passage and queues a diff', async () => {
+    const result = await executeTool(
+      ctx(CHAPTER),
+      'edit_chapter_section',
+      JSON.stringify({
+        find: 'The elder waited at the gate, arms folded against the wind.',
+        replacement: 'The elder waited at the gate, hood drawn low against the storm.',
+        rationale: 'Author wants the storm foreshadowed here'
+      })
+    )
+    expect(result).toContain('review queue')
+    const proposals = await listProposals(novelDir)
+    const item = proposals[0]!.items[0]!
+    expect(item.path).toBe(CHAPTER)
+    expect(item.newContent).toContain('hood drawn low against the storm')
+    expect(item.newContent).toContain('Kael crept through the ruins.')
+    expect(item.newContent).toContain('title: The Iron Gate')
+    expect(item.newContent).not.toContain('arms folded against the wind')
+  })
+
+  it('rejects text that is not found, guiding toward exact quoting', async () => {
+    const result = await executeTool(
+      ctx(CHAPTER),
+      'edit_chapter_section',
+      JSON.stringify({ find: 'The elder waited at the door', replacement: 'x' })
+    )
+    expect(result).toContain('not found')
+    expect(await listProposals(novelDir)).toHaveLength(0)
+  })
+
+  it('rejects ambiguous matches with a count', async () => {
+    const result = await executeTool(
+      ctx(CHAPTER),
+      'edit_chapter_section',
+      JSON.stringify({ find: 'Kael', replacement: 'Kael Voss' })
+    )
+    expect(result).toContain('appears 2 times')
+    expect(await listProposals(novelDir)).toHaveLength(0)
+  })
+
+  it('supports deletion via empty replacement', async () => {
+    const result = await executeTool(
+      ctx(CHAPTER),
+      'edit_chapter_section',
+      JSON.stringify({
+        find: 'Rain began to fall as Kael spoke his first words.\n',
+        replacement: ''
+      })
+    )
+    expect(result).toContain('review queue')
+    const proposals = await listProposals(novelDir)
+    expect(proposals[0]!.items[0]!.newContent).not.toContain('Rain began to fall')
   })
 })
 

@@ -10,6 +10,7 @@ import {
   isAllowedProposalPath
 } from '../metadata/pipeline'
 import { listMetadata, createChapter, readNovelManifest } from '../project/service'
+import { parseFrontmatter } from '../../shared/frontmatter'
 import { flushAutocommit, commitAll } from '../git/service'
 import { logInfo, logError } from '../log'
 import { withSpan } from '../telemetry'
@@ -101,11 +102,40 @@ export function chatToolDefinitions(ctx: ToolContext): ToolDefinition[] {
     {
       name: 'edit_chapter',
       description:
-        'Revise the currently open chapter according to the author\'s instructions ("make the fight happen at night", "tighten the dialogue in the opening"). Produces a complete revision the author reviews as a word-level diff — the chapter file is untouched until they accept. Synthesize the instructions from the conversation so they are specific and self-contained.',
+        'Rewrite the ENTIRE currently open chapter according to the author\'s instructions. Use only for sweeping revisions that touch most of the chapter (POV change, full-tone pass). For changes to a specific scene, paragraph, or line, use edit_chapter_section instead — it is faster and cannot drift in untouched text. Produces a complete revision the author reviews as a word-level diff.',
       parameters: {
         type: 'object',
         properties: { instructions: { type: 'string' } },
         required: ['instructions'],
+        additionalProperties: false
+      }
+    },
+    {
+      name: 'find_in_chapter',
+      description:
+        'Search a chapter\'s text for a word or phrase and get back the matching paragraphs with surrounding context and exact wording. Use this to locate a passage the author described ("the scene where Kael meets the elder" → search a distinctive word like "elder"), and to fetch exact text before edit_chapter_section — especially when the chapter was shown to you with its middle elided. chapterFile defaults to the open chapter.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          chapterFile: { type: 'string' }
+        },
+        required: ['query'],
+        additionalProperties: false
+      }
+    },
+    {
+      name: 'edit_chapter_section',
+      description:
+        'Replace ONE specific passage in the currently open chapter. "find" must be the EXACT text currently in the chapter (copy it verbatim — use find_in_chapter if unsure) and must match exactly one place; include a sentence of surrounding text if the passage could appear twice. "replacement" is your revised text for exactly that span (empty string deletes it). The author reviews the change as a small diff before anything is saved. Preferred over edit_chapter for all targeted changes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          find: { type: 'string' },
+          replacement: { type: 'string' },
+          rationale: { type: 'string' }
+        },
+        required: ['find', 'replacement'],
         additionalProperties: false
       }
     },
@@ -125,7 +155,7 @@ export function chatToolDefinitions(ctx: ToolContext): ToolDefinition[] {
     }
   ]
   // Tools that operate on "the open chapter" need one to be open.
-  const needsOpenChapter = new Set(['update_codex', 'edit_chapter'])
+  const needsOpenChapter = new Set(['update_codex', 'edit_chapter', 'edit_chapter_section'])
   return ctx.activeFile?.startsWith('chapters/')
     ? tools
     : tools.filter((t) => !needsOpenChapter.has(t.name))
@@ -264,6 +294,89 @@ export async function executeTool(
           })
           return `The AI draft for ${target} will start streaming into the editor as soon as this reply finishes (a pre-draft snapshot is taken automatically). Keep your reply to one short sentence.`
         }
+        case 'find_in_chapter': {
+          let args: { query?: string; chapterFile?: string } = {}
+          try {
+            args = JSON.parse(argsJson || '{}')
+          } catch {
+            return 'Error: could not parse the tool arguments.'
+          }
+          if (!args.query?.trim()) return 'Error: "query" is required.'
+          const manifest = await readNovelManifest(ctx.novelDir)
+          const target = args.chapterFile ?? ctx.activeFile ?? undefined
+          if (!target || !manifest.chapters.some((c) => c.file === target)) {
+            return 'Error: no valid chapter — pass chapterFile from list_chapters or have the author open one.'
+          }
+          const raw = await readFile(join(ctx.novelDir, target), 'utf8')
+          const body = parseFrontmatter(raw).body
+          const paragraphs = body.split(/\n\s*\n/)
+          const needle = args.query.trim().toLowerCase()
+          const hits: string[] = []
+          for (let i = 0; i < paragraphs.length && hits.length < 3; i++) {
+            if (paragraphs[i]!.toLowerCase().includes(needle)) {
+              const context = paragraphs
+                .slice(Math.max(0, i - 1), i + 2)
+                .join('\n\n')
+                .slice(0, 2000)
+              hits.push(`--- match ${hits.length + 1} (paragraph ${i + 1} of ${paragraphs.length}) ---\n${context}`)
+            }
+          }
+          if (hits.length === 0) {
+            return `No matches for "${args.query}" in ${target}. Try a shorter or different word.`
+          }
+          return `${hits.length} match(es) in ${target}. Quote text EXACTLY as shown when using edit_chapter_section.\n\n${hits.join('\n\n')}`
+        }
+        case 'edit_chapter_section': {
+          let args: { find?: string; replacement?: string; rationale?: string } = {}
+          try {
+            args = JSON.parse(argsJson || '{}')
+          } catch {
+            return 'Error: could not parse the tool arguments.'
+          }
+          if (!args.find || args.replacement === undefined) {
+            return 'Error: both "find" and "replacement" are required.'
+          }
+          if (!ctx.activeFile?.startsWith('chapters/')) {
+            return 'Error: no chapter is open in the editor.'
+          }
+          await flushAutocommit(ctx.novelDir)
+          const raw = await readFile(join(ctx.novelDir, ctx.activeFile), 'utf8')
+          const body = parseFrontmatter(raw).body
+          const frontmatterPrefix = raw.slice(0, raw.length - body.length)
+
+          const occurrences = body.split(args.find).length - 1
+          if (occurrences === 0) {
+            return 'Error: that exact text was not found in the chapter. Use find_in_chapter and copy the passage verbatim — whitespace and punctuation must match exactly.'
+          }
+          if (occurrences > 1) {
+            return `Error: that text appears ${occurrences} times. Include more surrounding sentences in "find" so it matches exactly one place.`
+          }
+          if (args.find === args.replacement) {
+            return 'Error: the replacement is identical to the original text.'
+          }
+
+          const manifest = await readNovelManifest(ctx.novelDir)
+          const title =
+            manifest.chapters.find((c) => c.file === ctx.activeFile)?.title ?? ctx.activeFile
+          const newContent = frontmatterPrefix + body.replace(args.find, args.replacement)
+          const { queued, rejected } = await enqueueProposalItems(
+            ctx.novelDir,
+            `Chapter edit: ${title}`,
+            [
+              {
+                path: ctx.activeFile,
+                newContent,
+                rationale: args.rationale ?? 'Targeted section edit from chat'
+              }
+            ],
+            (p) => p === ctx.activeFile
+          )
+          notifyProposalsChanged(ctx.sender)
+          if (queued > 0) {
+            return 'Done: the section edit is in the review queue as a small diff (the suggestions badge). The chapter is untouched until the author accepts it.'
+          }
+          return `Nothing queued — ${rejected.join('; ')}`
+        }
         case 'edit_chapter': {
           let args: { instructions?: string } = {}
           try {
@@ -338,7 +451,9 @@ You also have chapter tools:
 - list_chapters: the novel's structure (paths, statuses, which chapter is open).
 - create_chapter(title): adds a new empty chapter to the end of the novel.
 - draft_chapter(instructions, chapterFile?): streams NEW prose into a chapter in the editor. Use for "write/draft/continue the chapter". Synthesize instructions from the conversation. Keep your reply short — the draft starts when it ends.
-- edit_chapter(instructions): revises the OPEN chapter's existing text per the author's instructions; delivered as a reviewable word-diff, nothing changes until accepted. Use for "change/revise/tighten/fix the chapter". Make the instructions specific and self-contained (include names, scenes, and the outcome the author wants).
+- edit_chapter_section(find, replacement): THE DEFAULT for revisions. Replace one exact passage of the open chapter — quote "find" verbatim from the chapter (find_in_chapter fetches exact text), author the replacement yourself from the conversation. Small reviewable diff; repeat for multiple spots.
+- find_in_chapter(query, chapterFile?): locate passages and get their exact wording with context.
+- edit_chapter(instructions): full-chapter rewrite via a separate generation. Only for sweeping revisions (POV/tense/whole-tone changes) where section edits are impractical.
 
 Codex file conventions for write_codex_doc:
 - metadata/characters/<slug>.md — frontmatter: name, aliases (list), role, status, first_appearance, attributes (map; stats/level/realm for LitRPG), relationships (list of {character, type}). Body: ## Appearance / ## Personality / ## Arc notes prose.
