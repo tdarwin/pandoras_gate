@@ -45,14 +45,106 @@ afterEach(async () => {
 })
 
 describe('chatToolDefinitions', () => {
-  it('offers both tools when a chapter is open', () => {
+  it('offers all tools when a chapter is open', () => {
     const tools = chatToolDefinitions(ctx('chapters/001-the-iron-gate.md'))
-    expect(tools.map((t) => t.name)).toEqual(['update_codex', 'generate_outline'])
+    expect(tools.map((t) => t.name)).toEqual([
+      'write_codex_doc',
+      'list_codex_docs',
+      'read_codex_doc',
+      'update_codex',
+      'generate_outline'
+    ])
   })
 
-  it('drops update_codex when no chapter is open', () => {
+  it('drops only update_codex when no chapter is open', () => {
     const tools = chatToolDefinitions(ctx(null))
-    expect(tools.map((t) => t.name)).toEqual(['generate_outline'])
+    expect(tools.map((t) => t.name)).toEqual([
+      'write_codex_doc',
+      'list_codex_docs',
+      'read_codex_doc',
+      'generate_outline'
+    ])
+  })
+})
+
+describe('write_codex_doc', () => {
+  const CHAR_DOC =
+    '---\nname: Mira Thane\naliases: []\nrole: rival\nstatus: alive\n---\n## Appearance\nSharp-eyed.\n'
+
+  it('queues a document the model authored directly', async () => {
+    const result = await executeTool(
+      ctx(null),
+      'write_codex_doc',
+      JSON.stringify({
+        path: 'metadata/characters/mira-thane.md',
+        content: CHAR_DOC,
+        rationale: 'Author asked for a profile of Mira'
+      })
+    )
+    expect(result).toContain('review queue')
+    const proposals = await listProposals(novelDir)
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0]!.chapterTitle).toBe('Chat suggestion')
+    expect(proposals[0]!.items[0]!).toMatchObject({
+      path: 'metadata/characters/mira-thane.md',
+      action: 'create',
+      newContent: CHAR_DOC
+    })
+    expect(sent.some((args) => (args as unknown[])[0] === 'proposals:changed')).toBe(true)
+  })
+
+  it('rejects disallowed paths and invalid YAML', async () => {
+    const bad = await executeTool(
+      ctx(null),
+      'write_codex_doc',
+      JSON.stringify({ path: 'novel.yaml', content: 'pwned', rationale: 'x' })
+    )
+    expect(bad).toContain('not an allowed Codex path')
+
+    const badYaml = await executeTool(
+      ctx(null),
+      'write_codex_doc',
+      JSON.stringify({ path: 'metadata/timeline.yaml', content: '{{nope', rationale: 'x' })
+    )
+    expect(badYaml).toContain('Nothing queued')
+    expect(await listProposals(novelDir)).toHaveLength(0)
+  })
+
+  it('requires path and content', async () => {
+    const result = await executeTool(
+      ctx(null),
+      'write_codex_doc',
+      JSON.stringify({ path: 'metadata/synopsis.md' })
+    )
+    expect(result).toContain('required')
+  })
+})
+
+describe('list_codex_docs / read_codex_doc', () => {
+  it('lists seeded docs and reads one back', async () => {
+    const listing = await executeTool(ctx(null), 'list_codex_docs', '{}')
+    expect(listing).toContain('metadata/synopsis.md')
+    expect(listing).toContain('metadata/timeline.yaml')
+
+    const doc = await executeTool(
+      ctx(null),
+      'read_codex_doc',
+      JSON.stringify({ path: 'metadata/synopsis.md' })
+    )
+    expect(doc).toContain('logline:')
+  })
+
+  it('read rejects bad paths and reports missing docs', async () => {
+    expect(
+      await executeTool(ctx(null), 'read_codex_doc', JSON.stringify({ path: '../secrets.json' }))
+    ).toContain('Error')
+    expect(
+      await executeTool(
+        ctx(null),
+        'read_codex_doc',
+        JSON.stringify({ path: 'metadata/characters/nobody.md' })
+      )
+    ).toContain('does not exist')
   })
 })
 
@@ -75,6 +167,27 @@ describe('executeTool', () => {
     expect(await listProposals(novelDir)).toHaveLength(1)
     // Renderer was notified to refresh.
     expect(sent.some((args) => (args as unknown[])[0] === 'proposals:changed')).toBe(true)
+  })
+
+  it('update_codex forces a run even when the chapter is unchanged', async () => {
+    const summary = {
+      proposals: [
+        {
+          path: 'metadata/summaries/001-the-iron-gate.md',
+          action: 'create',
+          newContent: '---\ntitle: The Iron Gate\nlogline: Kael sneaks in.\n---\nSummary v1.\n',
+          rationale: 'Chapter summary'
+        }
+      ]
+    }
+    provider.queue(JSON.stringify(summary))
+    await executeTool(ctx('chapters/001-the-iron-gate.md'), 'update_codex', '{}')
+    // Same chapter content — an explicit second request must still run.
+    summary.proposals[0]!.newContent = summary.proposals[0]!.newContent.replace('v1', 'v2')
+    provider.queue(JSON.stringify(summary))
+    const result = await executeTool(ctx('chapters/001-the-iron-gate.md'), 'update_codex', '{}')
+    expect(result).toContain('review queue')
+    expect(provider.requests).toHaveLength(2)
   })
 
   it('update_codex refuses without an open chapter', async () => {

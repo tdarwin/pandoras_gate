@@ -155,6 +155,8 @@ interface RunContext {
   chapterFile: string
   provider: LLMProvider
   modelId: string
+  /** Run even if the chapter is unchanged (explicit user/agent request). */
+  force?: boolean
 }
 
 async function buildUserPrompt(novelDir: string, chapterFile: string): Promise<string> {
@@ -258,7 +260,7 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
   const chapterHash = sha256(chapterRaw)
 
   const state = await readState(novelDir)
-  if (state.chapters[chapterFile]?.lastProcessedHash === chapterHash) {
+  if (!ctx.force && state.chapters[chapterFile]?.lastProcessedHash === chapterHash) {
     return { status: 'skipped-unchanged' }
   }
 
@@ -333,6 +335,57 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
   }
   await writeProposal(novelDir, proposal)
   return { status: 'ran', proposalId: proposal.id, itemCount: items.length }
+}
+
+/* ------------------------------------------------------------------ */
+/* Direct proposal enqueue (chat agent's write_codex_doc)              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Queues author-visible proposals from content produced directly by the chat
+ * agent (no pipeline run). Same guards as pipeline output: path allowlist,
+ * content validation, no-op suppression.
+ */
+export async function enqueueProposalItems(
+  novelDir: string,
+  sourceTitle: string,
+  proposals: { path: string; newContent: string; rationale: string }[]
+): Promise<{ queued: number; rejected: string[] }> {
+  const items: PendingProposalItem[] = []
+  const rejected: string[] = []
+  for (const p of proposals) {
+    if (!isAllowedProposalPath(p.path)) {
+      rejected.push(`${p.path}: not an allowed Codex path`)
+      continue
+    }
+    const problem = validateProposalContent(p.path, p.newContent)
+    if (problem) {
+      rejected.push(`${p.path}: ${problem}`)
+      continue
+    }
+    const current = await safeRead(join(novelDir, p.path))
+    if (current !== null && current === p.newContent) {
+      rejected.push(`${p.path}: identical to the current content`)
+      continue
+    }
+    items.push({
+      path: p.path,
+      action: current === null ? 'create' : 'update',
+      newContent: p.newContent,
+      rationale: p.rationale,
+      baseHash: current === null ? '' : sha256(current)
+    })
+  }
+  if (items.length > 0) {
+    await writeProposal(novelDir, {
+      id: randomUUID(),
+      chapterFile: '',
+      chapterTitle: sourceTitle,
+      createdAt: Date.now(),
+      items
+    })
+  }
+  return { queued: items.length, rejected }
 }
 
 /* ------------------------------------------------------------------ */
