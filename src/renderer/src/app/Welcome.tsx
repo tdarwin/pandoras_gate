@@ -57,7 +57,7 @@ export default function Welcome(): React.JSX.Element {
   return (
     <div className="flex flex-1 items-center justify-center">
       <div className="w-full max-w-md">
-        <h1 className="text-center text-3xl font-semibold tracking-tight">Pandora&apos;s Box</h1>
+        <h1 className="text-center text-3xl font-semibold tracking-tight">Pandora&apos;s Gate</h1>
         <p className="mt-2 text-center text-ink-muted">
           Your stories, your worlds, your AI writing partner.
         </p>

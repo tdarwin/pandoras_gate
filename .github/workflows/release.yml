@@ -60,37 +60,37 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          DMG="dist/Pandoras-Box-${VERSION}-arm64.dmg"
+          DMG="dist/Pandoras-Gate-${VERSION}-arm64.dmg"
           SHA=$(shasum -a 256 "$DMG" | cut -d' ' -f1)
 
           git fetch origin main
           git checkout main
           mkdir -p Casks
-          cat > Casks/pandoras-box.rb <<CASK
-          cask "pandoras-box" do
+          cat > Casks/pandoras-gate.rb <<CASK
+          cask "pandoras-gate" do
             version "${VERSION}"
             sha256 "${SHA}"
 
-            url "https://github.com/tdarwin/pandoras_box/releases/download/v#{version}/Pandoras-Box-#{version}-arm64.dmg"
-            name "Pandora's Box"
+            url "https://github.com/tdarwin/pandoras_gate/releases/download/v#{version}/Pandoras-Gate-#{version}-arm64.dmg"
+            name "Pandora's Gate"
             desc "Novel-writing studio with local and remote AI assistance"
-            homepage "https://github.com/tdarwin/pandoras_box"
+            homepage "https://github.com/tdarwin/pandoras_gate"
 
             depends_on arch: :arm64
             depends_on macos: ">= :ventura"
 
-            app "Pandora's Box.app"
+            app "Pandora's Gate.app"
 
             zap trash: [
-              "~/Library/Application Support/pandoras-box",
-              "~/Library/Preferences/com.davintaddeo.pandorasbox.plist",
-              "~/Library/Saved Application State/com.davintaddeo.pandorasbox.savedState",
+              "~/Library/Application Support/pandoras-gate",
+              "~/Library/Preferences/com.davintaddeo.pandorasgate.plist",
+              "~/Library/Saved Application State/com.davintaddeo.pandorasgate.savedState",
             ]
           end
           CASK
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/pandoras-box.rb
-          git commit -m "cask: pandoras-box ${VERSION}" || echo "cask unchanged"
+          git add Casks/pandoras-gate.rb
+          git commit -m "cask: pandoras-gate ${VERSION}" || echo "cask unchanged"
           git push origin main

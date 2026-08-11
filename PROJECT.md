@@ -1,4 +1,4 @@
-# Pandora's Box - Writer's Studio
+# Pandora's Gate - Writer's Studio
 
 We're working to build an application for writing novels for the desktop.  It's also an AI harness for writers to use locally run LLMs or connect to remote LLMs like Claude or ChatGPT.  
 

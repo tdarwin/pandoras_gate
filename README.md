@@ -1,4 +1,4 @@
-# Pandora's Box — Writer's Studio
+# Pandora's Gate — Writer's Studio
 
 A desktop app for writing novels, doubling as an AI harness for writers: bring your own OpenRouter key for remote models, or run GGUF models entirely on your machine via a bundled llama.cpp engine.
 
@@ -19,15 +19,15 @@ Built with Electron + TypeScript + React. Everything you write is plain markdown
 This repository doubles as a Homebrew tap:
 
 ```bash
-brew tap tdarwin/pandora https://github.com/tdarwin/pandoras_box
-brew install --cask --no-quarantine tdarwin/pandora/pandoras-box
+brew tap tdarwin/pandora https://github.com/tdarwin/pandoras_gate
+brew install --cask --no-quarantine tdarwin/pandora/pandoras-gate
 ```
 
 `--no-quarantine` is needed while releases are unsigned — macOS Gatekeeper
 otherwise reports the app as damaged. Once releases are signed and notarized
 with a Developer ID, drop the flag. Alternatively, download the DMG from
-[Releases](https://github.com/tdarwin/pandoras_box/releases) and run
-`xattr -cr "/Applications/Pandora's Box.app"` after copying it in.
+[Releases](https://github.com/tdarwin/pandoras_gate/releases) and run
+`xattr -cr "/Applications/Pandora's Gate.app"` after copying it in.
 
 Releases are produced by `.github/workflows/release.yml` on every `v*` tag:
 tests → DMG build (signed + notarized when the `MAC_CSC_LINK`/`APPLE_*`

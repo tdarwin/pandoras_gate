@@ -8,7 +8,7 @@ import { structuredPatch } from 'diff'
  * backward, so any restore can itself be undone).
  */
 
-const AUTHOR = { name: "Pandora's Box", email: 'pandora@localhost' }
+const AUTHOR = { name: "Pandora's Gate", email: 'pandora@localhost' }
 
 export interface CommitInfo {
   oid: string

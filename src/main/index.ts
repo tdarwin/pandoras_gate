@@ -1,10 +1,36 @@
 import { app, shell, BrowserWindow } from 'electron'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { existsSync, renameSync } from 'node:fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
 import { flushAllAutocommits } from './git/service'
 import { initTelemetry, shutdownTelemetry } from './telemetry'
 import { logInfo, logError } from './log'
+
+/**
+ * One-time migration from the app's original name ("pandoras-box"). Moves
+ * known state files/dirs into the new userData location so recents, prefs,
+ * and downloaded models survive the rename. Runs before anything reads state.
+ * Note: safeStorage secrets are tied to the old keychain item and will not
+ * decrypt after the rename — those keys must be re-entered once.
+ */
+function migrateLegacyUserData(): void {
+  try {
+    const newDir = app.getPath('userData')
+    const oldDir = join(dirname(newDir), 'pandoras-box')
+    if (!existsSync(oldDir) || oldDir === newDir) return
+    for (const entry of ['app-state.json', 'secrets.json', 'models', 'logs']) {
+      const from = join(oldDir, entry)
+      const to = join(newDir, entry)
+      if (existsSync(from) && !existsSync(to)) {
+        renameSync(from, to)
+      }
+    }
+    logInfo('app', `migrated user data from ${oldDir}`)
+  } catch (err) {
+    logError('app', 'user data migration failed', err)
+  }
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -56,7 +82,8 @@ app.on('child-process-gone', (_event, details) => {
 })
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.davintaddeo.pandorasbox')
+  migrateLegacyUserData()
+  electronApp.setAppUserModelId('com.davintaddeo.pandorasgate')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

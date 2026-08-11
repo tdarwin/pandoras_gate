@@ -9,8 +9,8 @@ import { getSecret } from '../secrets'
 
 const BASE_URL = 'https://openrouter.ai/api/v1'
 const APP_HEADERS = {
-  'HTTP-Referer': 'https://github.com/davintaddeo/pandoras-box',
-  'X-Title': "Pandora's Box Writer's Studio"
+  'HTTP-Referer': 'https://github.com/davintaddeo/pandoras-gate',
+  'X-Title': "Pandora's Gate Writer's Studio"
 }
 const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 

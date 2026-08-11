@@ -40,7 +40,7 @@ export default function App(): React.JSX.Element {
     <div className="flex h-screen flex-col">
       <header className="titlebar-drag relative flex h-10 shrink-0 items-center justify-center border-b border-line">
         <span className="text-sm font-medium text-ink-muted">
-          {novel ? novel.manifest.title : "Pandora's Box"}
+          {novel ? novel.manifest.title : "Pandora's Gate"}
         </span>
         <button
           onClick={() => setShowPrefs(true)}

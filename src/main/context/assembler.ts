@@ -157,7 +157,7 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
           'Output ONLY the chapter prose — no headings for the chapter title, no commentary, no notes, no frontmatter.'
         ].join(' ')
       : [
-          "You are the author's writing assistant inside Pandora's Box, a novel-writing studio.",
+          "You are the author's writing assistant inside Pandora's Gate, a novel-writing studio.",
           `The author${source.author ? ` (${source.author})` : ''} is working on the novel "${source.novelTitle}".`,
           'You help with brainstorming, prose feedback, continuity, and craft — and you can ACT on the novel itself: revising and drafting chapters, and maintaining the Codex (the story bible of characters, world rules, outlines, and summaries).',
           'Story materials follow; treat them as canon. Be concrete.'

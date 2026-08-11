@@ -1,5 +1,5 @@
-appId: com.davintaddeo.pandorasbox
-productName: Pandora's Box
+appId: com.davintaddeo.pandorasgate
+productName: Pandora's Gate
 directories:
   buildResources: build
   output: dist
@@ -16,7 +16,7 @@ mac:
   target:
     - target: dmg
       arch: [arm64]
-  artifactName: Pandoras-Box-${version}-${arch}.${ext}
+  artifactName: Pandoras-Gate-${version}-${arch}.${ext}
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
@@ -28,12 +28,12 @@ win:
   target:
     - target: nsis
       arch: [x64]
-  artifactName: Pandoras-Box-Setup-${version}.${ext}
+  artifactName: Pandoras-Gate-Setup-${version}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
 publish:
   provider: github
   owner: tdarwin
-  repo: pandoras_box
+  repo: pandoras_gate
 npmRebuild: false

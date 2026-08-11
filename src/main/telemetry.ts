@@ -16,7 +16,7 @@ import { logInfo, logWarn } from './log'
  * on regardless for local debugging.
  */
 
-const DEFAULT_SERVICE_NAME = 'pandoras-box'
+const DEFAULT_SERVICE_NAME = 'pandoras-gate'
 
 let provider: NodeTracerProvider | null = null
 let activeTracer: Tracer = trace.getTracer('noop')
