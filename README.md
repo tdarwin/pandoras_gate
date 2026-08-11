@@ -14,6 +14,26 @@ Built with Electron + TypeScript + React. Everything you write is plain markdown
 - **Local models**: curated catalog with hardware-aware recommendations and resumable downloads, or import any GGUF. Inference runs in an isolated utility process (Metal on Apple Silicon; CUDA/Vulkan/CPU on Windows).
 - **Snapshots**: every save auto-commits to a hidden git repo; browse history, view diffs, restore any version (restores are new commits — always undoable).
 
+## Install (macOS, Apple Silicon)
+
+This repository doubles as a Homebrew tap:
+
+```bash
+brew tap tdarwin/pandora https://github.com/tdarwin/pandoras_box
+brew install --cask --no-quarantine tdarwin/pandora/pandoras-box
+```
+
+`--no-quarantine` is needed while releases are unsigned — macOS Gatekeeper
+otherwise reports the app as damaged. Once releases are signed and notarized
+with a Developer ID, drop the flag. Alternatively, download the DMG from
+[Releases](https://github.com/tdarwin/pandoras_box/releases) and run
+`xattr -cr "/Applications/Pandora's Box.app"` after copying it in.
+
+Releases are produced by `.github/workflows/release.yml` on every `v*` tag:
+tests → DMG build (signed + notarized when the `MAC_CSC_LINK`/`APPLE_*`
+secrets exist) → GitHub release → the cask in `Casks/` is updated with the
+new version and checksum.
+
 ## Development
 
 ```bash

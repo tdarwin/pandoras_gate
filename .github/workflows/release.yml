@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test and typecheck
+        run: |
+          npm run test
+          npm run typecheck
+
+      # Signing is optional: with no MAC_CSC_LINK secret the build proceeds
+      # unsigned (ad-hoc) and users install with --no-quarantine. Adding the
+      # Developer ID cert + Apple credentials later flips on signing AND
+      # notarization with no other changes.
+      - name: Configure signing (when secrets are present)
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+        run: |
+          if [ -n "$MAC_CSC_LINK" ]; then
+            {
+              echo "CSC_LINK=${{ secrets.MAC_CSC_LINK }}"
+              echo "CSC_KEY_PASSWORD=${{ secrets.MAC_CSC_KEY_PASSWORD }}"
+              echo "APPLE_ID=${{ secrets.APPLE_ID }}"
+              echo "APPLE_APP_SPECIFIC_PASSWORD=${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}"
+              echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}"
+            } >> "$GITHUB_ENV"
+            echo "Signing + notarization enabled."
+          else
+            echo "No signing secrets — building unsigned (install with --no-quarantine)."
+          fi
+
+      - name: Build and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npx electron-vite build
+          npx electron-builder --config electron-builder.yml --mac --publish always
+
+      - name: Update Homebrew cask
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG="dist/Pandoras-Box-${VERSION}-arm64.dmg"
+          SHA=$(shasum -a 256 "$DMG" | cut -d' ' -f1)
+
+          git fetch origin main
+          git checkout main
+          mkdir -p Casks
+          cat > Casks/pandoras-box.rb <<CASK
+          cask "pandoras-box" do
+            version "${VERSION}"
+            sha256 "${SHA}"
+
+            url "https://github.com/tdarwin/pandoras_box/releases/download/v#{version}/Pandoras-Box-#{version}-arm64.dmg"
+            name "Pandora's Box"
+            desc "Novel-writing studio with local and remote AI assistance"
+            homepage "https://github.com/tdarwin/pandoras_box"
+
+            depends_on arch: :arm64
+            depends_on macos: ">= :ventura"
+
+            app "Pandora's Box.app"
+
+            zap trash: [
+              "~/Library/Application Support/pandoras-box",
+              "~/Library/Preferences/com.davintaddeo.pandorasbox.plist",
+              "~/Library/Saved Application State/com.davintaddeo.pandorasbox.savedState",
+            ]
+          end
+          CASK
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/pandoras-box.rb
+          git commit -m "cask: pandoras-box ${VERSION}" || echo "cask unchanged"
+          git push origin main

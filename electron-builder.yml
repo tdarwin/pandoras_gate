@@ -11,14 +11,29 @@ asarUnpack:
   - '**/node_modules/node-llama-cpp/**'
 mac:
   category: public.app-category.productivity
+  # Apple Silicon only for now: the x64 build needs per-arch native llama.cpp
+  # binaries that the release runner doesn't install. Revisit for Intel.
   target:
     - target: dmg
-      arch: [arm64, x64]
+      arch: [arm64]
+  artifactName: Pandoras-Box-${version}-${arch}.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Notarizes when APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID env
+  # vars are present (CI secrets); skips quietly when they are not.
+  notarize: true
 win:
   target:
     - target: nsis
       arch: [x64]
+  artifactName: Pandoras-Box-Setup-${version}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+publish:
+  provider: github
+  owner: tdarwin
+  repo: pandoras_box
 npmRebuild: false
