@@ -15,6 +15,7 @@ import { commitAll } from '../git/service'
 import { matchCharacters } from '../context/assembler'
 import { logInfo } from '../log'
 import { withSpan } from '../telemetry'
+import { tracedChatStream } from '../llm/genai-otel'
 
 /**
  * The metadata pipeline: on chapter save, ask the model for full-document
@@ -157,6 +158,8 @@ interface RunContext {
   modelId: string
   /** Run even if the chapter is unchanged (explicit user/agent request). */
   force?: boolean
+  /** gen_ai.conversation.id when triggered from a chat session. */
+  conversationId?: string
 }
 
 async function buildUserPrompt(novelDir: string, chapterFile: string): Promise<string> {
@@ -242,8 +245,13 @@ export interface RunResult {
 
 export async function runMetadataUpdate(ctx: RunContext): Promise<RunResult> {
   return withSpan(
-    'codex update',
-    { 'llm.model': ctx.modelId, 'codex.chapter': ctx.chapterFile },
+    'invoke_workflow codex-update',
+    {
+      'gen_ai.operation.name': 'invoke_workflow',
+      'gen_ai.request.model': ctx.modelId,
+      ...(ctx.conversationId ? { 'gen_ai.conversation.id': ctx.conversationId } : {}),
+      'codex.chapter': ctx.chapterFile
+    },
     async (span) => {
       const result = await runMetadataUpdateInner(ctx)
       span.setAttribute('codex.status', result.status)
@@ -272,7 +280,8 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
   // Collect the full response (schema-constrained where supported).
   let raw = ''
   const controller = new AbortController()
-  for await (const event of ctx.provider.chatStream(
+  for await (const event of tracedChatStream(
+    ctx.provider,
     {
       modelId: ctx.modelId,
       messages: [
@@ -282,7 +291,8 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
       temperature: 0.2,
       responseFormat: { name: 'metadata_proposals', schema: PROPOSAL_JSON_SCHEMA }
     },
-    controller.signal
+    controller.signal,
+    { conversationId: ctx.conversationId ?? randomUUID(), providerId: ctx.provider.id }
   )) {
     if (event.type === 'delta') raw += event.text
     if (event.type === 'error') throw new Error(event.message)
@@ -404,6 +414,7 @@ export interface ChapterEditRequest {
   instructions: string
   provider: LLMProvider
   modelId: string
+  conversationId?: string
 }
 
 /**
@@ -413,8 +424,13 @@ export interface ChapterEditRequest {
  */
 export async function runChapterEdit(req: ChapterEditRequest): Promise<RunResult> {
   return withSpan(
-    'chapter edit',
-    { 'llm.model': req.modelId, 'chapter.file': req.chapterFile },
+    'invoke_workflow chapter-edit',
+    {
+      'gen_ai.operation.name': 'invoke_workflow',
+      'gen_ai.request.model': req.modelId,
+      ...(req.conversationId ? { 'gen_ai.conversation.id': req.conversationId } : {}),
+      'chapter.file': req.chapterFile
+    },
     async (span) => {
       const manifest = await readNovelManifest(req.novelDir)
       const entry = manifest.chapters.find((c) => c.file === req.chapterFile)
@@ -430,7 +446,8 @@ export async function runChapterEdit(req: ChapterEditRequest): Promise<RunResult
 
       let revised = ''
       const controller = new AbortController()
-      for await (const event of req.provider.chatStream(
+      for await (const event of tracedChatStream(
+        req.provider,
         {
           modelId: req.modelId,
           messages: [
@@ -442,7 +459,8 @@ export async function runChapterEdit(req: ChapterEditRequest): Promise<RunResult
           ],
           temperature: 0.4
         },
-        controller.signal
+        controller.signal,
+        { conversationId: req.conversationId ?? randomUUID(), providerId: req.provider.id }
       )) {
         if (event.type === 'delta') revised += event.text
         if (event.type === 'error') throw new Error(event.message)
@@ -497,6 +515,7 @@ export interface OutlineRequest {
   guidance?: string
   provider: LLMProvider
   modelId: string
+  conversationId?: string
 }
 
 async function buildOutlinePrompt(req: OutlineRequest): Promise<string> {
@@ -555,8 +574,13 @@ async function buildOutlinePrompt(req: OutlineRequest): Promise<string> {
 
 export async function runOutlineGeneration(req: OutlineRequest): Promise<RunResult> {
   return withSpan(
-    'outline generation',
-    { 'llm.model': req.modelId, 'outline.scope': req.scope },
+    'invoke_workflow outline-generation',
+    {
+      'gen_ai.operation.name': 'invoke_workflow',
+      'gen_ai.request.model': req.modelId,
+      ...(req.conversationId ? { 'gen_ai.conversation.id': req.conversationId } : {}),
+      'outline.scope': req.scope
+    },
     async (span) => {
       const result = await runOutlineGenerationInner(req)
       span.setAttribute('outline.status', result.status)
@@ -578,7 +602,8 @@ async function runOutlineGenerationInner(req: OutlineRequest): Promise<RunResult
 
   let raw = ''
   const controller = new AbortController()
-  for await (const event of req.provider.chatStream(
+  for await (const event of tracedChatStream(
+    req.provider,
     {
       modelId: req.modelId,
       messages: [
@@ -588,7 +613,8 @@ async function runOutlineGenerationInner(req: OutlineRequest): Promise<RunResult
       temperature: 0.4,
       responseFormat: { name: 'outline_proposals', schema: PROPOSAL_JSON_SCHEMA }
     },
-    controller.signal
+    controller.signal,
+    { conversationId: req.conversationId ?? randomUUID(), providerId: req.provider.id }
   )) {
     if (event.type === 'delta') raw += event.text
     if (event.type === 'error') throw new Error(event.message)

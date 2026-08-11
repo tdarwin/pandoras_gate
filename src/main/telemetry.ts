@@ -79,7 +79,21 @@ export async function shutdownTelemetry(): Promise<void> {
   await provider?.shutdown().catch(() => {})
 }
 
-type Attrs = Record<string, string | number | boolean>
+/** The tracer for manual span management (streaming spans). No-op when off. */
+export function getTracer(): Tracer {
+  return activeTracer
+}
+
+/**
+ * Flush pending spans without shutting the pipeline down. GenAI turns are
+ * long-lived and the batch processor's delay would lose spans on quit/crash —
+ * call after each top-level agent invocation.
+ */
+export async function flushTelemetry(): Promise<void> {
+  await provider?.forceFlush().catch(() => {})
+}
+
+type Attrs = Record<string, string | number | boolean | string[]>
 
 /**
  * Runs `fn` inside a span. Nested withSpan calls become child spans via

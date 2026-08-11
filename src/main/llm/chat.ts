@@ -6,11 +6,13 @@ import type {
   StreamEvent,
   ToolCallRef
 } from '../../shared/llm/types'
+import { context as otelContext } from '@opentelemetry/api'
 import { openRouterProvider } from './openrouter'
 import { localProvider } from './local'
 import { chatToolDefinitions, executeTool, TOOL_SYSTEM_NOTE, type ToolContext } from './tools'
+import { tracedChatStream } from './genai-otel'
 import { logInfo, logError } from '../log'
-import { withSpan } from '../telemetry'
+import { withSpan, flushTelemetry } from '../telemetry'
 
 /**
  * Chat orchestration: streams generations to the renderer and, when the
@@ -40,6 +42,8 @@ export interface ChatContext {
   activeFile: string | null
   /** Whether the selected model supports tool calling. */
   toolUse: boolean
+  /** Session id shared by every span of this conversation (gen_ai.conversation.id). */
+  conversationId?: string
 }
 
 const MAX_TOOL_ROUNDS = 4
@@ -77,11 +81,16 @@ export function startChat(
     if (!sender.isDestroyed()) sender.send('chat:event', { requestId, event })
   }
 
+  const conversationId = chatContext?.conversationId ?? requestId
+
   void withSpan(
-    'chat generation',
+    'invoke_agent pandora',
     {
-      'llm.provider': providerId,
-      'llm.model': req.modelId,
+      'gen_ai.operation.name': 'invoke_agent',
+      'gen_ai.agent.name': 'pandora',
+      'gen_ai.provider.name': providerId === 'local' ? 'llama_cpp' : providerId,
+      'gen_ai.request.model': req.modelId,
+      'gen_ai.conversation.id': conversationId,
       'chat.tools_enabled': Boolean(chatContext?.toolUse)
     },
     async (span) => {
@@ -92,7 +101,8 @@ export function startChat(
               activeFile: chatContext.activeFile,
               provider,
               modelId: req.modelId,
-              sender
+              sender,
+              conversationId
             }
           : null
       const tools = toolCtx ? chatToolDefinitions(toolCtx) : []
@@ -129,17 +139,26 @@ export function startChat(
             // bridge back to the same executor (with UI status updates).
             ...(toolCtx
               ? {
-                  toolExecutor: async (name: string, argsJson: string): Promise<string> => {
-                    if (!controller.signal.aborted) {
-                      send({ type: 'toolStatus', text: toolStatusText(name) })
+                  // context.bind: local-model tool calls arrive via the worker's
+                  // message handler (a different async chain) — bind them to this
+                  // agent span so execute_tool spans nest correctly.
+                  toolExecutor: otelContext.bind(
+                    otelContext.active(),
+                    async (name: string, argsJson: string): Promise<string> => {
+                      if (!controller.signal.aborted) {
+                        send({ type: 'toolStatus', text: toolStatusText(name) })
+                      }
+                      return guardedExecute(name, argsJson)
                     }
-                    return guardedExecute(name, argsJson)
-                  }
+                  )
                 }
               : {})
           }
 
-          for await (const event of provider.chatStream(request, controller.signal)) {
+          for await (const event of tracedChatStream(provider, request, controller.signal, {
+            conversationId,
+            providerId
+          })) {
             if (controller.signal.aborted) break
             switch (event.type) {
               case 'delta':
@@ -188,9 +207,15 @@ export function startChat(
         active.delete(requestId)
       }
     }
-  ).catch(() => {
-    // withSpan re-throws after recording; errors were already sent above.
-  })
+  )
+    .catch(() => {
+      // withSpan re-throws after recording; errors were already sent above.
+    })
+    .finally(() => {
+      // Agent turns are the app's top-level GenAI invocations — flush so the
+      // whole trace survives an early quit.
+      void flushTelemetry()
+    })
 }
 
 export function cancelChat(requestId: string): boolean {

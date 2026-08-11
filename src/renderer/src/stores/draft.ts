@@ -125,7 +125,8 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
       provider: model.provider,
       modelId: model.id,
       contextTokens: model.contextLength,
-      ...(instructions?.trim() ? { instructions: instructions.trim() } : {})
+      ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
+      conversationId: chat.conversationId
     })
     if (result.ok) {
       // Buffer now reflects the on-disk file (frontmatter has ai-draft status).

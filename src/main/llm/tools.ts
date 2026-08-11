@@ -27,6 +27,8 @@ export interface ToolContext {
   provider: LLMProvider
   modelId: string
   sender: WebContents
+  /** gen_ai.conversation.id shared by every span of this session. */
+  conversationId?: string
 }
 
 export function chatToolDefinitions(ctx: ToolContext): ToolDefinition[] {
@@ -192,7 +194,27 @@ export async function executeTool(
   argsJson: string
 ): Promise<string> {
   logInfo('tools', `executing ${name}`, argsJson)
-  return withSpan(`tool ${name}`, { 'tool.name': name, 'llm.model': ctx.modelId }, async () => {
+  return withSpan(
+    `execute_tool ${name}`,
+    {
+      'gen_ai.operation.name': 'execute_tool',
+      'gen_ai.tool.name': name,
+      'gen_ai.tool.type': 'function',
+      'gen_ai.tool.call.arguments': argsJson,
+      'gen_ai.request.model': ctx.modelId,
+      ...(ctx.conversationId ? { 'gen_ai.conversation.id': ctx.conversationId } : {})
+    },
+    async (span) => {
+      const result = await executeToolInner(ctx, name, argsJson)
+      span.setAttribute('gen_ai.tool.call.result', result.slice(0, 4000))
+      if (result.startsWith('Error')) span.setAttribute('app.tool.errored', true)
+      return result
+    }
+  )
+}
+
+async function executeToolInner(ctx: ToolContext, name: string, argsJson: string): Promise<string> {
+  {
     try {
       switch (name) {
         case 'write_codex_doc': {
@@ -258,7 +280,8 @@ export async function executeTool(
             provider: ctx.provider,
             modelId: ctx.modelId,
             // An explicit request always runs, even if the chapter is unchanged.
-            force: true
+            force: true,
+            ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {})
           })
           notifyProposalsChanged(ctx.sender)
           if (result.status === 'ran') {
@@ -457,7 +480,8 @@ export async function executeTool(
             chapterFile: ctx.activeFile,
             instructions: args.instructions,
             provider: ctx.provider,
-            modelId: ctx.modelId
+            modelId: ctx.modelId,
+            ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {})
           })
           notifyProposalsChanged(ctx.sender)
           if (result.status === 'ran') {
@@ -483,7 +507,8 @@ export async function executeTool(
             ...(scope === 'chapter' ? { chapterFile: ctx.activeFile! } : {}),
             ...(args.guidance ? { guidance: args.guidance } : {}),
             provider: ctx.provider,
-            modelId: ctx.modelId
+            modelId: ctx.modelId,
+            ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {})
           })
           notifyProposalsChanged(ctx.sender)
           if (result.status === 'ran') {
@@ -498,7 +523,7 @@ export async function executeTool(
       logError('tools', `${name} failed`, err)
       return `Error: ${err instanceof Error ? err.message : String(err)}`
     }
-  })
+  }
 }
 
 export const TOOL_SYSTEM_NOTE = `

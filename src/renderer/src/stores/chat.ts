@@ -18,6 +18,8 @@ interface ChatStore {
   models: ModelInfo[]
   selectedModelId: string | null
   apiKeyConfigured: boolean
+  /** Session id shared by all telemetry spans of this conversation. */
+  conversationId: string
   messages: ChatMessage[]
   streaming: boolean
   requestId: string | null
@@ -53,6 +55,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   models: [],
   selectedModelId: null,
   apiKeyConfigured: false,
+  conversationId: crypto.randomUUID(),
   messages: [],
   streaming: false,
   requestId: null,
@@ -223,7 +226,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       // Enables agent tools (update_codex, generate_outline) in main.
       novelDir: novel.dir,
       activeFile: project.activeFile,
-      toolUse: model?.capabilities.toolUse ?? false
+      toolUse: model?.capabilities.toolUse ?? false,
+      conversationId: get().conversationId
     })
     if (!result.ok) {
       set((s) => {
@@ -241,5 +245,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set({ streaming: false, requestId: null })
   },
 
-  clear: () => set({ messages: [], usage: null, report: null, error: null })
+  // Clearing the thread starts a new conversation (and a new telemetry session).
+  clear: () =>
+    set({
+      messages: [],
+      usage: null,
+      report: null,
+      error: null,
+      conversationId: crypto.randomUUID()
+    })
 }))

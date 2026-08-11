@@ -250,7 +250,9 @@ export const ipcContract = {
       /** Novel context enabling agent tools (update_codex, generate_outline). */
       novelDir: z.string().optional(),
       activeFile: z.string().nullable().optional(),
-      toolUse: z.boolean().optional()
+      toolUse: z.boolean().optional(),
+      /** Session id for gen_ai.conversation.id across all spans. */
+      conversationId: z.string().optional()
     }),
     response: z.object({ started: z.literal(true) })
   },
@@ -374,7 +376,8 @@ export const ipcContract = {
       provider: z.enum(['local', 'openrouter']),
       modelId: z.string(),
       contextTokens: z.number(),
-      instructions: z.string().optional()
+      instructions: z.string().optional(),
+      conversationId: z.string().optional()
     }),
     response: z.object({
       novel: NovelStateSchema,

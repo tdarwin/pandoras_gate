@@ -268,7 +268,8 @@ export function registerIpcHandlers(): void {
         ? {
             novelDir: req.novelDir,
             activeFile: req.activeFile ?? null,
-            toolUse: req.toolUse ?? false
+            toolUse: req.toolUse ?? false,
+            ...(req.conversationId ? { conversationId: req.conversationId } : {})
           }
         : undefined
     )

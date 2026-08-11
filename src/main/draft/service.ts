@@ -23,6 +23,7 @@ export interface DraftStartRequest {
   modelId: string
   contextTokens: number
   instructions?: string
+  conversationId?: string
 }
 
 export async function startDraft(
@@ -63,12 +64,23 @@ export async function startDraft(
     task: 'draft'
   })
 
-  startChat(sender, req.requestId, req.providerId, {
-    modelId: req.modelId,
-    messages,
-    temperature: 0.8,
-    maxTokens: 4096
-  })
+  startChat(
+    sender,
+    req.requestId,
+    req.providerId,
+    {
+      modelId: req.modelId,
+      messages,
+      temperature: 0.8,
+      maxTokens: 4096
+    },
+    {
+      novelDir,
+      activeFile: chapterFile,
+      toolUse: false,
+      ...(req.conversationId ? { conversationId: req.conversationId } : {})
+    }
+  )
 
   return { novel, content: chapterRaw }
 }
