@@ -1,5 +1,6 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, BrowserWindow, nativeImage } from 'electron'
 import { join, dirname } from 'node:path'
+import appIcon from '../../resources/icon.png?asset'
 import { existsSync, renameSync } from 'node:fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
@@ -40,6 +41,9 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
+    // macOS and Windows take the icon from the packaged bundle; Linux does not,
+    // so the window has to carry it.
+    ...(process.platform === 'linux' ? { icon: appIcon } : {}),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -84,6 +88,23 @@ app.on('child-process-gone', (_event, details) => {
 app.whenReady().then(() => {
   migrateLegacyUserData()
   electronApp.setAppUserModelId('com.davintaddeo.pandorasgate')
+
+  // `electron-vite dev` runs under the Electron binary, whose bundle icon owns
+  // the dock slot. Packaged builds already show the right icon.
+  if (is.dev && process.platform === 'darwin') {
+    app.dock?.setIcon(nativeImage.createFromPath(appIcon))
+  }
+
+  // Populates the native About panel — the macOS app menu's "About Pandora's
+  // Gate" item, which is present even though the menu bar is hidden elsewhere.
+  app.setAboutPanelOptions({
+    applicationName: "Pandora's Gate",
+    applicationVersion: app.getVersion(),
+    version: '',
+    copyright: '© 2026 Davin Taddeo — MIT License',
+    credits: "Writer's Studio — write novels with local and remote AI assistance.",
+    iconPath: appIcon
+  })
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

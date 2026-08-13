@@ -6,11 +6,15 @@ directories:
 files:
   - out/**
   - package.json
+  # The main process resolves `?asset` imports (the window/dock icon) to paths
+  # under resources/, so the directory has to ship alongside out/.
+  - resources/**
 asarUnpack:
   - '**/node_modules/@node-llama-cpp/**'
   - '**/node_modules/node-llama-cpp/**'
 mac:
   category: public.app-category.productivity
+  icon: build/icon.icns
   # Apple Silicon only for now: the x64 build needs per-arch native llama.cpp
   # binaries that the release runner doesn't install. Revisit for Intel.
   target:
@@ -25,6 +29,7 @@ mac:
   # vars are present (CI secrets); skips quietly when they are not.
   notarize: true
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]
