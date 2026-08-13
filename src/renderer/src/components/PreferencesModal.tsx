@@ -206,6 +206,31 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
             </select>
           </div>
 
+          <div className="flex items-start justify-between gap-4 py-2">
+            <span>
+              <span className="block text-sm text-ink">Story context size</span>
+              <span className="block text-xs leading-relaxed text-ink-faint">
+                How much of the chapter, Codex, and summaries is sent with every AI message.
+                Bigger = more story awareness but slower and pricier. Automatic stays lean and
+                scales gently with the model&apos;s window.
+              </span>
+            </span>
+            <select
+              value={prefs.contextTargetTokens}
+              onChange={(e) =>
+                void prefs.update({
+                  contextTargetTokens: Number(e.target.value) as 0 | 8192 | 16384 | 32768
+                })
+              }
+              className="mt-0.5 shrink-0 rounded-lg border border-line-strong bg-surface px-2 py-1.5 text-xs text-ink outline-none"
+            >
+              <option value={0}>Automatic</option>
+              <option value={8192}>Compact (~8k tokens)</option>
+              <option value={16384}>Roomy (~16k tokens)</option>
+              <option value={32768}>Maximal (~32k tokens)</option>
+            </select>
+          </div>
+
           <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-ink-faint">
             OpenRouter
           </h3>

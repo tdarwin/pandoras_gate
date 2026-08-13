@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { diffWords } from 'diff'
 import { useProposalsStore, type ReviewItem } from '../stores/proposals'
 
-function WordDiff({ oldText, newText }: { oldText: string; newText: string }): React.JSX.Element {
+export function WordDiff({ oldText, newText }: { oldText: string; newText: string }): React.JSX.Element {
   const parts = diffWords(oldText, newText)
   return (
     <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-surface p-3 font-mono text-[11.5px] leading-relaxed">
@@ -32,7 +32,8 @@ function ItemCard({
 }: {
   proposalId: string
   item: ReviewItem
-  onReview: () => void
+  /** Present only for markdown docs — opens tracked-changes review. */
+  onReview?: () => void
 }): React.JSX.Element {
   const resolve = useProposalsStore((s) => s.resolve)
   const [editing, setEditing] = useState(false)
@@ -126,20 +127,22 @@ function ItemCard({
             >
               Edit
             </button>
-            <button
-              disabled={busy}
-              onClick={onReview}
-              title="Open in the editor with inline accept/reject for each change"
-              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
-            >
-              Review in editor
-            </button>
+            {onReview && (
+              <button
+                disabled={busy}
+                onClick={onReview}
+                title="Open in the editor with tracked changes — accept or reject each suggestion in place"
+                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
+              >
+                Review in editor
+              </button>
+            )}
             <button
               disabled={busy}
               onClick={() => void act('accept')}
               className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
             >
-              Accept all
+              Accept
             </button>
           </>
         )}
@@ -225,10 +228,14 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
                       key={item.path}
                       proposalId={p.id}
                       item={item}
-                      onReview={() => {
-                        enterReview(p.id, item.path)
-                        onClose()
-                      }}
+                      {...(item.path.endsWith('.md')
+                        ? {
+                            onReview: () => {
+                              enterReview(p.id, item.path)
+                              onClose()
+                            }
+                          }
+                        : {})}
                     />
                   ))}
                 </div>

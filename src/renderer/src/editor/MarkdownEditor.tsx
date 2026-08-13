@@ -1,15 +1,25 @@
-import { useEffect, useRef } from 'react'
-import { EditorState } from '@codemirror/state'
-import { EditorView, keymap, drawSelection, highlightActiveLine } from '@codemirror/view'
-import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands'
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { unifiedMergeView } from '@codemirror/merge'
-import { livePreviewPlugin } from './live-preview/decorations'
-import { editorTheme } from './theme'
+import { useEffect, useMemo, useRef } from 'react'
+import { Extension, getSchema } from '@tiptap/core'
+import { EditorContent, useEditor } from '@tiptap/react'
+import { baseExtensions } from './extensions'
+import { docToMarkdown, markdownToDoc } from './markdown'
+import { TrackChanges } from './track-changes'
+
+/** Style commands the toolbar can drive without knowing the editor library. */
+export interface EditorHandle {
+  focus: () => void
+  toggleBold: () => void
+  toggleItalic: () => void
+  /** 0 = body text. */
+  setHeading: (level: 0 | 1 | 2 | 3) => void
+  toggleBlockquote: () => void
+  toggleBulletList: () => void
+}
 
 interface MarkdownEditorProps {
   /** Identity of the document — remounting state when it changes. */
   docId: string
+  /** Markdown BODY (frontmatter is handled outside the editor). */
   value: string
   onChange: (value: string) => void
   /**
@@ -19,20 +29,23 @@ interface MarkdownEditorProps {
   forceSync?: boolean
   /** ⌘S / Ctrl+S inside the editor. */
   onSave?: () => void
-  /** Access to the underlying view (style toolbar commands). */
-  onViewReady?: (view: EditorView | null) => void
+  /** Style commands for the toolbar; null when the editor unmounts. */
+  onReady?: (handle: EditorHandle | null) => void
   /**
-   * Review mode: the buffer holds PROPOSED content and this is the current
-   * on-disk content — differences render as inline accept/reject chunks.
+   * Review mode: `value` holds the PROPOSED body and this holds the on-disk
+   * body — the difference renders as tracked changes with ✓/✕ per chunk.
    */
-  mergeOriginal?: string
+  reviewOriginal?: string
 }
 
+/** During streamed drafts, re-render the doc at most this often. */
+const STREAM_APPLY_MS = 250
+
 /**
- * CodeMirror 6 markdown editor with live preview. The parent owns persistence;
- * this component owns the editing surface. External `value` changes for the
- * same docId are ignored while focused (the buffer is source of truth while
- * the user types).
+ * True-WYSIWYG prose editor (TipTap/ProseMirror). Markdown in, markdown out —
+ * the writer never sees syntax. The parent owns persistence; external `value`
+ * changes for the same docId are ignored while focused (the buffer is source
+ * of truth while the user types), except during forced sync.
  */
 export default function MarkdownEditor({
   docId,
@@ -40,86 +53,134 @@ export default function MarkdownEditor({
   onChange,
   forceSync = false,
   onSave,
-  onViewReady,
-  mergeOriginal
+  onReady,
+  reviewOriginal
 }: MarkdownEditorProps): React.JSX.Element {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
   const onSaveRef = useRef(onSave)
   onSaveRef.current = onSave
+  const onReadyRef = useRef(onReady)
+  onReadyRef.current = onReady
+  /** The markdown the current editor doc corresponds to. */
+  const lastValueRef = useRef(value)
+  const valueRef = useRef(value)
+  valueRef.current = value
 
-  useEffect(() => {
-    if (!containerRef.current) return
-
-    const state = EditorState.create({
-      doc: value,
-      extensions: [
-        history(),
-        drawSelection(),
-        highlightActiveLine(),
-        keymap.of([
-          {
-            key: 'Mod-s',
-            preventDefault: true,
-            run: () => {
+  const saveShortcut = useMemo(
+    () =>
+      Extension.create({
+        name: 'saveShortcut',
+        addKeyboardShortcuts() {
+          return {
+            'Mod-s': () => {
               onSaveRef.current?.()
               return true
             }
-          },
-          // Explicit first-position bindings so undo/redo can never be
-          // shadowed by other handlers.
-          { key: 'Mod-z', run: undo, preventDefault: true },
-          { key: 'Mod-Shift-z', run: redo, preventDefault: true },
-          { key: 'Mod-y', run: redo, preventDefault: true },
-          ...defaultKeymap,
-          ...historyKeymap
-        ]),
-        markdown({ base: markdownLanguage }),
-        // In review mode the live-preview conceals the very syntax being
-        // diffed — show raw markdown with merge chunks instead.
-        ...(mergeOriginal === undefined ? [livePreviewPlugin] : []),
-        ...(mergeOriginal !== undefined
-          ? [unifiedMergeView({ original: mergeOriginal, mergeControls: true })]
-          : []),
-        editorTheme,
-        EditorView.lineWrapping,
-        EditorView.updateListener.of((update) => {
-          if (update.docChanged) onChangeRef.current(update.state.doc.toString())
-        })
-      ]
-    })
+          }
+        }
+      }),
+    []
+  )
 
-    const view = new EditorView({ state, parent: containerRef.current })
-    viewRef.current = view
-    onViewReady?.(view)
-    view.focus()
-
-    return () => {
-      view.destroy()
-      viewRef.current = null
-      onViewReady?.(null)
-    }
-    // Recreate the editor only when switching documents.
+  // Parse the initial document at creation so the editor (and the review
+  // diff, when active) never sees a transient empty doc.
+  const initialContent = useMemo(() => {
+    lastValueRef.current = valueRef.current
+    return markdownToDoc(getSchema(baseExtensions()), valueRef.current).toJSON() as object
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docId, mergeOriginal])
+  }, [docId])
 
-  // External value changes (e.g. AI writes into the file) while not focused —
-  // or always, during forced sync (drafting).
+  const editor = useEditor(
+    {
+      extensions: [
+        ...baseExtensions(),
+        saveShortcut,
+        ...(reviewOriginal !== undefined
+          ? [TrackChanges.configure({ original: reviewOriginal })]
+          : [])
+      ],
+      content: initialContent,
+      autofocus: true,
+      editorProps: {
+        attributes: {
+          class: 'prose-editor',
+          spellcheck: 'true'
+        }
+      },
+      onUpdate({ editor }) {
+        const md = docToMarkdown(editor.state.doc)
+        lastValueRef.current = md
+        onChangeRef.current(md)
+      }
+    },
+    // Recreate (fresh undo history) only when switching documents.
+    [docId]
+  )
+
+  // Expose style commands to the toolbar.
   useEffect(() => {
-    const view = viewRef.current
-    if (!view) return
-    const current = view.state.doc.toString()
-    if (value !== current && (forceSync || !view.hasFocus)) {
-      view.dispatch({
-        changes: { from: 0, to: current.length, insert: value },
-        ...(forceSync
-          ? { selection: { anchor: value.length }, scrollIntoView: true }
-          : {})
-      })
-    }
-  }, [value, forceSync])
+    if (!editor) return
+    onReadyRef.current?.({
+      focus: () => editor.commands.focus(),
+      toggleBold: () => editor.chain().focus().toggleBold().run(),
+      toggleItalic: () => editor.chain().focus().toggleItalic().run(),
+      setHeading: (level) => {
+        if (level === 0) editor.chain().focus().setParagraph().run()
+        else editor.chain().focus().setHeading({ level }).run()
+      },
+      toggleBlockquote: () => editor.chain().focus().toggleBlockquote().run(),
+      toggleBulletList: () => editor.chain().focus().toggleBulletList().run()
+    })
+    return () => onReadyRef.current?.(null)
+  }, [editor])
 
-  return <div ref={containerRef} className="h-full min-h-0" />
+  // External value changes (AI writes into the file) while not focused — or
+  // always, during forced sync (drafting), throttled so streaming doesn't
+  // re-render the document on every token.
+  const streamTimerRef = useRef<number | null>(null)
+  const lastStreamApplyRef = useRef(0)
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    if (valueRef.current === lastValueRef.current) return
+
+    const apply = (): void => {
+      const next = valueRef.current
+      lastValueRef.current = next
+      editor.commands.setContent(markdownToDoc(editor.schema, next), { emitUpdate: false })
+      if (forceSync) {
+        // Follow the streamed text without stealing focus.
+        editor
+          .chain()
+          .setTextSelection(editor.state.doc.content.size)
+          .scrollIntoView()
+          .run()
+      }
+    }
+
+    if (forceSync) {
+      if (streamTimerRef.current !== null) return
+      const since = Date.now() - lastStreamApplyRef.current
+      const delay = Math.max(0, STREAM_APPLY_MS - since)
+      streamTimerRef.current = window.setTimeout(() => {
+        streamTimerRef.current = null
+        lastStreamApplyRef.current = Date.now()
+        apply()
+      }, delay)
+    } else if (!editor.isFocused) {
+      apply()
+    }
+  }, [editor, value, forceSync])
+
+  // Flush any pending stream frame when unmounting or leaving forceSync.
+  useEffect(() => {
+    return () => {
+      if (streamTimerRef.current !== null) {
+        window.clearTimeout(streamTimerRef.current)
+        streamTimerRef.current = null
+      }
+    }
+  }, [editor])
+
+  return <EditorContent editor={editor} className="h-full min-h-0 overflow-y-auto" />
 }

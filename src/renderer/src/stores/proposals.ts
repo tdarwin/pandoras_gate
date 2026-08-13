@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
 import { useProjectStore } from './project'
 import { useChatStore } from './chat'
 
@@ -20,14 +21,21 @@ export interface ReviewProposal {
   items: ReviewItem[]
 }
 
-/** Inline review session: the editor shows proposed content vs. on-disk. */
+/**
+ * Tracked-changes review session: the editor shows the PROPOSED body with
+ * suggestions against the on-disk content; frontmatter is chosen wholesale
+ * (proposed vs current) alongside.
+ */
 export interface InlineReview {
   proposalId: string
   path: string
-  /** Current on-disk content (merge baseline). */
-  original: string
-  /** Live buffer — starts as the proposal, user can accept/reject chunks. */
-  buffer: string
+  /** Current on-disk file content (raw, incl. frontmatter). */
+  originalRaw: string
+  /** Proposed file content (raw, incl. frontmatter). */
+  proposedRaw: string
+  /** Live body markdown — starts as the proposal's body, tracks edits/rejects. */
+  bodyBuffer: string
+  fmChoice: 'proposed' | 'current'
   rationale: string
   sourceTitle: string
 }
@@ -44,7 +52,8 @@ interface ProposalsStore {
   init: () => void
   pendingCount: () => number
   enterReview: (proposalId: string, path: string) => void
-  updateReviewBuffer: (content: string) => void
+  updateReviewBody: (body: string) => void
+  setReviewFmChoice: (choice: 'proposed' | 'current') => void
   applyReview: () => Promise<void>
   rejectReview: () => Promise<void>
   exitReview: () => void
@@ -88,25 +97,35 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       review: {
         proposalId,
         path,
-        original: item.currentContent,
-        buffer: item.newContent,
+        originalRaw: item.currentContent,
+        proposedRaw: item.newContent,
+        bodyBuffer: parseFrontmatter(item.newContent).body,
+        fmChoice: 'proposed',
         rationale: item.rationale,
         sourceTitle: proposal.chapterTitle
       }
     })
   },
 
-  updateReviewBuffer: (content) =>
-    set((s) => (s.review ? { review: { ...s.review, buffer: content } } : {})),
+  updateReviewBody: (body) =>
+    set((s) => (s.review ? { review: { ...s.review, bodyBuffer: body } } : {})),
+
+  setReviewFmChoice: (choice) =>
+    set((s) => (s.review ? { review: { ...s.review, fmChoice: choice } } : {})),
 
   applyReview: async () => {
     const { review } = get()
     if (!review) return
-    // The buffer already reflects any per-chunk rejections — apply as edited.
-    await get().resolve(review.proposalId, review.path, 'accept', review.buffer)
+    // The body buffer already reflects per-chunk rejections and edits.
+    const data =
+      review.fmChoice === 'current'
+        ? parseFrontmatter(review.originalRaw).data
+        : parseFrontmatter(review.proposedRaw).data
+    const content = serializeFrontmatter({ data, body: review.bodyBuffer })
+    await get().resolve(review.proposalId, review.path, 'accept', content)
     set({ review: null })
     const project = useProjectStore.getState()
-    if (review.path.startsWith('chapters/') || review.path.startsWith('metadata/') || review.path.startsWith('outlines/')) {
+    if (/^(chapters|metadata|outlines)\//.test(review.path)) {
       await project.openChapter(review.path)
     }
   },

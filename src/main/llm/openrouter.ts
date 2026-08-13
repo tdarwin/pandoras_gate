@@ -22,6 +22,55 @@ interface OpenRouterModel {
   supported_parameters?: string[]
 }
 
+type WirePart = { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
+interface WireMessage {
+  role: string
+  content: string | WirePart[] | null
+  tool_call_id?: string
+  tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[]
+}
+
+/** Anthropic ignores cache blocks under ~1-2k tokens; don't bother below this. */
+const MIN_CACHE_PREFIX_CHARS = 4096
+
+function isAnthropicModel(modelId: string): boolean {
+  return modelId.startsWith('anthropic/') || modelId.toLowerCase().includes('claude')
+}
+
+/**
+ * Prompt-caching breakpoints (Anthropic models via OpenRouter). One at the
+ * stable-prefix boundary of the system message, one at the end of the prior
+ * transcript (history is append-only) — so a turn whose story context is
+ * unchanged re-reads the whole prefix from cache instead of re-billing it.
+ */
+function addCacheBreakpoints(wire: WireMessage[], cachePrefixChars: number | undefined): void {
+  const first = wire[0]
+  if (
+    first?.role === 'system' &&
+    typeof first.content === 'string' &&
+    cachePrefixChars !== undefined &&
+    cachePrefixChars >= MIN_CACHE_PREFIX_CHARS
+  ) {
+    const text = first.content
+    const at = Math.min(cachePrefixChars, text.length)
+    const parts: WirePart[] = [
+      { type: 'text', text: text.slice(0, at), cache_control: { type: 'ephemeral' } }
+    ]
+    if (at < text.length) parts.push({ type: 'text', text: text.slice(at) })
+    first.content = parts
+  }
+  const prev = wire.length >= 3 ? wire[wire.length - 2] : undefined
+  if (
+    prev &&
+    !prev.tool_calls &&
+    (prev.role === 'user' || prev.role === 'assistant') &&
+    typeof prev.content === 'string' &&
+    prev.content
+  ) {
+    prev.content = [{ type: 'text', text: prev.content, cache_control: { type: 'ephemeral' } }]
+  }
+}
+
 export class OpenRouterProvider implements LLMProvider {
   readonly id = 'openrouter' as const
 
@@ -65,7 +114,7 @@ export class OpenRouterProvider implements LLMProvider {
 
   async *chatStream(req: ChatRequest, signal: AbortSignal): AsyncIterable<StreamEvent> {
     // Map our extended messages to OpenAI wire format (tool calls/results).
-    const wireMessages = req.messages.map((m) => {
+    const wireMessages: WireMessage[] = req.messages.map((m) => {
       if (m.role === 'tool') {
         return { role: 'tool', content: m.content, tool_call_id: m.toolCallId }
       }
@@ -75,13 +124,17 @@ export class OpenRouterProvider implements LLMProvider {
           content: m.content || null,
           tool_calls: m.toolCalls.map((t) => ({
             id: t.id,
-            type: 'function',
+            type: 'function' as const,
             function: { name: t.name, arguments: t.arguments }
           }))
         }
       }
       return { role: m.role, content: m.content }
     })
+
+    // OpenAI/Gemini cache long prompts automatically; Anthropic needs
+    // explicit breakpoints, which OpenRouter passes through.
+    if (isAnthropicModel(req.modelId)) addCacheBreakpoints(wireMessages, req.cachePrefixChars)
 
     let res: Response
     try {

@@ -41,17 +41,29 @@ export async function gatherStorySource(
     const { data, body } = parseFrontmatter(raw)
     const name = typeof data['name'] === 'string' ? data['name'] : basename(file, '.md')
     const aliases = Array.isArray(data['aliases']) ? data['aliases'].map(String) : []
-    characters.push({ name, aliases, facts: stringifyYaml(data).trim(), body })
+    characters.push({
+      name,
+      aliases,
+      facts: stringifyYaml(data).trim(),
+      body,
+      path: `metadata/characters/${file}`,
+      logline: typeof data['logline'] === 'string' ? data['logline'] : null
+    })
   }
 
   /* world docs */
-  const worldDocs: { name: string; content: string }[] = []
+  const worldDocs: StorySource['worldDocs'] = []
   for (const file of await listMarkdown(join(novelDir, 'metadata/world'))) {
     const raw = await safeRead(join(novelDir, 'metadata/world', file))
     if (!raw) continue
     const { data, body } = parseFrontmatter(raw)
     const structured = Object.keys(data).length > 0 ? `${stringifyYaml(data).trim()}\n\n` : ''
-    worldDocs.push({ name: basename(file, '.md'), content: structured + body.trim() })
+    worldDocs.push({
+      name: basename(file, '.md'),
+      path: `metadata/world/${file}`,
+      content: structured + body.trim(),
+      logline: typeof data['logline'] === 'string' ? data['logline'] : null
+    })
   }
 
   /* synopsis */

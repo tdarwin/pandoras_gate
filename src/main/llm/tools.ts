@@ -32,7 +32,7 @@ export interface ToolContext {
   conversationId?: string
 }
 
-export function chatToolDefinitions(ctx: ToolContext): ToolDefinition[] {
+export function chatToolDefinitions(ctx: Pick<ToolContext, 'activeFile'>): ToolDefinition[] {
   const tools: ToolDefinition[] = [
     {
       name: 'write_codex_doc',
@@ -178,6 +178,18 @@ export function chatToolDefinitions(ctx: ToolContext): ToolDefinition[] {
   return ctx.activeFile?.startsWith('chapters/')
     ? tools
     : tools.filter((t) => !needsOpenChapter.has(t.name))
+}
+
+/**
+ * Estimated prompt cost of enabling tools: the system note plus the tool
+ * JSON schemas the provider sends on the wire. Lets the context assembler
+ * budget for it and the inspector report it.
+ */
+export function toolOverheadTokens(
+  activeFile: string | null,
+  count: (text: string) => number
+): number {
+  return count(TOOL_SYSTEM_NOTE) + count(JSON.stringify(chatToolDefinitions({ activeFile })))
 }
 
 /** Tells the renderer new proposals may exist (badge + list refresh). */
@@ -558,8 +570,8 @@ Discipline: call each tool at most once per distinct purpose, verify with list_c
 Do not stall. When the author asks you to rewrite, revise, or edit a chapter, the conversation almost always already contains enough direction — synthesize it into instructions and CALL edit_chapter or edit_chapter_section NOW. Never respond with only "how would you like me to edit it?" — at most, act on your best understanding and mention what you assumed. A request to edit the chapter is NOT a Codex request: do not substitute update_codex or write_codex_doc for a chapter edit.
 
 Codex file conventions for write_codex_doc:
-- metadata/characters/<slug>.md — frontmatter: name, aliases (list), role, status, first_appearance, attributes (map; stats/level/realm for LitRPG), relationships (list of {character, type}). Body: ## Appearance / ## Personality / ## Arc notes prose.
-- metadata/world/<slug>.md — frontmatter: system (free-form map for structured rules: tiers, requirements, stat tables). Body: prose explanation.
+- metadata/characters/<slug>.md — frontmatter: name, aliases (list), logline (ONE sentence identifying the character — always include it; it powers the codex index), role, status, first_appearance, attributes (map; stats/level/realm for LitRPG), relationships (list of {character, type}). Body: ## Appearance / ## Personality / ## Arc notes prose.
+- metadata/world/<slug>.md — frontmatter: logline (ONE sentence saying what this doc covers — always include it), system (free-form map for structured rules: tiers, requirements, stat tables). Body: prose explanation.
 - metadata/synopsis.md — frontmatter: logline, themes (list), status. Body: running whole-novel synopsis.
 - metadata/glossary.md — frontmatter: entries (list of {term, definition}).
 - metadata/summaries/<chapter-file-name> — frontmatter: title, logline. Body: 3-8 sentence chapter summary.

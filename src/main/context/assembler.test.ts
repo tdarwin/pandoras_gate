@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   assembleContext,
   matchCharacters,
+  mentions,
+  resolveContextTarget,
   estimateTokens,
   type StorySource,
   type AssembleRequest
@@ -21,8 +23,10 @@ function makeSource(overrides: Partial<StorySource> = {}): StorySource {
     worldDocs: [
       {
         name: 'cultivation-system',
+        path: 'metadata/world/cultivation-system.md',
         content:
-          'Realms: Iron Body (tiers 1-9), Bronze Core, Silver Soul. Breakthrough requires condensing qi.'
+          'Realms: Iron Body (tiers 1-9), Bronze Core, Silver Soul. Breakthrough requires condensing qi.',
+        logline: 'Cultivation realms, tiers, and breakthrough requirements.'
       }
     ],
     characters: [
@@ -30,19 +34,25 @@ function makeSource(overrides: Partial<StorySource> = {}): StorySource {
         name: 'Kael Voss',
         aliases: ['The Rust Prince'],
         facts: 'name: Kael Voss\nrealm: Iron Body Tier 2',
-        body: 'A scrappy seventeen-year-old scavenger from the outer district.'
+        body: 'A scrappy seventeen-year-old scavenger from the outer district.',
+        path: 'metadata/characters/kael-voss.md',
+        logline: 'Scavenger protagonist climbing the cultivation ranks.'
       },
       {
         name: 'Mira Thane',
         aliases: [],
-        facts: 'name: Mira Thane\nrealm: Bronze Core',
-        body: 'Kael-adjacent rival with a hidden agenda.'
+        facts: 'name: Mira Thane\nrole: rival\nstatus: alive\nrealm: Bronze Core',
+        body: 'Kael-adjacent rival with a hidden agenda.',
+        path: 'metadata/characters/mira-thane.md',
+        logline: null
       },
       {
         name: 'Elder Wu',
         aliases: [],
         facts: 'name: Elder Wu',
-        body: 'Mysterious sect elder.'
+        body: 'Mysterious sect elder.',
+        path: 'metadata/characters/elder-wu.md',
+        logline: null
       }
     ],
     glossary: [
@@ -83,6 +93,41 @@ describe('matchCharacters', () => {
       'Mira Thane'
     ])
     expect(matchCharacters(chars, ['nobody here'])).toEqual([])
+  })
+
+  it('does not match short names inside other words', () => {
+    const chars = [{ name: 'Al', aliases: [], facts: 'name: Al', body: 'A friend.' }]
+    expect(matchCharacters(chars, ['He always arrives late.'])).toEqual([])
+    expect(matchCharacters(chars, ['Al always arrives late.']).map((c) => c.name)).toEqual(['Al'])
+  })
+})
+
+describe('mentions', () => {
+  it('requires word boundaries on both sides', () => {
+    expect(mentions('the qing dynasty', 'qi')).toBe(false)
+    expect(mentions('gathered qi in the courtyard', 'qi')).toBe(true)
+    expect(mentions('a spirit stone, please', 'spirit stone')).toBe(true)
+    expect(mentions('respirit stones', 'spirit stone')).toBe(false)
+  })
+
+  it('rejects sub-2-char needles and escapes regex specials', () => {
+    expect(mentions('anything', 'a')).toBe(false)
+    expect(mentions('found Dr. Voss (retired) here', 'Dr. Voss (retired)')).toBe(true)
+  })
+})
+
+describe('resolveContextTarget', () => {
+  it('is lean by default and scales gently with the window', () => {
+    expect(resolveContextTarget(0, 8192)).toBe(12_288) // window caps it later
+    expect(resolveContextTarget(0, 32_768)).toBe(12_288)
+    expect(resolveContextTarget(0, 131_072)).toBe(16_384)
+    expect(resolveContextTarget(0, 200_000)).toBe(24_576)
+    expect(resolveContextTarget(0, 1_000_000)).toBe(24_576)
+  })
+
+  it('honors an explicit preference', () => {
+    expect(resolveContextTarget(16_384, 200_000)).toBe(16_384)
+    expect(resolveContextTarget(8192, 8192)).toBe(8192)
   })
 })
 
@@ -161,7 +206,14 @@ describe('assembleContext — budget pressure', () => {
     const bigBody = 'Backstory paragraph. '.repeat(500)
     const source = makeSource({
       characters: [
-        { name: 'Kael Voss', aliases: [], facts: 'name: Kael Voss\nrealm: Tier 2', body: bigBody }
+        {
+          name: 'Kael Voss',
+          aliases: [],
+          facts: 'name: Kael Voss\nrealm: Tier 2',
+          body: bigBody,
+          path: 'metadata/characters/kael-voss.md',
+          logline: null
+        }
       ],
       activeChapter: { title: 'Ch', text: 'Kael Voss stood alone.' },
       worldDocs: [],
@@ -268,5 +320,241 @@ describe('assembleContext — budget pressure', () => {
     const { report } = assembleContext(makeRequest())
     expect(report.usedTokens).toBeGreaterThan(0)
     expect(estimateTokens('12345678')).toBe(3) // 8/4 * 1.1 → ceil(2.2)
+  })
+})
+
+describe('assembleContext — target budget', () => {
+  it('caps the budget at the target on huge windows', () => {
+    const { report } = assembleContext(
+      makeRequest({ contextTokens: 200_000, reservedOutput: 2048, targetTokens: 4096 }),
+      count
+    )
+    expect(report.budgetTokens).toBe(4096)
+    expect(report.windowTokens).toBe(200_000)
+    expect(report.usedTokens).toBeLessThanOrEqual(4096)
+  })
+
+  it('uses the window when it is smaller than the target', () => {
+    const { report } = assembleContext(
+      makeRequest({ contextTokens: 4096, reservedOutput: 1024, targetTokens: 12_288 }),
+      count
+    )
+    expect(report.budgetTokens).toBe(3072)
+  })
+
+  it('counts fixed tool overhead against the budget and reports it', () => {
+    const { report } = assembleContext(makeRequest({ toolOverheadTokens: 500 }), count)
+    expect(report.sections.find((s) => s.id === 'tools')).toEqual({
+      id: 'tools',
+      label: 'Tool instructions & schemas',
+      status: 'included',
+      tokens: 500
+    })
+    expect(report.usedTokens).toBeGreaterThanOrEqual(500)
+  })
+})
+
+describe('assembleContext — world docs', () => {
+  it('truncates a single oversized world doc at the per-doc cap', () => {
+    const bigDoc = 'System rule line. '.repeat(600) // ~2,700 tokens
+    const { report } = assembleContext(
+      makeRequest({
+        source: makeSource({
+          worldDocs: [
+            { name: 'levels', path: 'metadata/world/levels.md', content: bigDoc, logline: null }
+          ]
+        }),
+        contextTokens: 32_768,
+        reservedOutput: 1024
+      }),
+      count
+    )
+    const world = report.sections.find((s) => s.id === 'world:levels')
+    expect(world?.status).toBe('degraded')
+    expect(world!.tokens).toBeLessThanOrEqual(1500)
+  })
+
+  it('bounds all world docs together to a share of the budget', () => {
+    const docs = Array.from({ length: 8 }, (_, i) => ({
+      name: `doc-${i}`,
+      path: `metadata/world/doc-${i}.md`,
+      content: 'Rule text here. '.repeat(200), // ~800 tokens each
+      logline: null
+    }))
+    const { report } = assembleContext(
+      makeRequest({ source: makeSource({ worldDocs: docs }), contextTokens: 8192, reservedOutput: 0 }),
+      count
+    )
+    const worldTokens = report.sections
+      .filter((s) => s.id.startsWith('world:'))
+      .reduce((sum, s) => sum + s.tokens, 0)
+    expect(worldTokens).toBeLessThanOrEqual(Math.floor(8192 * 0.25))
+    expect(worldTokens).toBeGreaterThan(0)
+  })
+
+  it('puts world docs named in the chapter first', () => {
+    const source = makeSource({
+      worldDocs: [
+        { name: 'alchemy', path: 'metadata/world/alchemy.md', content: 'Potions and pills.', logline: null },
+        {
+          name: 'cultivation-system',
+          path: 'metadata/world/cultivation-system.md',
+          content: 'Realms and tiers.',
+          logline: null
+        }
+      ],
+      activeChapter: { title: 'Ch', text: 'He studied the cultivation system all night.' }
+    })
+    const { messages } = assembleContext(makeRequest({ source }), count)
+    const sys = messages[0]!.content
+    expect(sys.indexOf('World & systems: cultivation-system')).toBeLessThan(
+      sys.indexOf('World & systems: alchemy')
+    )
+  })
+})
+
+describe('assembleContext — summaries priority', () => {
+  it('sheds the farthest summaries first under pressure, never the recent full ones', () => {
+    const summaries = Array.from({ length: 30 }, (_, i) => ({
+      title: `Chapter ${i + 1}`,
+      logline: `Logline ${i + 1}.`,
+      content: `Full summary of chapter ${i + 1}. ` + 'Detail. '.repeat(40)
+    }))
+    const source = makeSource({
+      summaries,
+      activeChapterIndex: 29,
+      activeChapter: { title: 'Chapter 30', text: 'Kael Voss fights.' }
+    })
+    const { messages, report } = assembleContext(
+      makeRequest({ source, contextTokens: 100_000, reservedOutput: 0, targetTokens: 600 }),
+      count
+    )
+    const sys = messages[0]!.content
+    // The two chapters nearest the active one keep their full summaries…
+    expect(sys).toContain('Full summary of chapter 29')
+    expect(sys).toContain('Full summary of chapter 28')
+    // …while the farthest loglines are what gets dropped.
+    expect(sys).not.toContain('Logline 1.')
+    expect(sys).toContain('Logline 27.')
+    expect(report.sections.find((s) => s.id === 'summaries')?.status).toBe('degraded')
+  })
+})
+
+describe('assembleContext — retrieval-first (lean) mode', () => {
+  it('goes lean on tight budgets with tools available', () => {
+    const { messages, report } = assembleContext(
+      makeRequest({ toolsAvailable: true, targetTokens: 12_288, contextTokens: 16_384, reservedOutput: 2048 }),
+      count
+    )
+    expect(report.mode).toBe('lean')
+    const sys = messages[0]!.content
+    // The index is present, with fetchable paths and fetch-first instructions.
+    expect(sys).toContain('## Codex index')
+    expect(sys).toContain('metadata/characters/kael-voss.md')
+    expect(sys).toContain('metadata/world/cultivation-system.md')
+    expect(sys).toContain('read_codex_doc')
+    // The bulk stays on disk.
+    expect(sys).not.toContain('World & systems:')
+    expect(sys).not.toContain('## Character:')
+    expect(report.sections.some((s) => s.id.startsWith('world:'))).toBe(false)
+    expect(report.sections.some((s) => s.id.startsWith('char:'))).toBe(false)
+    // The core survives.
+    expect(sys).toContain('Current chapter: Chapter 4')
+    expect(sys).toContain('Story synopsis')
+    expect(sys).toContain('Chapter summaries')
+    expect(sys).toContain('Recent timeline events')
+  })
+
+  it('index lines use loglines, then facts, then first sentences', () => {
+    const { messages } = assembleContext(makeRequest({ toolsAvailable: true }), count)
+    const sys = messages[0]!.content
+    // Kael has an explicit logline.
+    expect(sys).toContain('Kael Voss (aka The Rust Prince): Scavenger protagonist climbing')
+    // Mira has no logline → role/status from facts.
+    expect(sys).toContain('Mira Thane: rival, alive')
+    // Elder Wu has neither → first sentence of the body.
+    expect(sys).toContain('Elder Wu: Mysterious sect elder.')
+    // Glossary is discoverable in lean mode.
+    expect(sys).toContain('metadata/glossary.md — term definitions (2 entries)')
+  })
+
+  it('stays full without tools, on big budgets, and when drafting', () => {
+    const noTools = assembleContext(makeRequest(), count)
+    expect(noTools.report.mode).toBe('full')
+    expect(noTools.messages[0]!.content).not.toContain('## Codex index')
+
+    const bigBudget = assembleContext(
+      makeRequest({
+        toolsAvailable: true,
+        targetTokens: 24_576,
+        contextTokens: 200_000,
+        reservedOutput: 2048
+      }),
+      count
+    )
+    expect(bigBudget.report.mode).toBe('full')
+    // Full mode with tools keeps the bulk AND advertises the index.
+    expect(bigBudget.messages[0]!.content).toContain('World & systems:')
+    expect(bigBudget.messages[0]!.content).toContain('## Codex index')
+
+    const draft = assembleContext(makeRequest({ toolsAvailable: true, task: 'draft' }), count)
+    expect(draft.report.mode).toBe('full')
+  })
+
+  it('keeps the index inside the cacheable prefix', () => {
+    const { messages, cachePrefixChars } = assembleContext(
+      makeRequest({ toolsAvailable: true }),
+      count
+    )
+    expect(messages[0]!.content.slice(0, cachePrefixChars)).toContain('## Codex index')
+  })
+})
+
+describe('assembleContext — cacheable prefix', () => {
+  it('keeps chapter and chat-driven sections after the cache boundary', () => {
+    const { messages, cachePrefixChars } = assembleContext(
+      makeRequest({ userMessage: 'Tell me about Mira Thane.' }),
+      count
+    )
+    const sys = messages[0]!.content
+    const prefix = sys.slice(0, cachePrefixChars)
+    const tail = sys.slice(cachePrefixChars)
+    // Stable story materials live in the prefix.
+    expect(prefix).toContain('Story synopsis')
+    expect(prefix).toContain('World & systems')
+    expect(prefix).toContain('Chapter summaries')
+    // The live chapter and conversation-driven extras come after it.
+    expect(prefix).not.toContain('Current chapter:')
+    expect(tail).toContain('Current chapter: Chapter 4')
+    // Mira is only mentioned in the user message → volatile tail.
+    expect(prefix).not.toContain('realm: Bronze Core')
+    expect(tail).toContain('realm: Bronze Core')
+  })
+
+  it('adds glossary terms raised only in conversation after the prefix', () => {
+    const { messages, cachePrefixChars, report } = assembleContext(
+      makeRequest({
+        source: makeSource({
+          activeChapter: { title: 'Ch', text: 'A quiet scene with no special terms.' }
+        }),
+        userMessage: 'What is a spirit stone worth?'
+      }),
+      count
+    )
+    expect(report.sections.find((s) => s.id === 'glossary:chat')).toBeDefined()
+    const tail = messages[0]!.content.slice(cachePrefixChars)
+    expect(tail).toContain('Crystallized qi used as currency.')
+  })
+
+  it('does not pull glossary terms from inside other words', () => {
+    const { messages } = assembleContext(
+      makeRequest({
+        source: makeSource({
+          activeChapter: { title: 'Ch', text: 'The qing dynasty vase gleamed.' }
+        })
+      }),
+      count
+    )
+    expect(messages[0]!.content).not.toContain('Ambient spiritual energy.')
   })
 })

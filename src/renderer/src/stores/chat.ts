@@ -6,6 +6,9 @@ import { useProjectStore } from './project'
 export interface ContextReport {
   budgetTokens: number
   usedTokens: number
+  windowTokens: number
+  /** 'lean' = retrieval-first (codex fetched via tools); 'full' = upfront. */
+  mode: 'lean' | 'full'
   sections: {
     id: string
     label: string
@@ -208,6 +211,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     const model = models.find((m) => m.id === selectedModelId)
     const contextTokens = model?.contextLength ?? 8192
+    const toolUse = model?.capabilities.toolUse ?? false
+    // Reply room scales with the window (a quarter, capped at 4k) and is
+    // passed to the provider as a real output cap, not just a reservation.
+    const reservedOutput = Math.min(4096, Math.max(1024, Math.floor(contextTokens / 4)))
     const userMessage = text.trim()
 
     const assembled = await window.pandora.invoke('context:assemble', {
@@ -217,7 +224,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       chatHistory: messages.filter((m) => !m.uiKind).map(({ uiKind: _uiKind, ...m }) => m),
       userMessage,
       contextTokens,
-      reservedOutput: 2048
+      reservedOutput,
+      toolUse
     })
     if (!assembled.ok) {
       set({ error: assembled.error.message })
@@ -239,10 +247,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       provider: model?.provider ?? 'openrouter',
       modelId: selectedModelId,
       messages: assembled.data.messages,
+      maxTokens: reservedOutput,
+      cachePrefixChars: assembled.data.cachePrefixChars,
       // Enables agent tools (update_codex, generate_outline) in main.
       novelDir: novel.dir,
       activeFile: project.activeFile,
-      toolUse: model?.capabilities.toolUse ?? false,
+      toolUse,
       conversationId: get().conversationId
     })
     if (!result.ok) {
