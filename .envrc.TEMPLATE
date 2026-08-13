@@ -1,0 +1,24 @@
+# Pandora's Gate — development environment template
+#
+# Copy me:   cp .envrc.TEMPLATE .envrc
+# Fill in real values, then approve it:   direnv allow
+#
+# One-time direnv setup (macOS/zsh):
+#   brew install direnv
+#   echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc    # then open a new terminal
+# direnv requires re-running `direnv allow` after EVERY edit to .envrc.
+# .envrc is gitignored — never commit real keys.
+#
+# Telemetry is dev-only: `npm run dev` exports OpenTelemetry traces when these
+# variables are set, and packaged builds never send telemetry at all
+# (src/main/telemetry.ts). Any OTLP/HTTP backend works; the values below
+# target Honeycomb (create an ingest key at ui.honeycomb.io → Environment
+# settings → API keys).
+
+export HONEYCOMB_API_KEY="hcaik-replace-with-your-ingest-key"
+export OTEL_SERVICE_NAME="pandoras-gate-dev"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://api.honeycomb.io"
+export OTEL_EXPORTER_OTLP_HEADERS="x-honeycomb-team=${HONEYCOMB_API_KEY}"
+
+# Capture prompts/responses in GenAI spans (dev-only telemetry). Remove to disable.
+export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true

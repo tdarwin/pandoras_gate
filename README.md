@@ -45,6 +45,11 @@ npm run typecheck  # strict TS across main/preload/renderer
 npm run package    # electron-builder DMG/NSIS (signing config required)
 ```
 
+Optional dev telemetry: `cp .envrc.TEMPLATE .envrc`, fill in your OTLP
+endpoint and key, then `direnv allow` — traces from `npm run dev` flow to
+your backend (Honeycomb values shown in the template). Packaged builds never
+send telemetry.
+
 ## Layout
 
 ```
