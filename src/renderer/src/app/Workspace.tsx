@@ -7,12 +7,13 @@ import { useChatStore } from '../stores/chat'
 import ChapterSidebar from '../components/ChapterSidebar'
 import ChatPanel from '../components/ChatPanel'
 import HistoryPanel from '../components/HistoryPanel'
-import ProposalsPanel from '../components/ProposalsPanel'
+import ProposalsPanel, { WordDiff } from '../components/ProposalsPanel'
 import AiPromptModal from '../components/AiPromptModal'
 import ChapterDetails from '../components/ChapterDetails'
 import MarkdownEditor, { type EditorHandle } from '../editor/MarkdownEditor'
 import PlainEditor from '../editor/PlainEditor'
 import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
+import { stringify as stringifyYaml } from 'yaml'
 
 const AUTO_METADATA_DELAY_MS = 15_000
 
@@ -86,6 +87,12 @@ export default function Workspace(): React.JSX.Element {
   const proposalsRunning = useProposalsStore((s) => s.running)
   const runningStatus = useProposalsStore((s) => s.runningStatus)
   const lastRunStatus = useProposalsStore((s) => s.lastRunStatus)
+  const review = useProposalsStore((s) => s.review)
+  const updateReviewBody = useProposalsStore((s) => s.updateReviewBody)
+  const setReviewFmChoice = useProposalsStore((s) => s.setReviewFmChoice)
+  const applyReview = useProposalsStore((s) => s.applyReview)
+  const rejectReview = useProposalsStore((s) => s.rejectReview)
+  const exitReview = useProposalsStore((s) => s.exitReview)
   const editorHandleRef = useRef<EditorHandle | null>(null)
   const pendingCount = useProposalsStore((s) => s.proposals.reduce((n, p) => n + p.items.length, 0))
   const runProposals = useProposalsStore((s) => s.runForActiveChapter)
@@ -185,6 +192,88 @@ export default function Workspace(): React.JSX.Element {
   const doc = useMemo(() => parseFrontmatter(content), [content])
   const isYamlFile = /\.ya?ml$/.test(activeFile ?? '')
   const stats = isChapter ? wordCount(doc.body) : null
+
+  // Tracked-changes review takes over the editor column.
+  if (review) {
+    const original = parseFrontmatter(review.originalRaw)
+    const proposed = parseFrontmatter(review.proposedRaw)
+    const fmDiffers = JSON.stringify(original.data) !== JSON.stringify(proposed.data)
+    const fmText = (data: Record<string, unknown>): string =>
+      Object.keys(data).length > 0 ? stringifyYaml(data).trimEnd() : '(none)'
+    return (
+      <div className="flex min-h-0 flex-1">
+        <ChapterSidebar />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-amber-900 bg-amber-950/40 px-4 py-2">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium text-amber-200">
+                Reviewing suggestion for {review.path}
+              </div>
+              <div className="truncate text-xs text-amber-200/70">
+                {review.sourceTitle} — {review.rationale}. Use ✓/✕ on each change (you can keep
+                typing), then Apply.
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                onClick={() => void rejectReview()}
+                className="rounded-lg border border-amber-800 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-900"
+              >
+                Reject all
+              </button>
+              <button
+                onClick={exitReview}
+                className="rounded-lg border border-amber-800 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-900"
+              >
+                Later
+              </button>
+              <button
+                onClick={() => void applyReview()}
+                className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+          {fmDiffers && (
+            <div className="shrink-0 border-b border-line px-4 py-2">
+              <div className="mb-1.5 flex items-center justify-between gap-3">
+                <span className="text-xs font-medium text-ink-muted">Details (frontmatter)</span>
+                <span className="flex shrink-0 gap-3 text-xs text-ink-muted">
+                  <label className="flex cursor-pointer items-center gap-1">
+                    <input
+                      type="radio"
+                      checked={review.fmChoice === 'proposed'}
+                      onChange={() => setReviewFmChoice('proposed')}
+                    />
+                    Use proposed
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-1">
+                    <input
+                      type="radio"
+                      checked={review.fmChoice === 'current'}
+                      onChange={() => setReviewFmChoice('current')}
+                    />
+                    Keep current
+                  </label>
+                </span>
+              </div>
+              <WordDiff oldText={fmText(original.data)} newText={fmText(proposed.data)} />
+            </div>
+          )}
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <MarkdownEditor
+              docId={`review:${review.proposalId}:${review.path}`}
+              value={review.bodyBuffer}
+              onChange={updateReviewBody}
+              reviewOriginal={original.body}
+            />
+          </div>
+        </div>
+        {showChat && <ChatPanel onClose={() => setShowChat(false)} />}
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-0 flex-1">

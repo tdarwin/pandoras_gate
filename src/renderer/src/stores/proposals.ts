@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
 import { useProjectStore } from './project'
 import { useChatStore } from './chat'
 
@@ -20,6 +21,25 @@ export interface ReviewProposal {
   items: ReviewItem[]
 }
 
+/**
+ * Tracked-changes review session: the editor shows the PROPOSED body with
+ * suggestions against the on-disk content; frontmatter is chosen wholesale
+ * (proposed vs current) alongside.
+ */
+export interface InlineReview {
+  proposalId: string
+  path: string
+  /** Current on-disk file content (raw, incl. frontmatter). */
+  originalRaw: string
+  /** Proposed file content (raw, incl. frontmatter). */
+  proposedRaw: string
+  /** Live body markdown — starts as the proposal's body, tracks edits/rejects. */
+  bodyBuffer: string
+  fmChoice: 'proposed' | 'current'
+  rationale: string
+  sourceTitle: string
+}
+
 interface ProposalsStore {
   proposals: ReviewProposal[]
   running: boolean
@@ -27,9 +47,16 @@ interface ProposalsStore {
   runningStatus: string | null
   lastRunStatus: string | null
   error: string | null
+  review: InlineReview | null
 
   init: () => void
   pendingCount: () => number
+  enterReview: (proposalId: string, path: string) => void
+  updateReviewBody: (body: string) => void
+  setReviewFmChoice: (choice: 'proposed' | 'current') => void
+  applyReview: () => Promise<void>
+  rejectReview: () => Promise<void>
+  exitReview: () => void
   refresh: () => Promise<void>
   runForActiveChapter: (opts?: { silent?: boolean }) => Promise<void>
   generateOutline: (scope: 'novel' | 'chapter', guidance?: string) => Promise<void>
@@ -49,6 +76,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
   runningStatus: null,
   lastRunStatus: null,
   error: null,
+  review: null,
 
   init: () => {
     if (subscribed) return
@@ -60,6 +88,56 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       set({ runningStatus: text })
     })
   },
+
+  enterReview: (proposalId, path) => {
+    const proposal = get().proposals.find((p) => p.id === proposalId)
+    const item = proposal?.items.find((i) => i.path === path)
+    if (!proposal || !item) return
+    set({
+      review: {
+        proposalId,
+        path,
+        originalRaw: item.currentContent,
+        proposedRaw: item.newContent,
+        bodyBuffer: parseFrontmatter(item.newContent).body,
+        fmChoice: 'proposed',
+        rationale: item.rationale,
+        sourceTitle: proposal.chapterTitle
+      }
+    })
+  },
+
+  updateReviewBody: (body) =>
+    set((s) => (s.review ? { review: { ...s.review, bodyBuffer: body } } : {})),
+
+  setReviewFmChoice: (choice) =>
+    set((s) => (s.review ? { review: { ...s.review, fmChoice: choice } } : {})),
+
+  applyReview: async () => {
+    const { review } = get()
+    if (!review) return
+    // The body buffer already reflects per-chunk rejections and edits.
+    const data =
+      review.fmChoice === 'current'
+        ? parseFrontmatter(review.originalRaw).data
+        : parseFrontmatter(review.proposedRaw).data
+    const content = serializeFrontmatter({ data, body: review.bodyBuffer })
+    await get().resolve(review.proposalId, review.path, 'accept', content)
+    set({ review: null })
+    const project = useProjectStore.getState()
+    if (/^(chapters|metadata|outlines)\//.test(review.path)) {
+      await project.openChapter(review.path)
+    }
+  },
+
+  rejectReview: async () => {
+    const { review } = get()
+    if (!review) return
+    await get().resolve(review.proposalId, review.path, 'reject')
+    set({ review: null })
+  },
+
+  exitReview: () => set({ review: null }),
 
   pendingCount: () => get().proposals.reduce((n, p) => n + p.items.length, 0),
 

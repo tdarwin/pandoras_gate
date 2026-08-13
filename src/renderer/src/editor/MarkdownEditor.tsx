@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { Extension } from '@tiptap/core'
+import { Extension, getSchema } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { baseExtensions } from './extensions'
 import { docToMarkdown, markdownToDoc } from './markdown'
+import { TrackChanges } from './track-changes'
 
 /** Style commands the toolbar can drive without knowing the editor library. */
 export interface EditorHandle {
@@ -30,6 +31,11 @@ interface MarkdownEditorProps {
   onSave?: () => void
   /** Style commands for the toolbar; null when the editor unmounts. */
   onReady?: (handle: EditorHandle | null) => void
+  /**
+   * Review mode: `value` holds the PROPOSED body and this holds the on-disk
+   * body — the difference renders as tracked changes with ✓/✕ per chunk.
+   */
+  reviewOriginal?: string
 }
 
 /** During streamed drafts, re-render the doc at most this often. */
@@ -47,7 +53,8 @@ export default function MarkdownEditor({
   onChange,
   forceSync = false,
   onSave,
-  onReady
+  onReady,
+  reviewOriginal
 }: MarkdownEditorProps): React.JSX.Element {
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
@@ -76,10 +83,24 @@ export default function MarkdownEditor({
     []
   )
 
+  // Parse the initial document at creation so the editor (and the review
+  // diff, when active) never sees a transient empty doc.
+  const initialContent = useMemo(() => {
+    lastValueRef.current = valueRef.current
+    return markdownToDoc(getSchema(baseExtensions()), valueRef.current).toJSON() as object
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId])
+
   const editor = useEditor(
     {
-      extensions: [...baseExtensions(), saveShortcut],
-      content: null,
+      extensions: [
+        ...baseExtensions(),
+        saveShortcut,
+        ...(reviewOriginal !== undefined
+          ? [TrackChanges.configure({ original: reviewOriginal })]
+          : [])
+      ],
+      content: initialContent,
       autofocus: true,
       editorProps: {
         attributes: {
@@ -96,16 +117,6 @@ export default function MarkdownEditor({
     // Recreate (fresh undo history) only when switching documents.
     [docId]
   )
-
-  // Load the document whenever a fresh editor instance appears.
-  useEffect(() => {
-    if (!editor) return
-    lastValueRef.current = valueRef.current
-    editor.commands.setContent(markdownToDoc(editor.schema, valueRef.current), {
-      emitUpdate: false
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor])
 
   // Expose style commands to the toolbar.
   useEffect(() => {

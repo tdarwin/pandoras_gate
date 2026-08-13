@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { diffWords } from 'diff'
 import { useProposalsStore, type ReviewItem } from '../stores/proposals'
 
-function WordDiff({ oldText, newText }: { oldText: string; newText: string }): React.JSX.Element {
+export function WordDiff({ oldText, newText }: { oldText: string; newText: string }): React.JSX.Element {
   const parts = diffWords(oldText, newText)
   return (
     <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-surface p-3 font-mono text-[11.5px] leading-relaxed">
@@ -27,10 +27,13 @@ function WordDiff({ oldText, newText }: { oldText: string; newText: string }): R
 
 function ItemCard({
   proposalId,
-  item
+  item,
+  onReview
 }: {
   proposalId: string
   item: ReviewItem
+  /** Present only for markdown docs — opens tracked-changes review. */
+  onReview?: () => void
 }): React.JSX.Element {
   const resolve = useProposalsStore((s) => s.resolve)
   const [editing, setEditing] = useState(false)
@@ -124,6 +127,16 @@ function ItemCard({
             >
               Edit
             </button>
+            {onReview && (
+              <button
+                disabled={busy}
+                onClick={onReview}
+                title="Open in the editor with tracked changes — accept or reject each suggestion in place"
+                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
+              >
+                Review in editor
+              </button>
+            )}
             <button
               disabled={busy}
               onClick={() => void act('accept')}
@@ -142,6 +155,7 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
   const proposals = useProposalsStore((s) => s.proposals)
   const refresh = useProposalsStore((s) => s.refresh)
   const resolve = useProposalsStore((s) => s.resolve)
+  const enterReview = useProposalsStore((s) => s.enterReview)
   const error = useProposalsStore((s) => s.error)
   const [busyAll, setBusyAll] = useState(false)
 
@@ -210,7 +224,19 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
                 </h3>
                 <div className="flex flex-col gap-3">
                   {p.items.map((item) => (
-                    <ItemCard key={item.path} proposalId={p.id} item={item} />
+                    <ItemCard
+                      key={item.path}
+                      proposalId={p.id}
+                      item={item}
+                      {...(item.path.endsWith('.md')
+                        ? {
+                            onReview: () => {
+                              enterReview(p.id, item.path)
+                              onClose()
+                            }
+                          }
+                        : {})}
+                    />
                   ))}
                 </div>
               </div>
