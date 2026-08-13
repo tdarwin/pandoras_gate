@@ -1,6 +1,6 @@
 cask "pandoras-gate" do
-  version "0.2.0"
-  sha256 "8e8fd28f9f7c959dd1cebbd13df8de25dc5bfcce256deaa7903b4c027e4f5f4d"
+  version "0.3.0"
+  sha256 "c675eabebd22cc863d535ad3e441bc631dc1931810a79618f8d1b8096428a4ec"
 
   url "https://github.com/tdarwin/pandoras_gate/releases/download/v#{version}/Pandoras-Gate-#{version}-arm64.dmg"
   name "Pandora's Gate"
