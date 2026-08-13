@@ -1,6 +1,6 @@
 cask "pandoras-gate" do
-  version "0.1.0"
-  sha256 "bb89ed38d96e016fc4a0ba30d452d65fdff3c1a3a63bf4e64052339756cfe04b"
+  version "0.2.0"
+  sha256 "8e8fd28f9f7c959dd1cebbd13df8de25dc5bfcce256deaa7903b4c027e4f5f4d"
 
   url "https://github.com/tdarwin/pandoras_gate/releases/download/v#{version}/Pandoras-Gate-#{version}-arm64.dmg"
   name "Pandora's Gate"
@@ -12,8 +12,9 @@ cask "pandoras-gate" do
 
   app "Pandora's Gate.app"
 
-  # Releases are not yet signed with an Apple Developer ID; without this,
-  # Gatekeeper reports the app as damaged. Remove once releases are notarized.
+  # Releases are not yet signed with an Apple Developer ID; without
+  # this, Gatekeeper reports the app as damaged. Remove once
+  # releases are notarized.
   postflight do
     system_command "/usr/bin/xattr",
                    args: ["-cr", "#{appdir}/Pandora's Gate.app"],
