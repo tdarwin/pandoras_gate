@@ -16,7 +16,22 @@ Sections are added in priority order; when the budget runs out, low-priority sec
 degrade (get trimmed) and then drop, always bottom-up. The chat panel's context
 inspector shows exactly what was included, trimmed, or dropped for the last message —
 including the fixed cost of the agent's tool instructions and schemas when the model
-supports tools.
+supports tools, and which mode assembly ran in.
+
+## Lean (retrieval-first) mode
+
+When the model supports tools AND the budget is tight (≤ 16k — small local models, or
+a pinned Compact/Roomy context size), assembly goes retrieval-first. The prompt core is
+just: system prompt, chat history, synopsis, outlines, **codex index**, recent chapter
+summaries, timeline tail, and the open chapter. World docs, character profiles, and the
+glossary stay on disk — the index lists each doc's path with a one-line description,
+and the model is instructed to fetch full docs on demand with `read_codex_doc` (and
+`find_in_chapter` for chapter text) before answering anything that depends on them.
+
+Index descriptions come from a `logline:` frontmatter field, which the Codex pipeline
+now maintains on character and world docs; docs without one fall back to role/status
+(characters) or their first sentence. In full mode with tools, the index is still
+appended so the model knows what else it can fetch beyond what was included.
 
 ## Chat and drafting (the assembler)
 
@@ -54,15 +69,18 @@ prefix is byte-identical across turns while your files are unchanged, so:
 
 ## Codex updates (the pipeline)
 
-When the Codex pipeline runs (button, auto-run, or the agent's `update_codex` tool), the
-model receives — without a token-budget ladder, since these documents are small:
+When the Codex pipeline runs (button, auto-run, or the agent's `update_codex` tool),
+the model receives, within a budget of the model's window minus a 4k reserve for its
+JSON reply — sections claim room in priority order and oversized docs are truncated:
 
-- The full text of the chapter being analyzed (always)
-- The current synopsis, glossary, and timeline (always, if they exist)
+- The full text of the chapter being analyzed (middle elided beyond ~55% of budget)
 - The chapter's previous summary (if any)
+- The current synopsis, glossary, and timeline (if they exist)
 - Character docs for characters mentioned in the chapter, plus a list of ALL existing
   character files (so it reuses slugs)
-- All world/system docs
+- All world/system docs (capped per doc)
+- A "not shown for space" list of any docs that didn't fit, so the model never
+  recreates a doc it simply couldn't see
 
 ## Chapter edits (`edit_chapter`)
 

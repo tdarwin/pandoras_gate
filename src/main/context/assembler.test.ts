@@ -23,8 +23,10 @@ function makeSource(overrides: Partial<StorySource> = {}): StorySource {
     worldDocs: [
       {
         name: 'cultivation-system',
+        path: 'metadata/world/cultivation-system.md',
         content:
-          'Realms: Iron Body (tiers 1-9), Bronze Core, Silver Soul. Breakthrough requires condensing qi.'
+          'Realms: Iron Body (tiers 1-9), Bronze Core, Silver Soul. Breakthrough requires condensing qi.',
+        logline: 'Cultivation realms, tiers, and breakthrough requirements.'
       }
     ],
     characters: [
@@ -32,19 +34,25 @@ function makeSource(overrides: Partial<StorySource> = {}): StorySource {
         name: 'Kael Voss',
         aliases: ['The Rust Prince'],
         facts: 'name: Kael Voss\nrealm: Iron Body Tier 2',
-        body: 'A scrappy seventeen-year-old scavenger from the outer district.'
+        body: 'A scrappy seventeen-year-old scavenger from the outer district.',
+        path: 'metadata/characters/kael-voss.md',
+        logline: 'Scavenger protagonist climbing the cultivation ranks.'
       },
       {
         name: 'Mira Thane',
         aliases: [],
-        facts: 'name: Mira Thane\nrealm: Bronze Core',
-        body: 'Kael-adjacent rival with a hidden agenda.'
+        facts: 'name: Mira Thane\nrole: rival\nstatus: alive\nrealm: Bronze Core',
+        body: 'Kael-adjacent rival with a hidden agenda.',
+        path: 'metadata/characters/mira-thane.md',
+        logline: null
       },
       {
         name: 'Elder Wu',
         aliases: [],
         facts: 'name: Elder Wu',
-        body: 'Mysterious sect elder.'
+        body: 'Mysterious sect elder.',
+        path: 'metadata/characters/elder-wu.md',
+        logline: null
       }
     ],
     glossary: [
@@ -198,7 +206,14 @@ describe('assembleContext — budget pressure', () => {
     const bigBody = 'Backstory paragraph. '.repeat(500)
     const source = makeSource({
       characters: [
-        { name: 'Kael Voss', aliases: [], facts: 'name: Kael Voss\nrealm: Tier 2', body: bigBody }
+        {
+          name: 'Kael Voss',
+          aliases: [],
+          facts: 'name: Kael Voss\nrealm: Tier 2',
+          body: bigBody,
+          path: 'metadata/characters/kael-voss.md',
+          logline: null
+        }
       ],
       activeChapter: { title: 'Ch', text: 'Kael Voss stood alone.' },
       worldDocs: [],
@@ -344,7 +359,11 @@ describe('assembleContext — world docs', () => {
     const bigDoc = 'System rule line. '.repeat(600) // ~2,700 tokens
     const { report } = assembleContext(
       makeRequest({
-        source: makeSource({ worldDocs: [{ name: 'levels', content: bigDoc }] }),
+        source: makeSource({
+          worldDocs: [
+            { name: 'levels', path: 'metadata/world/levels.md', content: bigDoc, logline: null }
+          ]
+        }),
         contextTokens: 32_768,
         reservedOutput: 1024
       }),
@@ -358,7 +377,9 @@ describe('assembleContext — world docs', () => {
   it('bounds all world docs together to a share of the budget', () => {
     const docs = Array.from({ length: 8 }, (_, i) => ({
       name: `doc-${i}`,
-      content: 'Rule text here. '.repeat(200) // ~800 tokens each
+      path: `metadata/world/doc-${i}.md`,
+      content: 'Rule text here. '.repeat(200), // ~800 tokens each
+      logline: null
     }))
     const { report } = assembleContext(
       makeRequest({ source: makeSource({ worldDocs: docs }), contextTokens: 8192, reservedOutput: 0 }),
@@ -374,8 +395,13 @@ describe('assembleContext — world docs', () => {
   it('puts world docs named in the chapter first', () => {
     const source = makeSource({
       worldDocs: [
-        { name: 'alchemy', content: 'Potions and pills.' },
-        { name: 'cultivation-system', content: 'Realms and tiers.' }
+        { name: 'alchemy', path: 'metadata/world/alchemy.md', content: 'Potions and pills.', logline: null },
+        {
+          name: 'cultivation-system',
+          path: 'metadata/world/cultivation-system.md',
+          content: 'Realms and tiers.',
+          logline: null
+        }
       ],
       activeChapter: { title: 'Ch', text: 'He studied the cultivation system all night.' }
     })
@@ -411,6 +437,76 @@ describe('assembleContext — summaries priority', () => {
     expect(sys).not.toContain('Logline 1.')
     expect(sys).toContain('Logline 27.')
     expect(report.sections.find((s) => s.id === 'summaries')?.status).toBe('degraded')
+  })
+})
+
+describe('assembleContext — retrieval-first (lean) mode', () => {
+  it('goes lean on tight budgets with tools available', () => {
+    const { messages, report } = assembleContext(
+      makeRequest({ toolsAvailable: true, targetTokens: 12_288, contextTokens: 16_384, reservedOutput: 2048 }),
+      count
+    )
+    expect(report.mode).toBe('lean')
+    const sys = messages[0]!.content
+    // The index is present, with fetchable paths and fetch-first instructions.
+    expect(sys).toContain('## Codex index')
+    expect(sys).toContain('metadata/characters/kael-voss.md')
+    expect(sys).toContain('metadata/world/cultivation-system.md')
+    expect(sys).toContain('read_codex_doc')
+    // The bulk stays on disk.
+    expect(sys).not.toContain('World & systems:')
+    expect(sys).not.toContain('## Character:')
+    expect(report.sections.some((s) => s.id.startsWith('world:'))).toBe(false)
+    expect(report.sections.some((s) => s.id.startsWith('char:'))).toBe(false)
+    // The core survives.
+    expect(sys).toContain('Current chapter: Chapter 4')
+    expect(sys).toContain('Story synopsis')
+    expect(sys).toContain('Chapter summaries')
+    expect(sys).toContain('Recent timeline events')
+  })
+
+  it('index lines use loglines, then facts, then first sentences', () => {
+    const { messages } = assembleContext(makeRequest({ toolsAvailable: true }), count)
+    const sys = messages[0]!.content
+    // Kael has an explicit logline.
+    expect(sys).toContain('Kael Voss (aka The Rust Prince): Scavenger protagonist climbing')
+    // Mira has no logline → role/status from facts.
+    expect(sys).toContain('Mira Thane: rival, alive')
+    // Elder Wu has neither → first sentence of the body.
+    expect(sys).toContain('Elder Wu: Mysterious sect elder.')
+    // Glossary is discoverable in lean mode.
+    expect(sys).toContain('metadata/glossary.md — term definitions (2 entries)')
+  })
+
+  it('stays full without tools, on big budgets, and when drafting', () => {
+    const noTools = assembleContext(makeRequest(), count)
+    expect(noTools.report.mode).toBe('full')
+    expect(noTools.messages[0]!.content).not.toContain('## Codex index')
+
+    const bigBudget = assembleContext(
+      makeRequest({
+        toolsAvailable: true,
+        targetTokens: 24_576,
+        contextTokens: 200_000,
+        reservedOutput: 2048
+      }),
+      count
+    )
+    expect(bigBudget.report.mode).toBe('full')
+    // Full mode with tools keeps the bulk AND advertises the index.
+    expect(bigBudget.messages[0]!.content).toContain('World & systems:')
+    expect(bigBudget.messages[0]!.content).toContain('## Codex index')
+
+    const draft = assembleContext(makeRequest({ toolsAvailable: true, task: 'draft' }), count)
+    expect(draft.report.mode).toBe('full')
+  })
+
+  it('keeps the index inside the cacheable prefix', () => {
+    const { messages, cachePrefixChars } = assembleContext(
+      makeRequest({ toolsAvailable: true }),
+      count
+    )
+    expect(messages[0]!.content.slice(0, cachePrefixChars)).toContain('## Codex index')
   })
 })
 

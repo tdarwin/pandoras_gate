@@ -7,6 +7,8 @@ export interface ContextReport {
   budgetTokens: number
   usedTokens: number
   windowTokens: number
+  /** 'lean' = retrieval-first (codex fetched via tools); 'full' = upfront. */
+  mode: 'lean' | 'full'
   sections: {
     id: string
     label: string

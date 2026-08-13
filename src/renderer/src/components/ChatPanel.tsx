@@ -24,6 +24,7 @@ function ContextInspector({ report }: { report: ContextReport }): React.JSX.Elem
           {report.windowTokens > report.budgetTokens
             ? ` · ${Math.round(report.windowTokens / 1024)}k window`
             : ''}
+          {report.mode === 'lean' ? ' · lean (fetch-on-demand)' : ''}
         </span>
         <span>{open ? '▾' : '▸'}</span>
       </button>

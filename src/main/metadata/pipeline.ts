@@ -12,7 +12,7 @@ import {
 import { parseFrontmatter } from '../../shared/frontmatter'
 import { readNovelManifest, readChapter, listMetadata } from '../project/service'
 import { commitAll } from '../git/service'
-import { matchCharacters } from '../context/assembler'
+import { estimateTokens, elideMiddle, matchCharacters, truncateToTokens } from '../context/assembler'
 import { logInfo } from '../log'
 import { withSpan } from '../telemetry'
 import { tracedChatStream } from '../llm/genai-otel'
@@ -143,8 +143,8 @@ You receive the current chapter, existing story-bible documents, and file conven
 
 File conventions (all paths relative to the novel folder):
 - metadata/summaries/<chapter-file-name>.md — REQUIRED every run: a summary of THIS chapter. Frontmatter: title, logline (one sentence). Body: 3-8 sentence summary.
-- metadata/characters/<slug>.md — one per character. Frontmatter: name, aliases (list), role, status, first_appearance, attributes (map — stats, level, realm for LitRPG), relationships (list of {character, type}). Body: ## Appearance / ## Personality / ## Arc notes prose.
-- metadata/world/<slug>.md — one per system/faction/place. Frontmatter: system (free-form map for structured rules: tiers, breakthrough requirements, stats per level). Body: prose explanation.
+- metadata/characters/<slug>.md — one per character. Frontmatter: name, aliases (list), logline (ONE sentence identifying the character — always include it; it powers the codex index), role, status, first_appearance, attributes (map — stats, level, realm for LitRPG), relationships (list of {character, type}). Body: ## Appearance / ## Personality / ## Arc notes prose.
+- metadata/world/<slug>.md — one per system/faction/place. Frontmatter: logline (ONE sentence saying what this doc covers — always include it), system (free-form map for structured rules: tiers, breakthrough requirements, stats per level). Body: prose explanation.
 - metadata/synopsis.md — whole-novel synopsis. Frontmatter: logline, themes (list), status. Body: running synopsis including this chapter's events.
 - metadata/glossary.md — frontmatter: entries (list of {term, definition}). Body: optional notes.
 - metadata/timeline.yaml — YAML list of {id, when (in-world time label), chapter (chapter file path), summary, characters (list of slugs)}. Append this chapter's key events; keep existing entries.
@@ -164,7 +164,37 @@ interface RunContext {
   onStatus?: (text: string) => void
 }
 
-async function buildUserPrompt(novelDir: string, chapterFile: string): Promise<string> {
+/** Reserve for the model's JSON proposals in a codex run. */
+const PIPELINE_RESERVED_OUTPUT = 4096
+/** Assumed window when the provider can't report one. */
+const PIPELINE_FALLBACK_WINDOW = 16_384
+/** A single included codex doc is truncated beyond this many tokens. */
+const PIPELINE_DOC_CAP = 1600
+/** The chapter may take at most this share of the prompt budget. */
+const PIPELINE_CHAPTER_SHARE = 0.55
+
+/** Prompt budget from the model's window (whole window minus JSON reserve). */
+async function pipelineBudget(provider: LLMProvider, modelId: string): Promise<number> {
+  const window = await provider
+    .listModels()
+    .then((models) => models.find((m) => m.id === modelId)?.contextLength)
+    .catch(() => undefined)
+  return Math.max(2048, (window ?? PIPELINE_FALLBACK_WINDOW) - PIPELINE_RESERVED_OUTPUT)
+}
+
+/**
+ * Builds the codex-update prompt within a token budget. Sections claim room
+ * in priority order (chapter > previous summary > synopsis > glossary >
+ * timeline > mentioned characters > roster > world docs); oversized docs are
+ * truncated, and anything omitted is listed so the model never recreates a
+ * doc it simply couldn't see.
+ */
+async function buildUserPrompt(
+  novelDir: string,
+  chapterFile: string,
+  budgetTokens: number
+): Promise<string> {
+  const count = estimateTokens
   const manifest = await readNovelManifest(novelDir)
   const entry = manifest.chapters.find((c) => c.file === chapterFile)
   const chapterRaw = await readChapter(novelDir, chapterFile)
@@ -172,26 +202,64 @@ async function buildUserPrompt(novelDir: string, chapterFile: string): Promise<s
 
   const listing = await listMetadata(novelDir)
   const parts: string[] = []
+  const omitted: string[] = []
+  let used = count(SYSTEM_PROMPT)
+  const push = (text: string): void => {
+    parts.push(text)
+    used += count(text)
+  }
+  const room = (): number => Math.max(0, budgetTokens - used)
+  /** Include within a cap, truncating when needed; false = no room at all. */
+  const pushCapped = (text: string, label: string, cap = PIPELINE_DOC_CAP): boolean => {
+    const allowed = Math.min(cap, room())
+    if (count(text) <= allowed) {
+      push(text)
+      return true
+    }
+    if (allowed > 120) {
+      const marker = `\n[… ${label} truncated for space …]`
+      push(truncateToTokens(text, Math.max(0, allowed - count(marker)), count) + marker)
+      return true
+    }
+    return false
+  }
 
-  parts.push(`# Novel: ${manifest.title}`)
-  parts.push(`# Chapter just saved: ${entry?.title ?? chapterFile} (file: ${chapterFile})`)
-  parts.push(`Summary file for this chapter must be: metadata/summaries/${basename(chapterFile)}`)
-  parts.push(`\n## Chapter text\n\n${chapterBody}`)
+  // Claim the closing instruction up front so it always fits.
+  const closing =
+    '\nNow produce the JSON of proposals. Include the chapter summary; update the synopsis, timeline, characters, world docs, and glossary only where this chapter changes them. Create new character/world docs for significant new entities.'
+  used += count(closing)
 
-  const synopsis = await safeRead(join(novelDir, 'metadata/synopsis.md'))
-  if (synopsis) parts.push(`\n## Current metadata/synopsis.md\n\n\`\`\`\n${synopsis}\n\`\`\``)
+  push(`# Novel: ${manifest.title}`)
+  push(`# Chapter just saved: ${entry?.title ?? chapterFile} (file: ${chapterFile})`)
+  push(`Summary file for this chapter must be: metadata/summaries/${basename(chapterFile)}`)
 
-  const glossary = await safeRead(join(novelDir, 'metadata/glossary.md'))
-  if (glossary) parts.push(`\n## Current metadata/glossary.md\n\n\`\`\`\n${glossary}\n\`\`\``)
-
-  const timeline = await safeRead(join(novelDir, 'metadata/timeline.yaml'))
-  if (timeline) parts.push(`\n## Current metadata/timeline.yaml\n\n\`\`\`\n${timeline}\n\`\`\``)
+  const chapterCap = Math.min(Math.floor(budgetTokens * PIPELINE_CHAPTER_SHARE), room())
+  const chapterText =
+    count(chapterBody) > chapterCap ? elideMiddle(chapterBody, chapterCap, count) : chapterBody
+  push(`\n## Chapter text\n\n${chapterText}`)
 
   const existingSummary = await safeRead(join(novelDir, 'metadata/summaries', basename(chapterFile)))
   if (existingSummary) {
-    parts.push(
-      `\n## Current metadata/summaries/${basename(chapterFile)} (previous version of this chapter's summary)\n\n\`\`\`\n${existingSummary}\n\`\`\``
+    pushCapped(
+      `\n## Current metadata/summaries/${basename(chapterFile)} (previous version of this chapter's summary)\n\n\`\`\`\n${existingSummary}\n\`\`\``,
+      'summary',
+      1000
     )
+  }
+
+  const synopsis = await safeRead(join(novelDir, 'metadata/synopsis.md'))
+  if (synopsis) {
+    pushCapped(`\n## Current metadata/synopsis.md\n\n\`\`\`\n${synopsis}\n\`\`\``, 'synopsis', 1200)
+  }
+
+  const glossary = await safeRead(join(novelDir, 'metadata/glossary.md'))
+  if (glossary) {
+    pushCapped(`\n## Current metadata/glossary.md\n\n\`\`\`\n${glossary}\n\`\`\``, 'glossary', 1200)
+  }
+
+  const timeline = await safeRead(join(novelDir, 'metadata/timeline.yaml'))
+  if (timeline) {
+    pushCapped(`\n## Current metadata/timeline.yaml\n\n\`\`\`\n${timeline}\n\`\`\``, 'timeline', 1200)
   }
 
   // Character docs whose names/aliases appear in the chapter — plus the full
@@ -208,30 +276,35 @@ async function buildUserPrompt(novelDir: string, chapterFile: string): Promise<s
       body
     })
   }
-  const mentioned = matchCharacters(
-    characterSources.map((c) => ({ ...c, facts: c.facts })),
-    [chapterBody]
-  )
+  const mentioned = matchCharacters(characterSources, [chapterBody])
   for (const m of mentioned) {
     const listed = listing.characters.find((c) => c.name === m.name)
-    if (listed) {
-      parts.push(`\n## Current ${listed.file}\n\n\`\`\`\n${m.facts}\n\`\`\``)
+    if (!listed) continue
+    if (!pushCapped(`\n## Current ${listed.file}\n\n\`\`\`\n${m.facts}\n\`\`\``, listed.file)) {
+      omitted.push(listed.file)
     }
   }
   if (listing.characters.length > 0) {
-    parts.push(
+    push(
       `\n## All existing character files\n${listing.characters.map((c) => `- ${c.file} (${c.name})`).join('\n')}`
     )
   }
 
   for (const w of listing.world) {
     const raw = await safeRead(join(novelDir, w.file))
-    if (raw) parts.push(`\n## Current ${w.file}\n\n\`\`\`\n${raw}\n\`\`\``)
+    if (!raw) continue
+    if (!pushCapped(`\n## Current ${w.file}\n\n\`\`\`\n${raw}\n\`\`\``, w.file)) {
+      omitted.push(w.file)
+    }
   }
 
-  parts.push(
-    '\nNow produce the JSON of proposals. Include the chapter summary; update the synopsis, timeline, characters, world docs, and glossary only where this chapter changes them. Create new character/world docs for significant new entities.'
-  )
+  if (omitted.length > 0) {
+    push(
+      `\n## Not shown for space (these EXIST — update only if this chapter clearly changes them; never recreate from scratch):\n${omitted.map((f) => `- ${f}`).join('\n')}`
+    )
+  }
+
+  parts.push(closing)
   return parts.join('\n')
 }
 
@@ -278,7 +351,11 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
   const chapterTitle = manifest.chapters.find((c) => c.file === chapterFile)?.title ?? chapterFile
 
   ctx.onStatus?.(`Reading “${chapterTitle}” and the Codex…`)
-  const userPrompt = await buildUserPrompt(novelDir, chapterFile)
+  const userPrompt = await buildUserPrompt(
+    novelDir,
+    chapterFile,
+    await pipelineBudget(ctx.provider, ctx.modelId)
+  )
   ctx.onStatus?.(`Asking the model to analyze “${chapterTitle}”…`)
 
   // Collect the full response (schema-constrained where supported).

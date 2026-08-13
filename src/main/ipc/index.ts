@@ -476,7 +476,8 @@ export function registerIpcHandlers(): void {
       contextTokens: req.contextTokens,
       reservedOutput: req.reservedOutput,
       targetTokens: resolveContextTarget(prefs.contextTargetTokens, req.contextTokens),
-      ...(overhead > 0 ? { toolOverheadTokens: overhead } : {})
+      ...(overhead > 0 ? { toolOverheadTokens: overhead } : {}),
+      toolsAvailable: req.toolUse ?? false
     })
   })
 }

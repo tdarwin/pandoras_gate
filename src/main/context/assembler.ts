@@ -34,6 +34,10 @@ export interface CharacterSource {
   facts: string
   /** Prose body. */
   body: string
+  /** Codex path the model can pass to read_codex_doc. */
+  path: string
+  /** One-sentence description from frontmatter, when the doc carries one. */
+  logline: string | null
 }
 
 export interface StorySource {
@@ -46,7 +50,7 @@ export interface StorySource {
   novelOutline: string | null
   /** Body of the active chapter's outline doc, if present. */
   chapterOutline: string | null
-  worldDocs: { name: string; content: string }[]
+  worldDocs: { name: string; path: string; content: string; logline: string | null }[]
   characters: CharacterSource[]
   glossary: { term: string; definition: string }[]
   /** In manifest order. `logline` is the one-line degraded form. */
@@ -78,6 +82,11 @@ export interface AssembleRequest {
    */
   toolOverheadTokens?: number
   /**
+   * Whether the model can call the codex read tools. Enables the codex index
+   * section, and — on tight budgets — lean retrieval-first assembly.
+   */
+  toolsAvailable?: boolean
+  /**
    * 'chat' (default): writing-partner conversation.
    * 'draft': ghost-drafting a chapter — outlines get top billing and the
    * system prompt demands prose-only output.
@@ -92,6 +101,11 @@ export interface ContextReport {
   usedTokens: number
   /** The model's full context window, for display alongside the budget. */
   windowTokens: number
+  /**
+   * 'lean': retrieval-first — codex bulk stays on disk, the model fetches
+   * docs through tools. 'full': selective upfront inclusion.
+   */
+  mode: 'lean' | 'full'
   sections: { id: string; label: string; status: SectionStatus; tokens: number }[]
 }
 
@@ -123,6 +137,13 @@ const AUTO_TARGET_BASE = 12_288
 const AUTO_TARGET_MAX = 24_576
 
 /**
+ * At or below this budget (and with tools available), assembly goes
+ * retrieval-first: the codex index replaces the world/character/glossary
+ * bulk and the model fetches full docs on demand.
+ */
+export const LEAN_CONTEXT_BUDGET_MAX = 16_384
+
+/**
  * Resolves the user's context-size pref (0 = auto) to a token target for a
  * given model window. Auto: 12k, drifting up to 24k on very large windows —
  * never "whatever the window holds".
@@ -132,7 +153,7 @@ export function resolveContextTarget(pref: number, windowTokens: number): number
   return Math.min(Math.max(AUTO_TARGET_BASE, Math.floor(windowTokens / 8)), AUTO_TARGET_MAX)
 }
 
-function truncateToTokens(text: string, maxTokens: number, count: TokenCounter): string {
+export function truncateToTokens(text: string, maxTokens: number, count: TokenCounter): string {
   if (count(text) <= maxTokens) return text
   // Binary search the cut point; cheap since count is O(1)-ish on slices.
   let lo = 0
@@ -146,7 +167,7 @@ function truncateToTokens(text: string, maxTokens: number, count: TokenCounter):
 }
 
 /** Keeps the head and tail of a chapter, eliding the middle. */
-function elideMiddle(text: string, maxTokens: number, count: TokenCounter): string {
+export function elideMiddle(text: string, maxTokens: number, count: TokenCounter): string {
   const marker = '\n\n[… middle of chapter elided for space …]\n\n'
   const half = Math.floor((maxTokens - count(marker)) / 2)
   const head = truncateToTokens(text, half, count)
@@ -176,10 +197,10 @@ export function mentions(haystack: string, needle: string): boolean {
 }
 
 /** Characters mentioned (by name or alias) in the given texts. */
-export function matchCharacters(
-  characters: CharacterSource[],
+export function matchCharacters<T extends { name: string; aliases: string[] }>(
+  characters: T[],
   texts: string[]
-): CharacterSource[] {
+): T[] {
   const haystack = texts.join('\n')
   return characters.filter((c) => [c.name, ...c.aliases].some((needle) => mentions(haystack, needle)))
 }
@@ -188,6 +209,10 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
   const { source } = req
   const windowBudget = Math.max(0, req.contextTokens - req.reservedOutput)
   const budget = req.targetTokens !== undefined ? Math.min(windowBudget, Math.max(0, req.targetTokens)) : windowBudget
+  const task = req.task ?? 'chat'
+  // Retrieval-first: on tight budgets with tools available, the codex index
+  // replaces the world/character/glossary bulk — the model fetches on demand.
+  const lean = Boolean(req.toolsAvailable) && budget <= LEAN_CONTEXT_BUDGET_MAX && task === 'chat'
   const sections: ContextReport['sections'] = []
   const record = (id: string, label: string, status: SectionStatus, tokens: number): void => {
     sections.push({ id, label, status, tokens })
@@ -197,7 +222,6 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
   const fits = (tokens: number): boolean => used + tokens <= budget
 
   /* 1 — system prompt (never cut) */
-  const task = req.task ?? 'chat'
   const custom = source.customInstructions?.trim()
   const customSuffix = custom
     ? `\n\nAuthor's standing instructions for this novel (always follow):\n${custom}`
@@ -343,9 +367,64 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
 
   if (task !== 'draft') addOutlines()
 
+  /* 4.5 — codex index: one line per fetchable doc. In lean mode it REPLACES
+   * the bulk sections below and carries fetch-first instructions; in full
+   * mode it advertises what read_codex_doc can still pull in. */
+  const addCodexIndex = (): void => {
+    if (!req.toolsAvailable) return
+    const firstSentence = (text: string): string => {
+      const line = (text.trim().split('\n', 1)[0] ?? '').trim()
+      return line.length > 110 ? line.slice(0, 110).trimEnd() + '…' : line
+    }
+    const factsField = (facts: string, key: string): string | null => {
+      const m = new RegExp(`^${key}:\\s*(.+)$`, 'm').exec(facts)
+      return m ? m[1]!.trim().replace(/^['"]|['"]$/g, '') : null
+    }
+    const lines: string[] = []
+    for (const c of source.characters) {
+      const summary =
+        c.logline?.trim() ||
+        [factsField(c.facts, 'role'), factsField(c.facts, 'status')].filter(Boolean).join(', ') ||
+        firstSentence(c.body) ||
+        'character'
+      const aka = c.aliases.length > 0 ? ` (aka ${c.aliases.join(', ')})` : ''
+      lines.push(`- ${c.path} — ${c.name}${aka}: ${summary}`)
+    }
+    for (const w of source.worldDocs) {
+      const summary = w.logline?.trim() || firstSentence(w.content) || 'world/system doc'
+      lines.push(`- ${w.path} — ${summary}`)
+    }
+    if (lean && source.glossary.length > 0) {
+      lines.push(`- metadata/glossary.md — term definitions (${source.glossary.length} entries)`)
+    }
+    if (lines.length === 0) return
+    const note = lean
+      ? 'Only this index is loaded — the documents themselves are NOT. Before answering anything that depends on a specific character, world rule, or term, call read_codex_doc with the path below (find_in_chapter for chapter text) and answer from what it returns. Do not guess details you have not read.'
+      : 'More codex detail is on disk than could be included above; fetch any doc with read_codex_doc.'
+    const full = `## Codex index\n\n${note}\n\n${lines.join('\n')}`
+    const tokens = count(full)
+    if (fits(tokens)) {
+      stableParts.push(full)
+      used += tokens
+      record('codex-index', `Codex index (${lines.length} docs)`, 'included', tokens)
+    } else {
+      const room = Math.max(0, budget - used)
+      const truncated = truncateToTokens(full, room, count)
+      if (count(truncated) > 60) {
+        stableParts.push(truncated + '\n[… index truncated …]')
+        used += count(truncated)
+        record('codex-index', `Codex index (${lines.length} docs)`, 'degraded', count(truncated))
+      } else {
+        record('codex-index', 'Codex index', 'dropped', 0)
+      }
+    }
+  }
+  if (lean) addCodexIndex()
+
   /* 5 — world/system rules: chapter-relevant docs first, capped per doc and
-   * as a group so a sprawling world bible can't crowd out everything else. */
-  {
+   * as a group so a sprawling world bible can't crowd out everything else.
+   * Lean mode: stays on disk, represented by the index. */
+  if (!lean) {
     const docs = source.worldDocs.filter((d) => d.content.trim())
     const isRelevant = (name: string): boolean =>
       mentions(chapterHaystack, name) || mentions(chapterHaystack, name.replace(/[-_]/g, ' '))
@@ -376,12 +455,15 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
   }
 
   /* 6 — characters: chapter cast in the stable prefix; characters who only
-   * came up in conversation go after the cache boundary. */
-  const stableChars = matchCharacters(source.characters, [chapterHaystack])
-  const volatileChars = matchCharacters(
-    source.characters.filter((c) => !stableChars.includes(c)),
-    [chatHaystack]
-  )
+   * came up in conversation go after the cache boundary. Lean mode: index
+   * entries stand in for profiles. */
+  const stableChars = lean ? [] : matchCharacters(source.characters, [chapterHaystack])
+  const volatileChars = lean
+    ? []
+    : matchCharacters(
+        source.characters.filter((c) => !stableChars.includes(c)),
+        [chatHaystack]
+      )
   const addCharacter = (ch: CharacterSource, parts: string[]): void => {
     const full = `## Character: ${ch.name}\n\n${ch.facts.trim()}\n\n${ch.body.trim()}`
     const factsOnly = `## Character: ${ch.name}\n\n${ch.facts.trim()}`
@@ -456,7 +538,7 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
 
   /* 8 — glossary + timeline tail: first to drop. Chapter-matched terms are
    * stable; terms that only came up in conversation join the volatile tail. */
-  if (source.glossary.length > 0) {
+  if (!lean && source.glossary.length > 0) {
     const stableTerms = source.glossary.filter((g) => mentions(chapterHaystack, g.term))
     const volatileTerms = source.glossary.filter(
       (g) => !stableTerms.includes(g) && mentions(chatHaystack, g.term)
@@ -488,6 +570,10 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
     }
   }
 
+  /* Full mode still advertises what tools can fetch (lean added it earlier,
+   * with fetch-first instructions and higher priority). */
+  if (!lean) addCodexIndex()
+
   /* Compose: stable prefix, then chat-driven extras, then the live chapter. */
   const orderedParts = [...stableParts, ...volatileParts, ...(chapterPart ? [chapterPart] : [])]
   const systemContent =
@@ -505,7 +591,13 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
 
   return {
     messages,
-    report: { budgetTokens: budget, usedTokens: used, windowTokens: req.contextTokens, sections },
+    report: {
+      budgetTokens: budget,
+      usedTokens: used,
+      windowTokens: req.contextTokens,
+      mode: lean ? 'lean' : 'full',
+      sections
+    },
     cachePrefixChars
   }
 }

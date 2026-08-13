@@ -311,3 +311,49 @@ describe('review resolutions', () => {
     expect(sha256('abc')).not.toBe(sha256('abd'))
   })
 })
+
+describe('prompt budget', () => {
+  it('fits the codex prompt to the model window, truncating and listing omissions', async () => {
+    const bigProse = 'The gate loomed and the qi thickened around Kael Voss. '.repeat(600)
+    await writeChapter(
+      novelDir,
+      CHAPTER,
+      `---\ntitle: The Iron Gate\nstatus: draft\n---\n${bigProse}`
+    )
+    for (let i = 0; i < 3; i++) {
+      await writeChapter(
+        novelDir,
+        `metadata/world/system-${i}.md`,
+        `---\nlogline: rules ${i}\n---\n${'Rule detail follows here. '.repeat(700)}`
+      )
+    }
+    provider.queue(proposalJson([SUMMARY_ITEM]))
+    const result = await run()
+    expect(result.status).toBe('ran')
+
+    const req = provider.requests[0]!
+    const promptChars = req.messages.reduce((n, m) => n + m.content.length, 0)
+    const estTokens = Math.ceil((promptChars / 4) * 1.1)
+    // MockProvider reports an 8192 window; 4096 is reserved for the JSON.
+    expect(estTokens).toBeLessThanOrEqual(8192 - 4096 + 96)
+
+    const user = req.messages[1]!.content
+    expect(user).toContain('elided for space') // chapter middle elided
+    expect(user).toMatch(/truncated for space|Not shown for space/) // world docs bounded
+  })
+
+  it('includes everything untouched when the window is roomy', async () => {
+    await writeChapter(
+      novelDir,
+      'metadata/world/magic.md',
+      '---\nlogline: how magic works\n---\nSmall doc.\n'
+    )
+    provider.queue(proposalJson([SUMMARY_ITEM]))
+    await run()
+    const user = provider.requests[0]!.messages[1]!.content
+    expect(user).toContain('Kael Voss crept through the ruins')
+    expect(user).toContain('metadata/world/magic.md')
+    expect(user).not.toContain('elided for space')
+    expect(user).not.toContain('Not shown for space')
+  })
+})

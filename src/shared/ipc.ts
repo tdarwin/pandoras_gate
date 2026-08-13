@@ -489,6 +489,7 @@ export const ipcContract = {
         budgetTokens: z.number(),
         usedTokens: z.number(),
         windowTokens: z.number(),
+        mode: z.enum(['lean', 'full']),
         sections: z.array(
           z.object({
             id: z.string(),
