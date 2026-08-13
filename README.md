@@ -52,7 +52,23 @@ src/llm-worker/  # node-llama-cpp inference in an Electron utilityProcess
 src/preload/     # contextBridge — the only surface the renderer sees
 src/renderer/    # React UI: editor, chat, story bible, proposals, history, models
 src/shared/      # zod schemas + typed IPC contract shared by all processes
+resources/       # runtime assets the main process loads via `?asset` (window/dock icon)
+build/           # electron-builder inputs: app icons, macOS entitlements
 ```
+
+## App icon
+
+`build/icon-master.png` is the 1024×1024 full-bleed artwork everything else is
+derived from. The generated files are checked in, so rebuilding is only needed
+when the artwork changes:
+
+| File | Used by |
+| --- | --- |
+| `build/icon.icns` | macOS bundle (824 px artwork on the 1024 px Apple grid, rounded) |
+| `build/icon.ico` | Windows executable and installer (full-bleed) |
+| `build/icon.png` | Linux packages |
+| `resources/icon.png` | Linux window icon, macOS dock icon during `npm run dev` |
+| `src/renderer/src/assets/icon.png` | the in-app About dialog |
 
 ## Novel folder format
 

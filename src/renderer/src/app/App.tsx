@@ -6,6 +6,8 @@ import Welcome from './Welcome'
 import Workspace from './Workspace'
 import StatusBar from '../components/StatusBar'
 import PreferencesModal from '../components/PreferencesModal'
+import AboutModal from '../components/AboutModal'
+import iconUrl from '../assets/icon.png'
 
 export default function App(): React.JSX.Element {
   const novel = useProjectStore((s) => s.novel)
@@ -15,6 +17,7 @@ export default function App(): React.JSX.Element {
   const initPrefs = usePrefsStore((s) => s.init)
   const theme = usePrefsStore((s) => s.theme)
   const [showPrefs, setShowPrefs] = useState(false)
+  const [showAbout, setShowAbout] = useState(false)
 
   useEffect(() => {
     initDownloads()
@@ -42,17 +45,27 @@ export default function App(): React.JSX.Element {
         <span className="text-sm font-medium text-ink-muted">
           {novel ? novel.manifest.title : "Pandora's Gate"}
         </span>
-        <button
-          onClick={() => setShowPrefs(true)}
-          title="Preferences"
-          className="absolute right-3 rounded p-1 text-ink-faint hover:bg-raised hover:text-ink-muted"
-        >
-          ⚙
-        </button>
+        <div className="absolute right-3 flex items-center gap-1">
+          <button
+            onClick={() => setShowAbout(true)}
+            title="About Pandora's Gate"
+            className="rounded p-1 opacity-70 hover:bg-raised hover:opacity-100"
+          >
+            <img src={iconUrl} alt="" width={16} height={16} className="h-4 w-4 rounded-[22%]" />
+          </button>
+          <button
+            onClick={() => setShowPrefs(true)}
+            title="Preferences"
+            className="rounded p-1 text-ink-faint hover:bg-raised hover:text-ink-muted"
+          >
+            ⚙
+          </button>
+        </div>
       </header>
       {novel ? <Workspace /> : <Welcome />}
       <StatusBar />
       {showPrefs && <PreferencesModal onClose={() => setShowPrefs(false)} />}
+      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
       {lastError && (
         <div className="fixed bottom-4 right-4 flex items-center gap-3 rounded-lg border border-red-900 bg-red-950 px-4 py-2 text-sm text-red-200 shadow-lg">
           <span className="max-w-md truncate">{lastError}</span>
