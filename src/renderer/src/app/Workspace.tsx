@@ -83,6 +83,7 @@ export default function Workspace(): React.JSX.Element {
   const [showChat, setShowChat] = useState(true)
   const [showProposals, setShowProposals] = useState(false)
   const [modal, setModal] = useState<'draft' | 'outline-chapter' | null>(null)
+  const [copyStatus, setCopyStatus] = useState<string | null>(null)
 
   const proposalsRunning = useProposalsStore((s) => s.running)
   const runningStatus = useProposalsStore((s) => s.runningStatus)
@@ -173,6 +174,25 @@ export default function Workspace(): React.JSX.Element {
       .at(-1)
       ?.replace(/\.(md|yaml)$/, '')
   const isChapter = activeFile?.startsWith('chapters/') ?? false
+
+  const copyFor = async (platform: 'royalroad' | 'patreon'): Promise<void> => {
+    if (!activeFile) return
+    await saveActiveChapter()
+    const result = await window.pandora.invoke('publish:copy', {
+      novelDir: novel.dir,
+      file: activeFile,
+      platform
+    })
+    if (result.ok) {
+      const label = platform === 'royalroad' ? 'RoyalRoad' : 'Patreon'
+      setCopyStatus(
+        `Copied for ${label} — paste into a new post${result.data.warning ? ` (${result.data.warning})` : ''}`
+      )
+    } else {
+      setCopyStatus(result.error.message)
+    }
+    window.setTimeout(() => setCopyStatus(null), 6000)
+  }
 
   const markRevised = async (): Promise<void> => {
     if (!activeFile) return
@@ -295,9 +315,27 @@ export default function Workspace(): React.JSX.Element {
               </span>
               <span className="flex items-center gap-2">
                 {!isYamlFile && !drafting && <StyleToolbar handleRef={editorHandleRef} />}
-                <span className="text-xs text-ink-faint">{dirty ? 'Editing…' : 'Saved'}</span>
+                <span className="max-w-72 truncate text-xs text-ink-faint" title={copyStatus ?? undefined}>
+                  {copyStatus ?? (dirty ? 'Editing…' : 'Saved')}
+                </span>
                 {isChapter && !drafting && (
                   <>
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const platform = e.target.value as 'royalroad' | 'patreon' | ''
+                        e.target.value = ''
+                        if (platform) void copyFor(platform)
+                      }}
+                      title="Copy this chapter to the clipboard, formatted for a platform's post editor"
+                      className="rounded border border-line bg-panel px-1 py-0.5 text-xs text-ink-muted outline-none"
+                    >
+                      <option value="" disabled>
+                        Copy for…
+                      </option>
+                      <option value="royalroad">RoyalRoad</option>
+                      <option value="patreon">Patreon</option>
+                    </select>
                     <button
                       onClick={() => setModal('draft')}
                       title="Have the AI write or continue this chapter — you review and revise"

@@ -10,6 +10,7 @@ Built with Electron + TypeScript + React. Everything you write is plain markdown
 - **Project structure**: series → novel → chapters + story-bible metadata, all plain files (`novel.yaml`, `chapters/*.md`, `metadata/**`).
 - **Story bible**: synopsis, per-chapter summaries, character profiles, world/system rules (LitRPG-friendly structured frontmatter), glossary, timeline — browsable and editable in-app.
 - **AI metadata pipeline**: on chapter save, the AI proposes full-document updates to the story bible; you review as tracked changes right in the editor (✓/✕ on each suggestion, keep typing while you decide) or as word-level diffs in the queue. Rejected suggestions stay rejected.
+- **One-paste publishing**: "Copy for RoyalRoad / Patreon" puts the chapter on the clipboard as platform-shaped rich HTML (scene breaks, heading depth, and stat tables adjusted per site, duplicate title heading dropped) with a plain-text fallback.
 - **Context-aware chat**: the chat assembles story context (chapter, synopsis, world rules, matched characters, summaries, glossary) within the model's token budget, with a visible context inspector.
 - **Local models**: curated catalog with hardware-aware recommendations and resumable downloads, or import any GGUF. Inference runs in an isolated utility process (Metal on Apple Silicon; CUDA/Vulkan/CPU on Windows).
 - **Snapshots**: every save auto-commits to a hidden git repo; browse history, view diffs, restore any version (restores are new commits — always undoable).

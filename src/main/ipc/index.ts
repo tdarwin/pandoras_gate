@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain, shell } from 'electron'
+import { app, clipboard, dialog, ipcMain, shell } from 'electron'
 import {
   ipcContract,
   type IpcChannel,
@@ -36,6 +36,8 @@ import { setSecret, hasSecret } from '../secrets'
 import { assembleContext, estimateTokens, resolveContextTarget } from '../context/assembler'
 import { toolOverheadTokens } from '../llm/tools'
 import { gatherStorySource } from '../context/gather'
+import { chapterHtml, chapterPlainText } from '../publish/profiles'
+import { parseFrontmatter } from '../../shared/frontmatter'
 import {
   runMetadataUpdate,
   runOutlineGeneration,
@@ -462,6 +464,23 @@ export function registerIpcHandlers(): void {
   }))
 
   handle('proposals:resolve', (req) => resolveProposalItem(req))
+
+  handle('publish:copy', async (req) => {
+    // Sweep any pending autosave so the clipboard matches the editor.
+    await gitService.flushAutocommit(req.novelDir)
+    const manifest = await project.readNovelManifest(req.novelDir)
+    const entry = manifest.chapters.find((c) => c.file === req.file)
+    const body = parseFrontmatter(await project.readChapter(req.novelDir, req.file)).body
+    const html = chapterHtml(body, req.platform, entry?.title)
+    const text = chapterPlainText(body, entry?.title)
+    clipboard.write({ html, text })
+    const words = text.split(/\s+/).filter((w) => /\w/.test(w)).length
+    const warning =
+      entry && (entry.status === 'draft' || entry.status === 'ai-draft')
+        ? `chapter status is still “${entry.status}”`
+        : undefined
+    return { copied: true as const, words, ...(warning ? { warning } : {}) }
+  })
 
   handle('context:assemble', async (req) => {
     // Snapshot pending saves so the assembler reads current chapter text.

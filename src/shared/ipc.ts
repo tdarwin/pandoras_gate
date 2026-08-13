@@ -472,6 +472,19 @@ export const ipcContract = {
     }),
     response: z.object({ remaining: z.number() })
   },
+  'publish:copy': {
+    request: z.object({
+      novelDir: z.string(),
+      file: z.string(),
+      platform: z.enum(['royalroad', 'patreon'])
+    }),
+    response: z.object({
+      copied: z.literal(true),
+      words: z.number(),
+      /** Soft caution, e.g. the chapter is still marked draft. */
+      warning: z.string().optional()
+    })
+  },
   'context:assemble': {
     request: z.object({
       novelDir: z.string(),
