@@ -3,6 +3,7 @@ import { access } from 'node:fs/promises'
 import type { ChatRequest, LLMProvider, ModelInfo, StreamEvent } from '../../shared/llm/types'
 import { llmWorkerHost } from './worker-host'
 import { readAppState, writeAppState } from '../store'
+import { logWarn } from '../log'
 
 /**
  * Local models are GGUF files the user imported (or downloaded via the
@@ -19,9 +20,33 @@ export interface LocalModelEntry {
   sizeBytes: number
 }
 
+/** Missing files already warned about, so a stale entry logs once per run. */
+const warnedMissing = new Set<string>()
+
+/**
+ * Returns registered models whose file actually exists. Missing files (e.g.
+ * a deleted model or an unplugged external drive) are hidden rather than
+ * removed from the registry, so they come back when the file does — and so
+ * callers never hand the worker a path that would ENOENT mid-pipeline.
+ */
 export async function listLocalModels(): Promise<LocalModelEntry[]> {
   const state = await readAppState()
-  return state.localModels ?? []
+  const models = state.localModels ?? []
+  const present = await Promise.all(
+    models.map(async (m) => {
+      try {
+        await access(m.path)
+        return m
+      } catch {
+        if (!warnedMissing.has(m.path)) {
+          warnedMissing.add(m.path)
+          logWarn('llm', `local model file missing — hiding from model list: ${m.path}`)
+        }
+        return null
+      }
+    })
+  )
+  return present.filter((m): m is LocalModelEntry => m !== null)
 }
 
 export async function importGguf(path: string): Promise<LocalModelEntry> {
