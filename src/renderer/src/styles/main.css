@@ -74,6 +74,110 @@
   -webkit-app-region: no-drag;
 }
 
+/* The WYSIWYG prose editor (TipTap). Writers see typography, never syntax. */
+.prose-editor {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 40vh;
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--t-ink);
+  caret-color: var(--ed-caret);
+  outline: none;
+}
+.prose-editor ::selection {
+  background: var(--ed-sel);
+}
+.prose-editor p {
+  margin: 0 0 1em;
+}
+.prose-editor h1,
+.prose-editor h2,
+.prose-editor h3,
+.prose-editor h4,
+.prose-editor h5,
+.prose-editor h6 {
+  color: var(--ed-head);
+  font-weight: 650;
+  line-height: 1.3;
+}
+.prose-editor h1 {
+  font-size: 1.75em;
+  margin: 1.2em 0 0.5em;
+}
+.prose-editor h2 {
+  font-size: 1.45em;
+  margin: 1.1em 0 0.45em;
+}
+.prose-editor h3,
+.prose-editor h4,
+.prose-editor h5,
+.prose-editor h6 {
+  font-size: 1.2em;
+  margin: 1em 0 0.4em;
+}
+.prose-editor blockquote {
+  border-left: 3px solid var(--ed-quote);
+  color: var(--ed-quote-text);
+  padding-left: 1em;
+  margin: 0 0 1em;
+}
+.prose-editor ul,
+.prose-editor ol {
+  padding-left: 1.5em;
+  margin: 0 0 1em;
+}
+.prose-editor ul {
+  list-style: disc;
+}
+.prose-editor ol {
+  list-style: decimal;
+}
+.prose-editor li::marker {
+  color: var(--ed-bullet);
+}
+.prose-editor li > p {
+  margin: 0 0 0.25em;
+}
+.prose-editor hr {
+  border: none;
+  border-top: 1px solid var(--ed-hr);
+  width: 40%;
+  margin: 2rem auto;
+}
+.prose-editor code {
+  background: var(--ed-code-bg);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+}
+.prose-editor pre {
+  background: var(--ed-code-bg);
+  border-radius: 8px;
+  padding: 0.75em 1em;
+  overflow-x: auto;
+  margin: 0 0 1em;
+}
+.prose-editor pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+.prose-editor a {
+  color: var(--ed-link);
+  text-decoration: underline;
+}
+.prose-editor s {
+  color: var(--ed-strike);
+}
+.prose-editor img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+.prose-editor > :first-child {
+  margin-top: 0;
+}
+
 /* Markdown rendering inside chat bubbles. */
 .prose-chat p {
   margin: 0 0 0.6em;

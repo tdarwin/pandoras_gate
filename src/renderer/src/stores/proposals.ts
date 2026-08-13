@@ -20,18 +20,6 @@ export interface ReviewProposal {
   items: ReviewItem[]
 }
 
-/** Inline review session: the editor shows proposed content vs. on-disk. */
-export interface InlineReview {
-  proposalId: string
-  path: string
-  /** Current on-disk content (merge baseline). */
-  original: string
-  /** Live buffer — starts as the proposal, user can accept/reject chunks. */
-  buffer: string
-  rationale: string
-  sourceTitle: string
-}
-
 interface ProposalsStore {
   proposals: ReviewProposal[]
   running: boolean
@@ -39,15 +27,9 @@ interface ProposalsStore {
   runningStatus: string | null
   lastRunStatus: string | null
   error: string | null
-  review: InlineReview | null
 
   init: () => void
   pendingCount: () => number
-  enterReview: (proposalId: string, path: string) => void
-  updateReviewBuffer: (content: string) => void
-  applyReview: () => Promise<void>
-  rejectReview: () => Promise<void>
-  exitReview: () => void
   refresh: () => Promise<void>
   runForActiveChapter: (opts?: { silent?: boolean }) => Promise<void>
   generateOutline: (scope: 'novel' | 'chapter', guidance?: string) => Promise<void>
@@ -67,7 +49,6 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
   runningStatus: null,
   lastRunStatus: null,
   error: null,
-  review: null,
 
   init: () => {
     if (subscribed) return
@@ -79,46 +60,6 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       set({ runningStatus: text })
     })
   },
-
-  enterReview: (proposalId, path) => {
-    const proposal = get().proposals.find((p) => p.id === proposalId)
-    const item = proposal?.items.find((i) => i.path === path)
-    if (!proposal || !item) return
-    set({
-      review: {
-        proposalId,
-        path,
-        original: item.currentContent,
-        buffer: item.newContent,
-        rationale: item.rationale,
-        sourceTitle: proposal.chapterTitle
-      }
-    })
-  },
-
-  updateReviewBuffer: (content) =>
-    set((s) => (s.review ? { review: { ...s.review, buffer: content } } : {})),
-
-  applyReview: async () => {
-    const { review } = get()
-    if (!review) return
-    // The buffer already reflects any per-chunk rejections — apply as edited.
-    await get().resolve(review.proposalId, review.path, 'accept', review.buffer)
-    set({ review: null })
-    const project = useProjectStore.getState()
-    if (review.path.startsWith('chapters/') || review.path.startsWith('metadata/') || review.path.startsWith('outlines/')) {
-      await project.openChapter(review.path)
-    }
-  },
-
-  rejectReview: async () => {
-    const { review } = get()
-    if (!review) return
-    await get().resolve(review.proposalId, review.path, 'reject')
-    set({ review: null })
-  },
-
-  exitReview: () => set({ review: null }),
 
   pendingCount: () => get().proposals.reduce((n, p) => n + p.items.length, 0),
 

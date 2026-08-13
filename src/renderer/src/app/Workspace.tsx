@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useProjectStore } from '../stores/project'
 import { useProposalsStore } from '../stores/proposals'
 import { useDraftStore } from '../stores/draft'
@@ -9,23 +9,23 @@ import ChatPanel from '../components/ChatPanel'
 import HistoryPanel from '../components/HistoryPanel'
 import ProposalsPanel from '../components/ProposalsPanel'
 import AiPromptModal from '../components/AiPromptModal'
-import MarkdownEditor from '../editor/MarkdownEditor'
-import type { EditorView } from '@codemirror/view'
-import { toggleInline, setHeading, toggleLinePrefix } from '../editor/commands'
-import { parseFrontmatter } from '@shared/frontmatter'
+import ChapterDetails from '../components/ChapterDetails'
+import MarkdownEditor, { type EditorHandle } from '../editor/MarkdownEditor'
+import PlainEditor from '../editor/PlainEditor'
+import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
 
 const AUTO_METADATA_DELAY_MS = 15_000
 
-function wordCount(content: string): { words: number; readMinutes: number } {
-  const body = parseFrontmatter(content).body
+function wordCount(body: string): { words: number; readMinutes: number } {
   const words = body.split(/\s+/).filter((w) => /\w/.test(w)).length
   return { words, readMinutes: Math.max(1, Math.round(words / 230)) }
 }
 
-function StyleToolbar({ viewRef }: { viewRef: React.RefObject<EditorView | null> }): React.JSX.Element {
-  const run = (fn: (view: EditorView) => void): void => {
-    if (viewRef.current) fn(viewRef.current)
-  }
+function StyleToolbar({
+  handleRef
+}: {
+  handleRef: React.RefObject<EditorHandle | null>
+}): React.JSX.Element {
   const btn =
     'rounded px-1.5 py-0.5 text-xs text-ink-faint hover:bg-raised hover:text-ink'
   return (
@@ -34,7 +34,7 @@ function StyleToolbar({ viewRef }: { viewRef: React.RefObject<EditorView | null>
         value=""
         onChange={(e) => {
           const v = e.target.value
-          if (v !== '') run((view) => setHeading(view, Number(v)))
+          if (v !== '') handleRef.current?.setHeading(Number(v) as 0 | 1 | 2 | 3)
           e.target.value = ''
         }}
         title="Paragraph style"
@@ -48,16 +48,16 @@ function StyleToolbar({ viewRef }: { viewRef: React.RefObject<EditorView | null>
         <option value="2">Heading 2</option>
         <option value="3">Heading 3</option>
       </select>
-      <button onClick={() => run((v) => toggleInline(v, '**'))} title="Bold (⌘B style)" className={`${btn} font-bold`}>
+      <button onClick={() => handleRef.current?.toggleBold()} title="Bold (⌘B)" className={`${btn} font-bold`}>
         B
       </button>
-      <button onClick={() => run((v) => toggleInline(v, '*'))} title="Italic" className={`${btn} italic`}>
+      <button onClick={() => handleRef.current?.toggleItalic()} title="Italic (⌘I)" className={`${btn} italic`}>
         I
       </button>
-      <button onClick={() => run((v) => toggleLinePrefix(v, '> '))} title="Quote" className={btn}>
+      <button onClick={() => handleRef.current?.toggleBlockquote()} title="Quote" className={btn}>
         ❝
       </button>
-      <button onClick={() => run((v) => toggleLinePrefix(v, '- '))} title="Bullet list" className={btn}>
+      <button onClick={() => handleRef.current?.toggleBulletList()} title="Bullet list" className={btn}>
         •
       </button>
     </span>
@@ -86,12 +86,7 @@ export default function Workspace(): React.JSX.Element {
   const proposalsRunning = useProposalsStore((s) => s.running)
   const runningStatus = useProposalsStore((s) => s.runningStatus)
   const lastRunStatus = useProposalsStore((s) => s.lastRunStatus)
-  const review = useProposalsStore((s) => s.review)
-  const updateReviewBuffer = useProposalsStore((s) => s.updateReviewBuffer)
-  const applyReview = useProposalsStore((s) => s.applyReview)
-  const rejectReview = useProposalsStore((s) => s.rejectReview)
-  const exitReview = useProposalsStore((s) => s.exitReview)
-  const editorViewRef = useRef<EditorView | null>(null)
+  const editorHandleRef = useRef<EditorHandle | null>(null)
   const pendingCount = useProposalsStore((s) => s.proposals.reduce((n, p) => n + p.items.length, 0))
   const runProposals = useProposalsStore((s) => s.runForActiveChapter)
   const generateOutline = useProposalsStore((s) => s.generateOutline)
@@ -187,57 +182,9 @@ export default function Workspace(): React.JSX.Element {
     }
   }
 
-  const stats = isChapter ? wordCount(content) : null
-
-  // Inline review mode replaces the whole editor column.
-  if (review) {
-    return (
-      <div className="flex min-h-0 flex-1">
-        <ChapterSidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-amber-900 bg-amber-950/40 px-4 py-2">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium text-amber-200">
-                Reviewing suggestion for {review.path}
-              </div>
-              <div className="truncate text-xs text-amber-200/70">
-                {review.sourceTitle} — {review.rationale}. Use the ✓/✕ on each change, then Apply.
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                onClick={() => void rejectReview()}
-                className="rounded-lg border border-amber-800 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-900"
-              >
-                Reject all
-              </button>
-              <button
-                onClick={exitReview}
-                className="rounded-lg border border-amber-800 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-900"
-              >
-                Later
-              </button>
-              <button
-                onClick={() => void applyReview()}
-                className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600"
-              >
-                Apply
-              </button>
-            </div>
-          </div>
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <MarkdownEditor
-              docId={`review:${review.proposalId}:${review.path}`}
-              value={review.buffer}
-              onChange={updateReviewBuffer}
-              mergeOriginal={review.original}
-            />
-          </div>
-        </div>
-        {showChat && <ChatPanel onClose={() => setShowChat(false)} />}
-      </div>
-    )
-  }
+  const doc = useMemo(() => parseFrontmatter(content), [content])
+  const isYamlFile = /\.ya?ml$/.test(activeFile ?? '')
+  const stats = isChapter ? wordCount(doc.body) : null
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -258,7 +205,7 @@ export default function Workspace(): React.JSX.Element {
                 )}
               </span>
               <span className="flex items-center gap-2">
-                {isChapter && !drafting && <StyleToolbar viewRef={editorViewRef} />}
+                {!isYamlFile && !drafting && <StyleToolbar handleRef={editorHandleRef} />}
                 <span className="text-xs text-ink-faint">{dirty ? 'Editing…' : 'Saved'}</span>
                 {isChapter && !drafting && (
                   <>
@@ -353,17 +300,39 @@ export default function Workspace(): React.JSX.Element {
               </div>
             )}
 
-            <div className={`min-h-0 flex-1 overflow-hidden ${drafting ? 'pointer-events-none opacity-95' : ''}`}>
-              <MarkdownEditor
-                docId={activeFile}
-                value={content}
-                onChange={setContent}
-                forceSync={drafting}
-                onSave={() => void snapshotActiveChapter()}
-                onViewReady={(view) => {
-                  editorViewRef.current = view
-                }}
-              />
+            <div
+              className={`flex min-h-0 flex-1 flex-col overflow-hidden ${drafting ? 'pointer-events-none opacity-95' : ''}`}
+            >
+              {isYamlFile ? (
+                <PlainEditor
+                  value={content}
+                  onChange={setContent}
+                  onSave={() => void snapshotActiveChapter()}
+                />
+              ) : (
+                <>
+                  <ChapterDetails
+                    key={activeFile}
+                    data={doc.data}
+                    lockedKeys={isChapter ? ['title', 'status'] : []}
+                    onChange={(data) => setContent(serializeFrontmatter({ data, body: doc.body }))}
+                  />
+                  <div className="min-h-0 flex-1 overflow-hidden">
+                    <MarkdownEditor
+                      docId={activeFile}
+                      value={doc.body}
+                      onChange={(body) =>
+                        setContent(serializeFrontmatter({ data: doc.data, body }))
+                      }
+                      forceSync={drafting}
+                      onSave={() => void snapshotActiveChapter()}
+                      onReady={(handle) => {
+                        editorHandleRef.current = handle
+                      }}
+                    />
+                  </div>
+                </>
+              )}
             </div>
           </>
         ) : (

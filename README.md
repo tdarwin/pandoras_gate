@@ -6,7 +6,7 @@ Built with Electron + TypeScript + React. Everything you write is plain markdown
 
 ## Features (MVP)
 
-- **Live-preview markdown editor** (CodeMirror 6): headings, emphasis, quotes render in place; syntax reveals itself on the cursor line. Chapter frontmatter folds into a summary chip.
+- **True WYSIWYG prose editor** (TipTap/ProseMirror): bold looks bold, headings look like headings — markdown is the storage format, never the writing surface. Chapter details (frontmatter) live in a collapsible panel above the text.
 - **Project structure**: series → novel → chapters + story-bible metadata, all plain files (`novel.yaml`, `chapters/*.md`, `metadata/**`).
 - **Story bible**: synopsis, per-chapter summaries, character profiles, world/system rules (LitRPG-friendly structured frontmatter), glossary, timeline — browsable and editable in-app.
 - **AI metadata pipeline**: on chapter save, the AI proposes full-document updates to the story bible; you review word-level diffs and accept, edit, or reject each. Rejected suggestions stay rejected.

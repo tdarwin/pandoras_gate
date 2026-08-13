@@ -27,12 +27,10 @@ function WordDiff({ oldText, newText }: { oldText: string; newText: string }): R
 
 function ItemCard({
   proposalId,
-  item,
-  onReview
+  item
 }: {
   proposalId: string
   item: ReviewItem
-  onReview: () => void
 }): React.JSX.Element {
   const resolve = useProposalsStore((s) => s.resolve)
   const [editing, setEditing] = useState(false)
@@ -128,18 +126,10 @@ function ItemCard({
             </button>
             <button
               disabled={busy}
-              onClick={onReview}
-              title="Open in the editor with inline accept/reject for each change"
-              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
-            >
-              Review in editor
-            </button>
-            <button
-              disabled={busy}
               onClick={() => void act('accept')}
               className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
             >
-              Accept all
+              Accept
             </button>
           </>
         )}
@@ -152,7 +142,6 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
   const proposals = useProposalsStore((s) => s.proposals)
   const refresh = useProposalsStore((s) => s.refresh)
   const resolve = useProposalsStore((s) => s.resolve)
-  const enterReview = useProposalsStore((s) => s.enterReview)
   const error = useProposalsStore((s) => s.error)
   const [busyAll, setBusyAll] = useState(false)
 
@@ -221,15 +210,7 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
                 </h3>
                 <div className="flex flex-col gap-3">
                   {p.items.map((item) => (
-                    <ItemCard
-                      key={item.path}
-                      proposalId={p.id}
-                      item={item}
-                      onReview={() => {
-                        enterReview(p.id, item.path)
-                        onClose()
-                      }}
-                    />
+                    <ItemCard key={item.path} proposalId={p.id} item={item} />
                   ))}
                 </div>
               </div>
