@@ -1,9 +1,10 @@
 import { app, shell, BrowserWindow, nativeImage } from 'electron'
-import { join, dirname } from 'node:path'
+import { join } from 'node:path'
 import appIcon from '../../resources/icon.png?asset'
 import { existsSync, renameSync } from 'node:fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
+import { legacyUserDataDir, migrateLegacyStatePaths } from './store'
 import { flushAllAutocommits } from './git/service'
 import { initTelemetry, shutdownTelemetry } from './telemetry'
 import { logInfo, logError } from './log'
@@ -11,23 +12,30 @@ import { logInfo, logError } from './log'
 /**
  * One-time migration from the app's original name ("pandoras-box"). Moves
  * known state files/dirs into the new userData location so recents, prefs,
- * and downloaded models survive the rename. Runs before anything reads state.
+ * and downloaded models survive the rename, then rewrites absolute model
+ * paths stored in app state. Runs before anything reads state.
  * Note: safeStorage secrets are tied to the old keychain item and will not
  * decrypt after the rename — those keys must be re-entered once.
  */
 function migrateLegacyUserData(): void {
   try {
     const newDir = app.getPath('userData')
-    const oldDir = join(dirname(newDir), 'pandoras-box')
-    if (!existsSync(oldDir) || oldDir === newDir) return
-    for (const entry of ['app-state.json', 'secrets.json', 'models', 'logs']) {
-      const from = join(oldDir, entry)
-      const to = join(newDir, entry)
-      if (existsSync(from) && !existsSync(to)) {
-        renameSync(from, to)
+    const oldDir = legacyUserDataDir()
+    if (existsSync(oldDir) && oldDir !== newDir) {
+      let moved = false
+      for (const entry of ['app-state.json', 'secrets.json', 'models', 'logs']) {
+        const from = join(oldDir, entry)
+        const to = join(newDir, entry)
+        if (existsSync(from) && !existsSync(to)) {
+          renameSync(from, to)
+          moved = true
+        }
       }
+      if (moved) logInfo('app', `migrated user data from ${oldDir}`)
     }
-    logInfo('app', `migrated user data from ${oldDir}`)
+    // The moved app-state.json still holds absolute model paths into the old
+    // dir; heal them even when the old dir itself is already gone.
+    migrateLegacyStatePaths()
   } catch (err) {
     logError('app', 'user data migration failed', err)
   }
