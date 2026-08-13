@@ -108,8 +108,18 @@ export function startChat(
       const tools = toolCtx ? chatToolDefinitions(toolCtx) : []
 
       const messages: ChatMessage[] = [...req.messages]
+      // The tool note is static text — splice it into the cacheable prefix
+      // (before the volatile chapter/chat-matched sections) so enabling tools
+      // doesn't break prompt caching.
+      let cachePrefixChars = req.cachePrefixChars
       if (tools.length > 0 && messages[0]?.role === 'system') {
-        messages[0] = { ...messages[0], content: messages[0].content + TOOL_SYSTEM_NOTE }
+        const content = messages[0].content
+        const at = Math.min(cachePrefixChars ?? content.length, content.length)
+        messages[0] = {
+          ...messages[0],
+          content: content.slice(0, at) + TOOL_SYSTEM_NOTE + content.slice(at)
+        }
+        if (cachePrefixChars !== undefined) cachePrefixChars = at + TOOL_SYSTEM_NOTE.length
       }
 
       // Duplicate/abort guards shared by both providers' tool paths.
@@ -134,6 +144,7 @@ export function startChat(
           const request: ChatRequest = {
             ...req,
             messages,
+            ...(cachePrefixChars !== undefined ? { cachePrefixChars } : {}),
             ...(tools.length > 0 ? { tools } : {}),
             // Local models run the tool loop inside the worker; give it a
             // bridge back to the same executor (with UI status updates).

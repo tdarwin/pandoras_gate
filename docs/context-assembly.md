@@ -5,32 +5,52 @@ context fresh from your files each time. Nothing is "remembered" between message
 the visible chat history — which is why the Clear button resets the conversation but not
 the token count: the story materials below are re-sent with every message.
 
-The budget is the model's context window minus room reserved for its reply. Sections are
-added in priority order; when the budget runs out, low-priority sections degrade (get
-trimmed) and then drop, always bottom-up. The chat panel's context inspector shows
-exactly what was included, trimmed, or dropped for the last message.
+## The budget: a target, not the whole window
+
+The budget is `min(model window − reply reservation, target)`. The target keeps prompts
+lean on huge-window models — without it, a 200k-context model would receive the entire
+codex with every message. By default the target is automatic (~12k tokens, drifting up
+to ~24k on very large windows); Preferences → "Story context size" pins it to ~8k/16k/32k.
+
+Sections are added in priority order; when the budget runs out, low-priority sections
+degrade (get trimmed) and then drop, always bottom-up. The chat panel's context
+inspector shows exactly what was included, trimmed, or dropped for the last message —
+including the fixed cost of the agent's tool instructions and schemas when the model
+supports tools.
 
 ## Chat and drafting (the assembler)
 
 | Priority | Section | Always/Optional | Degrades to |
 |---|---|---|---|
-| 1 | System prompt + your per-novel AI instructions | **Always** (never cut) | — |
+| 1 | System prompt + your per-novel AI instructions + tool overhead | **Always** (never cut) | — |
 | 2 | Recent chat history | Always (chat only) | Oldest turns dropped, never below the last 4 |
 | 3 | The open chapter, full text | Always when a chapter is open | Head + tail with the middle elided (capped at ~50% of budget) |
 | 3.5 | Chapter outline, then novel outline | Optional — **top priority when drafting**, after synopsis in chat | Truncated, then dropped |
 | 4 | Novel synopsis (`metadata/synopsis.md`) | Optional | Truncated, then dropped |
-| 5 | World/system docs (`metadata/world/*`) | Optional — each doc separately | Truncated, then dropped |
-| 6 | Character profiles | **Conditional**: only characters whose name or alias appears in the open chapter, recent chat, or your message | Frontmatter facts only (prose body dropped) |
-| 7 | Chapter summaries | Optional: previous 2 chapters in full, older ones as one-line loglines | Collapsed, then dropped |
-| 8 | Glossary terms | Conditional: only terms appearing in recent text | Dropped first |
+| 5 | World/system docs (`metadata/world/*`) | Optional — docs named in the chapter first; each doc capped (~1.5k tokens), all docs together capped at ~25% of the budget | Truncated, then dropped |
+| 6 | Character profiles | **Conditional**: only characters whose name or alias appears (as a whole word) in the open chapter, recent chat, or your message | Frontmatter facts only (prose body dropped) |
+| 7 | Chapter summaries | Optional: previous 2 chapters in full, the rest as one-line loglines | Farthest chapters shed first — the recent full summaries are the last to go |
+| 8 | Glossary terms | Conditional: only terms appearing (as whole words) in recent text | Dropped first |
 | 8 | Timeline | Optional: last 10 events | Dropped first |
 
 Notes:
-- **Character matching is by name/alias string match.** A character never mentioned in
-  the open chapter or conversation is not loaded — mention them by name to pull in
-  their profile.
+- **Matching is whole-word.** A character named "Al" no longer matches "always"; mention
+  a character by name to pull in their profile.
 - **Drafting** uses the same ladder but with a prose-only system prompt and outlines
   promoted to the top, plus a larger reply reservation.
+
+## Prompt caching and message layout
+
+The system message is laid out for prompt caching: stable story materials first
+(synopsis, outlines, world docs, the chapter's cast, summaries, glossary, timeline),
+then anything matched only from the conversation, then the open chapter last. The stable
+prefix is byte-identical across turns while your files are unchanged, so:
+
+- **Anthropic models via OpenRouter** get explicit `cache_control` breakpoints (one at
+  the stable-prefix boundary, one at the end of the prior transcript) — unchanged story
+  context is re-read from cache at a fraction of the input price.
+- **OpenAI/Gemini models** cache long identical prefixes automatically.
+- **Local models** benefit the same way through llama.cpp prompt-prefix reuse.
 
 ## Codex updates (the pipeline)
 
@@ -53,5 +73,6 @@ it — mention specifics in your instructions if they matter.
 ## Token counting
 
 Counts are estimates (~4 characters per token with a 10% safety margin) for both remote
-and local models. Real usage reported after each reply (the "in/out" numbers under the
-chat input) comes from the provider and is exact.
+and local models. The reply reservation (a quarter of the window, capped at 4k tokens)
+is also passed to the provider as a real output cap. Real usage reported after each
+reply (the "in/out" numbers under the chat input) comes from the provider and is exact.

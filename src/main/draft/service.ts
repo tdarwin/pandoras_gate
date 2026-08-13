@@ -4,9 +4,10 @@ import { parseFrontmatter } from '../../shared/frontmatter'
 import { readChapter, readNovelManifest, setChapterStatus } from '../project/service'
 import type { NovelState } from '../../shared/schemas/project'
 import { commitAll, flushAutocommit } from '../git/service'
-import { assembleContext } from '../context/assembler'
+import { assembleContext, resolveContextTarget } from '../context/assembler'
 import { gatherStorySource } from '../context/gather'
 import { startChat } from '../llm/chat'
+import { readPrefs } from '../store'
 
 /**
  * AI chapter drafting: snapshot the chapter, mark it ai-draft, and stream
@@ -55,12 +56,14 @@ export async function startDraft(
     .filter(Boolean)
     .join('\n\n')
 
+  const prefs = await readPrefs()
   const { messages } = assembleContext({
     source,
     chatHistory: [],
     userMessage,
     contextTokens: req.contextTokens,
     reservedOutput: 4096,
+    targetTokens: resolveContextTarget(prefs.contextTargetTokens, req.contextTokens),
     task: 'draft'
   })
 

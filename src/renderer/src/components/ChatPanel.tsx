@@ -21,6 +21,9 @@ function ContextInspector({ report }: { report: ContextReport }): React.JSX.Elem
         <span>
           Context: {report.usedTokens.toLocaleString()} / {report.budgetTokens.toLocaleString()}{' '}
           tokens
+          {report.windowTokens > report.budgetTokens
+            ? ` · ${Math.round(report.windowTokens / 1024)}k window`
+            : ''}
         </span>
         <span>{open ? '▾' : '▸'}</span>
       </button>
@@ -40,8 +43,9 @@ function ContextInspector({ report }: { report: ContextReport }): React.JSX.Elem
           </ul>
           <p className="pb-1.5 text-[10px] leading-relaxed text-ink-faint">
             Story context (chapter, Codex, outlines) is rebuilt and resent with every message —
-            that&apos;s most of this number. “Clear” starts a fresh conversation but doesn&apos;t
-            shrink story context. Token counts are estimates (≈4 chars/token).
+            that&apos;s most of this number, and it now includes the agent&apos;s tool
+            instructions. The target size is set in Preferences → Story context size. Token
+            counts are estimates (≈4 chars/token).
           </p>
         </>
       )}

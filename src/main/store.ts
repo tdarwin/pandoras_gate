@@ -16,6 +16,7 @@ interface AppState {
     autoStoryBible?: boolean
     snapshotOnBlur?: boolean
     snapshotIntervalMinutes?: number
+    contextTargetTokens?: number
     theme?: string
   }
 }
@@ -25,24 +26,32 @@ const DEFAULT_STATE: AppState = { recentNovels: [] }
 /** 0 = no interval (snapshot only on save/blur/switch). */
 export const SNAPSHOT_INTERVALS = [0, 5, 10, 15, 20] as const
 
+/** 0 = automatic (lean target that scales gently with the model window). */
+export const CONTEXT_TARGETS = [0, 8192, 16384, 32768] as const
+
 export type ThemePref = 'dark' | 'light' | 'system'
 
 export interface Prefs {
   autoStoryBible: boolean
   snapshotOnBlur: boolean
   snapshotIntervalMinutes: number
+  contextTargetTokens: number
   theme: ThemePref
 }
 
 export async function readPrefs(): Promise<Prefs> {
   const state = await readAppState()
   const interval = state.prefs?.snapshotIntervalMinutes ?? 0
+  const contextTarget = state.prefs?.contextTargetTokens ?? 0
   const theme = state.prefs?.theme
   return {
     autoStoryBible: state.prefs?.autoStoryBible ?? true,
     snapshotOnBlur: state.prefs?.snapshotOnBlur ?? true,
     snapshotIntervalMinutes: (SNAPSHOT_INTERVALS as readonly number[]).includes(interval)
       ? interval
+      : 0,
+    contextTargetTokens: (CONTEXT_TARGETS as readonly number[]).includes(contextTarget)
+      ? contextTarget
       : 0,
     theme: theme === 'light' || theme === 'system' ? theme : 'dark'
   }

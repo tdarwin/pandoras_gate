@@ -33,7 +33,8 @@ import { getRemoteUrl, setRemoteUrl, pushToRemote } from '../git/sync'
 import { logWarn, logError, logsDir } from '../log'
 import { withSpan, telemetryEnabled } from '../telemetry'
 import { setSecret, hasSecret } from '../secrets'
-import { assembleContext } from '../context/assembler'
+import { assembleContext, estimateTokens, resolveContextTarget } from '../context/assembler'
+import { toolOverheadTokens } from '../llm/tools'
 import { gatherStorySource } from '../context/gather'
 import {
   runMetadataUpdate,
@@ -280,7 +281,8 @@ export function registerIpcHandlers(): void {
         modelId: req.modelId,
         messages: req.messages,
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-        ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {})
+        ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
+        ...(req.cachePrefixChars !== undefined ? { cachePrefixChars: req.cachePrefixChars } : {})
       },
       req.novelDir
         ? {
@@ -363,6 +365,9 @@ export function registerIpcHandlers(): void {
       ...(req.snapshotOnBlur !== undefined ? { snapshotOnBlur: req.snapshotOnBlur } : {}),
       ...(req.snapshotIntervalMinutes !== undefined
         ? { snapshotIntervalMinutes: req.snapshotIntervalMinutes }
+        : {}),
+      ...(req.contextTargetTokens !== undefined
+        ? { contextTargetTokens: req.contextTargetTokens }
         : {}),
       ...(req.theme !== undefined ? { theme: req.theme } : {})
     })
@@ -462,12 +467,16 @@ export function registerIpcHandlers(): void {
     // Snapshot pending saves so the assembler reads current chapter text.
     await gitService.flushAutocommit(req.novelDir)
     const source = await gatherStorySource(req.novelDir, req.activeFile)
+    const prefs = await readPrefs()
+    const overhead = req.toolUse ? toolOverheadTokens(req.activeFile, estimateTokens) : 0
     return assembleContext({
       source,
       chatHistory: req.chatHistory,
       userMessage: req.userMessage,
       contextTokens: req.contextTokens,
-      reservedOutput: req.reservedOutput
+      reservedOutput: req.reservedOutput,
+      targetTokens: resolveContextTarget(prefs.contextTargetTokens, req.contextTokens),
+      ...(overhead > 0 ? { toolOverheadTokens: overhead } : {})
     })
   })
 }

@@ -32,7 +32,7 @@ export interface ToolContext {
   conversationId?: string
 }
 
-export function chatToolDefinitions(ctx: ToolContext): ToolDefinition[] {
+export function chatToolDefinitions(ctx: Pick<ToolContext, 'activeFile'>): ToolDefinition[] {
   const tools: ToolDefinition[] = [
     {
       name: 'write_codex_doc',
@@ -178,6 +178,18 @@ export function chatToolDefinitions(ctx: ToolContext): ToolDefinition[] {
   return ctx.activeFile?.startsWith('chapters/')
     ? tools
     : tools.filter((t) => !needsOpenChapter.has(t.name))
+}
+
+/**
+ * Estimated prompt cost of enabling tools: the system note plus the tool
+ * JSON schemas the provider sends on the wire. Lets the context assembler
+ * budget for it and the inspector report it.
+ */
+export function toolOverheadTokens(
+  activeFile: string | null,
+  count: (text: string) => number
+): number {
+  return count(TOOL_SYSTEM_NOTE) + count(JSON.stringify(chatToolDefinitions({ activeFile })))
 }
 
 /** Tells the renderer new proposals may exist (badge + list refresh). */

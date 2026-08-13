@@ -218,6 +218,8 @@ export const ipcContract = {
       autoStoryBible: z.boolean(),
       snapshotOnBlur: z.boolean(),
       snapshotIntervalMinutes: z.number(),
+      /** Story-context token target for AI chats/drafts; 0 = automatic. */
+      contextTargetTokens: z.number(),
       theme: z.enum(['dark', 'light', 'system'])
     })
   },
@@ -228,12 +230,16 @@ export const ipcContract = {
       snapshotIntervalMinutes: z
         .union([z.literal(0), z.literal(5), z.literal(10), z.literal(15), z.literal(20)])
         .optional(),
+      contextTargetTokens: z
+        .union([z.literal(0), z.literal(8192), z.literal(16384), z.literal(32768)])
+        .optional(),
       theme: z.enum(['dark', 'light', 'system']).optional()
     }),
     response: z.object({
       autoStoryBible: z.boolean(),
       snapshotOnBlur: z.boolean(),
       snapshotIntervalMinutes: z.number(),
+      contextTargetTokens: z.number(),
       theme: z.enum(['dark', 'light', 'system'])
     })
   },
@@ -264,6 +270,8 @@ export const ipcContract = {
       messages: z.array(ChatMessageSchema),
       temperature: z.number().optional(),
       maxTokens: z.number().optional(),
+      /** Stable system-prefix length from context:assemble (prompt caching). */
+      cachePrefixChars: z.number().optional(),
       /** Novel context enabling agent tools (update_codex, generate_outline). */
       novelDir: z.string().optional(),
       activeFile: z.string().nullable().optional(),
@@ -471,13 +479,16 @@ export const ipcContract = {
       chatHistory: z.array(ChatMessageSchema),
       userMessage: z.string(),
       contextTokens: z.number(),
-      reservedOutput: z.number()
+      reservedOutput: z.number(),
+      /** Budget for the tool note + schemas the chat layer will add. */
+      toolUse: z.boolean().optional()
     }),
     response: z.object({
       messages: z.array(ChatMessageSchema),
       report: z.object({
         budgetTokens: z.number(),
         usedTokens: z.number(),
+        windowTokens: z.number(),
         sections: z.array(
           z.object({
             id: z.string(),
@@ -486,7 +497,9 @@ export const ipcContract = {
             tokens: z.number()
           })
         )
-      })
+      }),
+      /** Stable (cacheable) prefix length of the system message, in chars. */
+      cachePrefixChars: z.number()
     })
   }
 } as const

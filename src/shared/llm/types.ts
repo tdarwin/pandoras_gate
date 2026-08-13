@@ -45,6 +45,12 @@ export interface ChatRequest {
   messages: ChatMessage[]
   temperature?: number
   maxTokens?: number
+  /**
+   * Chars of messages[0].content that are byte-stable across turns of the
+   * conversation. Providers that support prompt caching put a cache
+   * breakpoint at this boundary.
+   */
+  cachePrefixChars?: number
   /** When set, the provider constrains output to this JSON schema. */
   responseFormat?: { name: string; schema: Record<string, unknown> }
   /** Tools the model may call; providers that can't do tools ignore this. */
