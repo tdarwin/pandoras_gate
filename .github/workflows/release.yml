@@ -58,8 +58,10 @@ jobs:
       # Tripwire: when signing is configured, a release that somehow built
       # unsigned or un-notarized (expired cert, mistyped secret, notary
       # outage) must fail the workflow instead of shipping quietly.
+      # Gated on env (set by "Configure signing" when the secret exists) —
+      # the secrets context is not allowed in `if` conditionals.
       - name: Verify signature and notarization
-        if: ${{ secrets.MAC_CSC_LINK != '' }}
+        if: env.CSC_LINK != ''
         run: |
           set -euo pipefail
           APP=$(find dist -maxdepth 2 -name '*.app' | head -1)
