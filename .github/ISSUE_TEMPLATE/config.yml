@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Setting up a development environment
+    url: https://github.com/tdarwin/pandoras_gate/blob/main/DEVELOPMENT.md
+    about: Build from source, architecture tour, testing, and the release process.
+  - name: Contributing guide
+    url: https://github.com/tdarwin/pandoras_gate/blob/main/CONTRIBUTING.md
+    about: How to fork, branch, and open a pull request — plus what gets merged.
+  - name: What the AI actually sees
+    url: https://github.com/tdarwin/pandoras_gate/blob/main/docs/context-assembly.md
+    about: Before reporting "the model forgot something", check how context is assembled.
+  - name: Support the project
+    url: https://patreon.com/TDarwin
+    about: Pandora's Gate is free and MIT-licensed. Patreon helps fund development.

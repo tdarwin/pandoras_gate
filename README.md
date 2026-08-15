@@ -1,80 +1,109 @@
 # Pandora's Gate — Writer's Studio
 
-A desktop app for writing novels, doubling as an AI harness for writers: bring your own OpenRouter key for remote models, or run GGUF models entirely on your machine via a bundled llama.cpp engine.
+A desktop app for writing novels, doubling as an AI harness for writers: bring your own
+OpenRouter key for remote models, or run GGUF models entirely on your machine via a
+bundled llama.cpp engine.
 
-Built with Electron + TypeScript + React. Everything you write is plain markdown on your own disk, versioned by an invisible git repo per novel.
+Everything you write is plain markdown on your own disk, versioned by an invisible git
+repo per novel. No account, no cloud, no lock-in — close the app and your novel is still
+a folder of readable files.
 
-## Features (MVP)
+**[pandorasgate.app](https://pandorasgate.app)** · [Install](#install) ·
+[Development](DEVELOPMENT.md) · [Contributing](CONTRIBUTING.md)
 
-- **True WYSIWYG prose editor** (TipTap/ProseMirror): bold looks bold, headings look like headings — markdown is the storage format, never the writing surface. Chapter details (frontmatter) live in a collapsible panel above the text.
-- **Project structure**: series → novel → chapters + Codex metadata, all plain files (`novel.yaml`, `chapters/*.md`, `metadata/**`).
-- **Codex**: the novel's canon reference — synopsis, per-chapter summaries, character profiles, world/system rules (LitRPG-friendly structured frontmatter), glossary, timeline — browsable and editable in-app.
-- **AI metadata pipeline**: on chapter save, the AI proposes full-document updates to the Codex; you review as tracked changes right in the editor (✓/✕ on each suggestion, keep typing while you decide) or as word-level diffs in the queue. Rejected suggestions stay rejected.
-- **One-paste publishing**: "Copy for RoyalRoad / Patreon" puts the chapter on the clipboard as platform-shaped rich HTML (scene breaks, heading depth, and stat tables adjusted per site, duplicate title heading dropped) with a plain-text fallback.
-- **Context-aware chat**: the chat assembles story context (chapter, synopsis, world rules, matched characters, summaries, glossary) within the model's token budget, with a visible context inspector.
-- **Local models**: curated catalog with hardware-aware recommendations and resumable downloads, or import any GGUF. Inference runs in an isolated utility process (Metal on Apple Silicon; CUDA/Vulkan/CPU on Windows).
-- **Snapshots**: every save auto-commits to a hidden git repo; browse history, view diffs, restore any version (restores are new commits — always undoable).
+## What it's for
 
-## Install (macOS, Apple Silicon)
+Long-form fiction breaks AI tools. A novel outgrows any context window by chapter ten,
+and the assistant that was helpful in chapter one starts contradicting your own canon —
+inventing a sister the character never had, forgetting that the magic system caps at
+tier 7, misremembering who died.
+
+Pandora's Gate is built around that problem. As you write, the app maintains a **Codex**:
+a structured, human-readable record of what is true in your story — characters, world and
+system rules, per-chapter summaries, a timeline, a glossary. The Codex is generated with
+AI help, reviewed by you, stored as ordinary files, and assembled into context for every
+AI request. The model doesn't need to remember your novel, because the app hands it the
+relevant parts every time.
+
+The design goals that follow from that:
+
+- **Your files, your disk.** A novel is a directory of markdown and YAML. Any editor can
+  open it; git can diff it; no database owns it.
+- **Local models are first-class.** An 8k-context model running on your laptop should be
+  useful, not a degraded afterthought — which is why context assembly is retrieval-first
+  when the budget is tight.
+- **You approve everything.** AI proposals arrive as reviewable changes, never as silent
+  edits to your prose or your canon.
+- **Markdown is storage, not the writing surface.** The editor is true WYSIWYG; the
+  markdown lives on disk where it belongs.
+- **Built for serial fiction.** Chapter-at-a-time workflow, and one-paste publishing to
+  the platforms serial authors actually use.
+
+## Features
+
+- **True WYSIWYG prose editor** (TipTap/ProseMirror): bold looks bold, headings look like
+  headings — markdown is the storage format, never the writing surface. Chapter details
+  (frontmatter) live in a collapsible panel above the text.
+- **Project structure**: series → novel → chapters + Codex metadata, all plain files
+  (`novel.yaml`, `chapters/*.md`, `metadata/**`).
+- **Codex**: the novel's canon reference — synopsis, per-chapter summaries, character
+  profiles, world/system rules (LitRPG-friendly structured frontmatter), glossary,
+  timeline — browsable and editable in-app.
+- **AI metadata pipeline**: on chapter save, the AI proposes full-document updates to the
+  Codex; you review as tracked changes right in the editor (✓/✕ on each suggestion, keep
+  typing while you decide) or as word-level diffs in the queue. Rejected suggestions stay
+  rejected.
+- **Context-aware chat**: the chat assembles story context (chapter, synopsis, world
+  rules, matched characters, summaries, glossary) within the model's token budget, with a
+  visible context inspector. See [docs/context-assembly.md](docs/context-assembly.md) for
+  exactly what the model sees and why.
+- **Chat that can act**: the assistant has tools for creating and drafting chapters,
+  making targeted section edits, and reading or updating Codex documents — each change
+  surfaced for review.
+- **Outlining and drafting**: outline a chapter, a novel, or a series with the model, then
+  have it produce a first draft you rewrite.
+- **Model roles**: assign different models to drafting, copy-edit, developmental notes,
+  and Codex maintenance — a big remote model for structure, a fast local one for passes.
+- **Local models**: curated catalog with hardware-aware recommendations and resumable
+  downloads, or import any GGUF. Inference runs in an isolated utility process (Metal on
+  Apple Silicon; CUDA/Vulkan/CPU on Windows).
+- **One-paste publishing**: "Copy for RoyalRoad / Patreon" puts the chapter on the
+  clipboard as platform-shaped rich HTML (scene breaks, heading depth, and stat tables
+  adjusted per site, duplicate title heading dropped) with a plain-text fallback.
+- **Snapshots**: every save auto-commits to a hidden git repo; browse history, view diffs,
+  restore any version (restores are new commits — always undoable).
+
+## Install
+
+**Requirements:** macOS Ventura (13) or later, Apple Silicon.
 
 This repository doubles as a Homebrew tap:
 
 ```bash
 brew tap tdarwin/pandora https://github.com/tdarwin/pandoras_gate
+```
+
+```bash
 brew install --cask tdarwin/pandora/pandoras-gate
 ```
 
-Releases are signed with an Apple Developer ID and notarized, so the app
-opens without Gatekeeper warnings — install from the cask or drag the DMG
-from [Releases](https://github.com/tdarwin/pandoras_gate/releases) straight
-into Applications. (Releases up to 0.3.0 predate signing; for those, run
+Releases are signed with an Apple Developer ID and notarized, so the app opens without
+Gatekeeper warnings — install from the cask or drag the DMG from
+[Releases](https://github.com/tdarwin/pandoras_gate/releases) straight into Applications.
+(Releases up to 0.3.0 predate signing; for those, run
 `xattr -cr "/Applications/Pandora's Gate.app"` after installing.)
 
-Releases are produced by `.github/workflows/release.yml` on every `v*` tag:
-tests → DMG build, signed + notarized (from the `MAC_CSC_*`/`APPLE_*`
-secrets; unsigned when they're absent, e.g. on forks) → GitHub release →
-the cask in `Casks/` is updated with the new version and checksum.
+Intel Macs and Windows are not yet built by CI — see [Roadmap](#roadmap). The Windows
+target is configured in `electron-builder.yml` and can be built locally.
 
-## Development
+### First run
 
-```bash
-npm install
-npm run dev        # launch the app with HMR
-npm run test       # vitest unit suite
-npm run typecheck  # strict TS across main/preload/renderer
-npm run package    # electron-builder DMG/NSIS (signing config required)
-```
-
-Optional dev telemetry: `cp .envrc.TEMPLATE .envrc`, fill in your OTLP
-endpoint and key, then `direnv allow` — traces from `npm run dev` flow to
-your backend (Honeycomb values shown in the template). Packaged builds never
-send telemetry.
-
-## Layout
-
-```
-src/main/        # Electron main: fs/git/network, IPC handlers, LLM providers, metadata pipeline
-src/llm-worker/  # node-llama-cpp inference in an Electron utilityProcess
-src/preload/     # contextBridge — the only surface the renderer sees
-src/renderer/    # React UI: editor, chat, Codex, proposals, history, models
-src/shared/      # zod schemas + typed IPC contract shared by all processes
-resources/       # runtime assets the main process loads via `?asset` (window/dock icon)
-build/           # electron-builder inputs: app icons, macOS entitlements
-```
-
-## App icon
-
-`build/icon-master.png` is the 1024×1024 full-bleed artwork everything else is
-derived from. The generated files are checked in, so rebuilding is only needed
-when the artwork changes:
-
-| File | Used by |
-| --- | --- |
-| `build/icon.icns` | macOS bundle (824 px artwork on the 1024 px Apple grid, rounded) |
-| `build/icon.ico` | Windows executable and installer (full-bleed) |
-| `build/icon.png` | Linux packages |
-| `resources/icon.png` | Linux window icon, macOS dock icon during `npm run dev` |
-| `src/renderer/src/assets/icon.png` | the in-app About dialog |
+1. **New Novel** (or **Open Novel**) — pick a folder; the app scaffolds `novel.yaml`,
+   `chapters/`, and `metadata/`, and initializes the hidden git repo.
+2. Add a model: **Preferences → Models** for an OpenRouter API key (stored in the OS
+   keychain, never in a file), or the model browser to download a local GGUF.
+3. Write a chapter and save. The Codex pipeline proposes summary, character, and world
+   updates; review them in the proposals queue.
 
 ## Novel folder format
 
@@ -92,4 +121,49 @@ my-novel/
 └── .pandora/                # app-private state (proposals, pipeline hashes)
 ```
 
-Everything is human-editable in any editor; the app validates on load and never crashes on hand-edited files.
+Everything is human-editable in any editor; the app validates on load and never crashes on
+hand-edited files. A series adds a parent directory holding series-level metadata shared
+by the novels beneath it.
+
+## Documentation
+
+| Document | What's in it |
+| --- | --- |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Set up a dev environment, architecture tour, testing, release process |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Fork → branch → PR workflow, what makes a good change |
+| [docs/context-assembly.md](docs/context-assembly.md) | Exactly what the model sees on every request, and the budget rules |
+| [CLAUDE.md](CLAUDE.md) | Working agreements for AI coding assistants in this repo |
+
+## Roadmap
+
+Shipped through 0.4.0: the WYSIWYG editor swap, tracked-changes review, retrieval-first
+context assembly, publishing copy profiles, Developer ID signing and notarization,
+formatting toolbar, native menus, and per-task model roles.
+
+Under consideration next, roughly in order:
+
+- Windows and Intel-Mac builds in CI
+- EPUB export
+- Pull-capable git sync (push-only today)
+- A rebuildable SQLite index over the Codex for faster retrieval on large novels
+- Playwright end-to-end coverage
+
+Ideas and disagreements are welcome —
+[open a feature request](https://github.com/tdarwin/pandoras_gate/issues/new/choose).
+
+## Contributing
+
+Bug reports, feature requests, and pull requests are all welcome. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [DEVELOPMENT.md](DEVELOPMENT.md)
+for the environment. Participation is governed by our
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Support the project
+
+Pandora's Gate is free and MIT-licensed. If it's useful to you and you'd like to support
+continued development, you can back the project on
+**[Patreon](https://patreon.com/TDarwin)**.
+
+## License
+
+[MIT](LICENSE) © Davin Taddeo

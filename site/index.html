@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pandora's Gate — Writer's Studio</title>
+<meta name="description" content="A desktop app for writing novels, and an AI harness for writers. Run models locally or bring your own key. Your novel stays a folder of markdown on your own disk.">
+<link rel="icon" href="icon.png" type="image/png">
+<link rel="stylesheet" href="style.css">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://pandorasgate.app/">
+<meta property="og:title" content="Pandora's Gate — Writer's Studio">
+<meta property="og:description" content="Write novels with AI that actually remembers your story. Local or remote models. Your files stay yours.">
+<meta property="og:image" content="https://pandorasgate.app/icon.png">
+<meta name="twitter:card" content="summary">
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="#top">
+      <img src="icon.png" alt="" width="28" height="28">
+      <span>Pandora's Gate</span>
+    </a>
+    <nav aria-label="Primary">
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="#contribute">Contribute</a>
+      <a href="https://github.com/tdarwin/pandoras_gate">GitHub</a>
+      <a class="nav-cta" href="https://patreon.com/TDarwin">Support</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="hero" id="top">
+    <div class="wrap">
+      <img class="hero-icon" src="icon.png" alt="Pandora's Gate app icon" width="112" height="112">
+      <h1>Write novels with AI that<br>actually remembers your story.</h1>
+      <p class="lede">
+        A desktop writer's studio for long-form fiction. Run models entirely on your own
+        machine, or bring your own key for remote ones. Your novel stays a folder of plain
+        markdown on your disk — no account, no cloud, no lock-in.
+      </p>
+
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#install">Install for macOS</a>
+        <a class="btn" href="https://github.com/tdarwin/pandoras_gate">View source</a>
+      </div>
+
+      <div class="copy-line" data-copy>
+        <code>brew install --cask tdarwin/pandora/pandoras-gate</code>
+        <button type="button" class="copy-btn" aria-label="Copy install command">Copy</button>
+      </div>
+
+      <p class="hero-note">
+        Free and MIT-licensed · macOS 13+ on Apple Silicon · signed and notarized
+      </p>
+    </div>
+  </section>
+
+  <section class="problem">
+    <div class="wrap narrow">
+      <h2>Long-form fiction breaks AI tools.</h2>
+      <p>
+        A novel outgrows any context window by chapter ten. The assistant that was helpful
+        in chapter one starts contradicting your canon — inventing a sister the character
+        never had, forgetting the magic system caps at tier 7, misremembering who died.
+      </p>
+      <p>
+        Pandora's Gate is built around that problem. As you write, it maintains a
+        <strong>Codex</strong>: a structured, readable record of what's true in your story —
+        characters, world and system rules, chapter summaries, a timeline, a glossary.
+        Generated with AI help, reviewed by you, stored as ordinary files, and assembled
+        into context for every request.
+      </p>
+      <p class="emphasis">
+        The model doesn't need to remember your novel. The app hands it the relevant parts,
+        every single time.
+      </p>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <h2 class="section-title">What's in it</h2>
+      <div class="grid">
+
+        <article class="card">
+          <h3>True WYSIWYG prose</h3>
+          <p>
+            Bold looks bold, headings look like headings. Markdown is the storage format,
+            never the writing surface. Chapter frontmatter tucks into a collapsible panel
+            above the text.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>The Codex</h3>
+          <p>
+            Your novel's canon reference — synopsis, per-chapter summaries, character
+            profiles, world and system rules with LitRPG-friendly structured fields,
+            glossary, timeline. Browsable and editable right in the app.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>You approve everything</h3>
+          <p>
+            On save, the AI proposes Codex updates. Review them as tracked changes in the
+            editor — accept or reject each suggestion, keep typing while you decide.
+            Rejected stays rejected.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>Local models, first-class</h3>
+          <p>
+            A curated catalog with hardware-aware recommendations and resumable downloads,
+            or import any GGUF. Inference runs isolated from the UI — Metal on Apple
+            Silicon, CUDA/Vulkan/CPU on Windows.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>Context you can inspect</h3>
+          <p>
+            Every request assembles story context within a real token budget, and shows you
+            exactly what was included, trimmed, or dropped. Tight budgets go retrieval-first
+            so an 8k local model stays genuinely useful.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>Chat that can act</h3>
+          <p>
+            The assistant has tools for creating and drafting chapters, making targeted
+            section edits, and reading or updating Codex documents — every change surfaced
+            for review.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>Outline and draft</h3>
+          <p>
+            Outline a chapter, a novel, or a whole series with the model, then have it
+            produce a first draft you rewrite. Assign different models to drafting,
+            copy-edit, developmental notes, and Codex upkeep.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>One-paste publishing</h3>
+          <p>
+            "Copy for RoyalRoad" or "Copy for Patreon" puts the chapter on your clipboard
+            shaped for that platform — scene breaks, heading depth, and stat tables adjusted
+            per site. Paste and post.
+          </p>
+        </article>
+
+        <article class="card">
+          <h3>Nothing is ever lost</h3>
+          <p>
+            Every save auto-commits to a hidden git repo. Browse history, view diffs, restore
+            any version — and restores are new commits, so they're undoable too.
+          </p>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="files">
+    <div class="wrap split">
+      <div class="split-text">
+        <h2>Your novel is just a folder.</h2>
+        <p>
+          Markdown and YAML, human-readable, on your own disk. Any editor can open it. Git
+          can diff it. No database owns it, and nothing stops you from walking away with
+          your work.
+        </p>
+        <p>
+          The app validates on load and never crashes on a hand-edited file — because you're
+          explicitly invited to edit them.
+        </p>
+      </div>
+      <pre class="tree" aria-label="Example novel folder structure"><code>my-novel/
+├── novel.yaml               <span class="c"># chapter order + status</span>
+├── chapters/
+│   ├── 001-the-gate.md
+│   └── 002-descent.md
+└── metadata/
+    ├── synopsis.md
+    ├── summaries/
+    ├── characters/kael.md
+    ├── world/magic.md
+    ├── glossary.md
+    └── timeline.yaml</code></pre>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap narrow">
+      <h2 class="section-title">Install</h2>
+      <p class="section-sub">macOS 13 (Ventura) or later, Apple Silicon.</p>
+
+      <h3>With Homebrew</h3>
+      <p>This project's repository doubles as a Homebrew tap:</p>
+      <div class="copy-line" data-copy>
+        <code>brew tap tdarwin/pandora https://github.com/tdarwin/pandoras_gate</code>
+        <button type="button" class="copy-btn" aria-label="Copy tap command">Copy</button>
+      </div>
+      <div class="copy-line" data-copy>
+        <code>brew install --cask tdarwin/pandora/pandoras-gate</code>
+        <button type="button" class="copy-btn" aria-label="Copy install command">Copy</button>
+      </div>
+
+      <h3>Or download the DMG</h3>
+      <p>
+        Grab the latest build from
+        <a href="https://github.com/tdarwin/pandoras_gate/releases">GitHub Releases</a> and
+        drag it into Applications. Releases are signed with an Apple Developer ID and
+        notarized, so it opens without Gatekeeper warnings.
+      </p>
+
+      <h3>First run</h3>
+      <ol class="steps">
+        <li>
+          <strong>New Novel</strong> — pick a folder. The app scaffolds the structure and
+          initializes the hidden git repo.
+        </li>
+        <li>
+          <strong>Add a model</strong> — an OpenRouter key (stored in your keychain, never
+          in a file), or download a local GGUF from the built-in browser.
+        </li>
+        <li>
+          <strong>Write and save.</strong> The Codex pipeline proposes summary, character,
+          and world updates for you to review.
+        </li>
+      </ol>
+
+      <p class="aside">
+        Intel Macs and Windows aren't built by CI yet — the Windows target is configured and
+        can be built from source. Building for those in CI is on the roadmap.
+      </p>
+    </div>
+  </section>
+
+  <section id="contribute">
+    <div class="wrap">
+      <h2 class="section-title">Contribute</h2>
+      <p class="section-sub">
+        Pandora's Gate is open source under the MIT license. Bug reports, feature requests,
+        and pull requests are all welcome.
+      </p>
+
+      <div class="grid links-grid">
+        <a class="card link-card" href="https://github.com/tdarwin/pandoras_gate/issues/new/choose">
+          <h3>Report a bug</h3>
+          <p>Something broken or behaving strangely? The issue templates ask for exactly what's needed to reproduce it.</p>
+        </a>
+        <a class="card link-card" href="https://github.com/tdarwin/pandoras_gate/issues/new/choose">
+          <h3>Request a feature</h3>
+          <p>Describe the writing problem you're hitting. Disagreements about how the app works are welcome too.</p>
+        </a>
+        <a class="card link-card" href="https://github.com/tdarwin/pandoras_gate/blob/main/DEVELOPMENT.md">
+          <h3>Build from source</h3>
+          <p>Node 22, <code>npm install</code>, <code>npm run dev</code>. The development guide has the full architecture tour.</p>
+        </a>
+        <a class="card link-card" href="https://github.com/tdarwin/pandoras_gate/blob/main/CONTRIBUTING.md">
+          <h3>Open a pull request</h3>
+          <p>Fork, branch, keep tests and typecheck green, describe how you verified it. The contributing guide covers the rest.</p>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="support">
+    <div class="wrap narrow center">
+      <h2>Support the project</h2>
+      <p>
+        Pandora's Gate is free, MIT-licensed, and built in the open by one person. If it's
+        useful to you and you'd like to help it keep going, you can back development on
+        Patreon.
+      </p>
+      <a class="btn btn-primary" href="https://patreon.com/TDarwin">Become a patron</a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <p>
+      Pandora's Gate — Writer's Studio · MIT licensed · built by
+      <a href="https://github.com/tdarwin">Davin Taddeo</a>
+    </p>
+    <nav aria-label="Footer">
+      <a href="https://github.com/tdarwin/pandoras_gate">GitHub</a>
+      <a href="https://github.com/tdarwin/pandoras_gate/releases">Releases</a>
+      <a href="https://github.com/tdarwin/pandoras_gate/blob/main/DEVELOPMENT.md">Docs</a>
+      <a href="https://patreon.com/TDarwin">Patreon</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+  // Copy-to-clipboard for the install commands. Progressive enhancement: with
+  // no JS the command is still plain selectable text, and if the clipboard API
+  // is unavailable or refuses (older browsers, denied permission), we select
+  // the command instead so the keyboard shortcut still works.
+  document.querySelectorAll('[data-copy]').forEach(function (row) {
+    var btn = row.querySelector('.copy-btn');
+    var code = row.querySelector('code');
+    if (!btn || !code) return;
+
+    function flash(label) {
+      btn.textContent = label;
+      btn.classList.add('copied');
+      setTimeout(function () {
+        btn.textContent = 'Copy';
+        btn.classList.remove('copied');
+      }, 1800);
+    }
+
+    function selectCommand() {
+      var range = document.createRange();
+      range.selectNodeContents(code);
+      var selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    btn.addEventListener('click', function () {
+      var text = code.textContent.trim();
+      if (!navigator.clipboard) {
+        selectCommand();
+        flash('Press ⌘C');
+        return;
+      }
+      navigator.clipboard.writeText(text).then(
+        function () {
+          flash('Copied');
+        },
+        function () {
+          selectCommand();
+          flash('Press ⌘C');
+        }
+      );
+    });
+  });
+</script>
+
+</body>
+</html>

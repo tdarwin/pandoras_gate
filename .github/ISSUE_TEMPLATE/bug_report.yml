@@ -1,0 +1,112 @@
+name: Bug report
+description: Something in Pandora's Gate doesn't work the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. The details below are what make a bug
+        reproducible — the more of them you can fill in, the faster it gets fixed.
+
+        **If your novel files were affected**, please say so up front. Data problems get
+        priority. Your novel folder is a git repo, so `git log` inside it (or the app's
+        History panel) may show what changed.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you get instead?
+      placeholder: |
+        I saved a chapter and expected the Codex proposals to appear. The proposals panel
+        stayed empty and the status bar kept saying "Analyzing…".
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What should someone do, starting from a fresh app launch, to see this?
+      placeholder: |
+        1. Open a novel with at least 3 chapters
+        2. Open chapter 2 and type a sentence
+        3. Save with Cmd-S
+        4. Open the proposals panel
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reproducible
+    attributes:
+      label: Does it happen every time?
+      options:
+        - Every time
+        - Most of the time
+        - Occasionally
+        - Only saw it once
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: "Pandora's Gate → About. If you're running from source, the commit SHA."
+      placeholder: "0.4.0"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: macOS version and hardware
+      placeholder: "macOS 15.2, M2 Pro, 32 GB"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the app?
+      options:
+        - Editor / writing
+        - Chat / AI assistant
+        - Codex and proposals
+        - Outlining or AI drafting
+        - Models (local GGUF or OpenRouter)
+        - Publishing / copy for platform
+        - History and snapshots
+        - Project and chapter management
+        - Install, launch, or update
+        - Something else / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: model
+    attributes:
+      label: Which model were you using?
+      description: |
+        Only if the bug involved the AI. Remote and local models fail in very different
+        ways, so this matters more than you'd think.
+      placeholder: |
+        Local: Qwen3-14B Q4_K_M, 16k context
+        or
+        OpenRouter: anthropic/claude-sonnet-5
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        From `~/Library/Application Support/pandoras-gate/logs/`. Paste the lines around
+        the failure — please scrub anything personal, and note that logs may include
+        prompt text if you enabled dev telemetry content capture.
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, a screen recording, or context that didn't fit above.
