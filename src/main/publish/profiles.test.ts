@@ -34,6 +34,17 @@ describe('chapterHtml — royalroad', () => {
     expect(html).not.toContain('<script>')
     expect(html).toContain('&lt;script&gt;')
   })
+
+  it('renders the editor’s underline pairs as real underline', () => {
+    const md = 'The runes ~~<u>burned cold</u>~~ tonight.\n'
+    const html = chapterHtml(md, 'royalroad')
+    expect(html).toContain('<u>burned cold</u>')
+    expect(html).not.toContain('&lt;u&gt;')
+    // Both flavors stay clean: plain text drops the tags entirely.
+    expect(chapterPlainText(md)).toBe('The runes burned cold tonight.')
+    // A stray unpaired tag is still literal prose, not markup.
+    expect(chapterHtml('an unpaired <u> tag', 'royalroad')).toContain('&lt;u&gt;')
+  })
 })
 
 describe('chapterHtml — patreon', () => {

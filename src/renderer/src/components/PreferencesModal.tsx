@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { usePrefsStore } from '../stores/prefs'
+import { usePrefsStore, type ModelRole } from '../stores/prefs'
 import { useProjectStore } from '../stores/project'
 import { useChatStore } from '../stores/chat'
 
@@ -169,8 +169,8 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
 
           <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-ink-faint">Writing</h3>
           <Toggle
-            checked={prefs.autoStoryBible}
-            onChange={(v) => void prefs.update({ autoStoryBible: v })}
+            checked={prefs.autoCodex}
+            onChange={(v) => void prefs.update({ autoCodex: v })}
             label="Update the Codex automatically"
             hint="A little while after you stop writing, the AI proposes Codex updates (you still review them). Off = only when you click “Update Codex” or ask in chat."
           />
@@ -260,6 +260,11 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
           {keyStatus && <p className="mt-1 text-xs text-ink-faint">{keyStatus}</p>}
 
           <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-ink-faint">
+            AI models by task
+          </h3>
+          <ModelRolesSection />
+
+          <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-ink-faint">
             AI instructions (this novel)
           </h3>
           <div className="mt-2">
@@ -272,15 +277,96 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
           <div className="mt-2">
             <SyncSection />
           </div>
-
-          <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-ink-faint">
-            Observability
-          </h3>
-          <div className="mt-2">
-            <ObservabilitySection />
-          </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+const ROLE_ROWS: { key: ModelRole; label: string; hint: string }[] = [
+  {
+    key: 'drafting',
+    label: 'Drafting & outlining',
+    hint: 'Writes chapter drafts and outlines — worth your biggest model.'
+  },
+  {
+    key: 'copyEdit',
+    label: 'Copy editing & proofreading',
+    hint: 'Line-level fixes: grammar, typos, phrasing. A small, fast model does fine.'
+  },
+  {
+    key: 'developmental',
+    label: 'Developmental editing & fact-checking',
+    hint: 'Structural feedback and continuity checks against the Codex — benefits from a larger model.'
+  },
+  {
+    key: 'codex',
+    label: 'Codex updates',
+    hint: 'Extracts summaries, character and world updates when you save a chapter.'
+  }
+]
+
+function ModelRolesSection(): React.JSX.Element {
+  const prefs = usePrefsStore()
+  const models = useChatStore((s) => s.models)
+  const initChat = useChatStore((s) => s.init)
+  const loadModels = useChatStore((s) => s.loadModels)
+
+  // Prefs can open before the chat panel ever initialized (Welcome screen).
+  useEffect(() => {
+    initChat()
+    if (models.length === 0) void loadModels()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return (
+    <div>
+      <p className="py-1 text-xs leading-relaxed text-ink-faint">
+        Use different models for different kinds of work — a big model where quality matters, a
+        small one where speed does. “Chat model” means whatever is selected in the chat panel.
+      </p>
+      {ROLE_ROWS.map(({ key, label, hint }) => {
+        const assigned = prefs.modelRoles[key]
+        const missing = assigned !== null && !models.some((m) => m.id === assigned)
+        return (
+          <div key={key} className="flex items-start justify-between gap-4 py-2">
+            <span>
+              <span className="block text-sm text-ink">{label}</span>
+              <span className="block text-xs leading-relaxed text-ink-faint">{hint}</span>
+            </span>
+            <select
+              value={assigned ?? ''}
+              onChange={(e) => void prefs.update({ modelRoles: { [key]: e.target.value || null } })}
+              className="mt-0.5 max-w-52 shrink-0 truncate rounded-lg border border-line-strong bg-surface px-2 py-1.5 text-xs text-ink outline-none"
+            >
+              <option value="">Chat model</option>
+              {missing && <option value={assigned}>{assigned} (unavailable)</option>}
+              {models.some((m) => m.provider === 'local') && (
+                <optgroup label="On this machine">
+                  {models
+                    .filter((m) => m.provider === 'local')
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+              {models.some((m) => m.provider === 'openrouter') && (
+                <optgroup label="OpenRouter">
+                  {models
+                    .filter((m) => m.provider === 'openrouter')
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+            </select>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -335,35 +421,3 @@ function NovelInstructionsSection(): React.JSX.Element {
   )
 }
 
-function ObservabilitySection(): React.JSX.Element {
-  const [enabled, setEnabled] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    void window.pandora.invoke('telemetry:status', undefined).then((r) => {
-      if (r.ok) setEnabled(r.data.enabled)
-    })
-  }, [])
-
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-xs leading-relaxed text-ink-faint">
-        In development mode, OpenTelemetry traces are exported using the standard{' '}
-        <code className="text-ink-muted">OTEL_EXPORTER_OTLP_*</code> environment variables (from
-        your shell/.envrc). Packaged builds never send telemetry.{' '}
-        {enabled === null ? null : enabled ? (
-          <span className="text-emerald-400">Currently exporting.</span>
-        ) : (
-          <span className="text-ink-faint">Currently off (no OTLP endpoint in environment).</span>
-        )}
-      </p>
-      <div>
-        <button
-          onClick={() => void window.pandora.invoke('app:openLogs', undefined)}
-          className="text-xs text-ink-muted underline-offset-2 hover:text-ink hover:underline"
-        >
-          Open local log folder…
-        </button>
-      </div>
-    </div>
-  )
-}

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useProjectStore } from '../stores/project'
+import { useUiStore } from '../stores/ui'
 
 export default function Welcome(): React.JSX.Element {
   const setNovel = useProjectStore((s) => s.setNovel)
+  const welcomeIntent = useUiStore((s) => s.welcomeIntent)
   const [recents, setRecents] = useState<string[]>([])
   const [creating, setCreating] = useState(false)
   const [title, setTitle] = useState('')
@@ -16,6 +18,15 @@ export default function Welcome(): React.JSX.Element {
       if (r.ok) setRecents(r.data.dirs)
     })
   }, [])
+
+  // File → New Novel… jumps straight to the create form; the intent is
+  // cleared on consumption so revisiting Welcome later doesn't replay it.
+  useEffect(() => {
+    if (welcomeIntent === 'create') {
+      useUiStore.getState().setWelcomeIntent(null)
+      setCreating(true)
+    }
+  }, [welcomeIntent])
 
   const openExisting = async (dir?: string): Promise<void> => {
     setError(null)

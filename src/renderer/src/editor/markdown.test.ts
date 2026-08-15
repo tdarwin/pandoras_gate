@@ -81,6 +81,56 @@ describe('markdown bridge', () => {
     expect(markdownToDoc(schema, '<div>block</div>').textContent).toContain('block')
   })
 
+  it('round-trips underline as literal <u> tags', () => {
+    const md = 'He said it <u>mattered</u> to him.\n'
+    expect(roundTrip(md)).toBe(md)
+    const doc = markdownToDoc(schema, md)
+    let underlined = ''
+    doc.descendants((node) => {
+      if (node.isText && node.marks.some((m) => m.type.name === 'underline')) {
+        underlined += node.text
+      }
+    })
+    expect(underlined).toBe('mattered')
+  })
+
+  it('keeps a stray <u> without a closer as plain text', () => {
+    const out = roundTrip('an unpaired <u> tag\n')
+    expect(out).toContain('<u>')
+    expect(markdownToDoc(schema, 'an unpaired <u> tag').textContent).toContain('<u>')
+  })
+
+  it('round-trips GFM tables byte-for-byte', () => {
+    const md = [
+      '| Stat | Value |',
+      '| --- | --- |',
+      '| STR | 12 |',
+      '| AGI | 9 |',
+      ''
+    ].join('\n')
+    expect(roundTrip(md)).toBe(md)
+    expect(roundTrip(roundTrip(md))).toBe(md)
+  })
+
+  it('parses tables into real table nodes with header cells', () => {
+    const doc = markdownToDoc(schema, '| a | b |\n| --- | --- |\n| **1** | 2 |\n')
+    let tables = 0
+    let headers = 0
+    doc.descendants((node) => {
+      if (node.type.name === 'table') tables += 1
+      if (node.type.name === 'tableHeader') headers += 1
+    })
+    expect(tables).toBe(1)
+    expect(headers).toBe(2)
+    // Inline marks inside cells survive.
+    expect(roundTrip('| a | b |\n| --- | --- |\n| **1** | 2 |\n')).toContain('**1**')
+  })
+
+  it('escapes pipes inside table cells', () => {
+    const md = '| a | b |\n| --- | --- |\n| one \\| two | 2 |\n'
+    expect(roundTrip(md)).toBe(md)
+  })
+
   it('handles empty documents', () => {
     expect(docToMarkdown(markdownToDoc(schema, ''))).toBe('')
     expect(docToMarkdown(markdownToDoc(schema, '   \n'))).toBe('')
@@ -88,7 +138,7 @@ describe('markdown bridge', () => {
 
   it('never loses text when parsing fails structurally', () => {
     // Whatever happens, the words survive somewhere in the document.
-    const weird = '| a | b |\n|---|---|\n| 1 | 2 |\n\nplain closing line'
+    const weird = '```\nan unclosed fence swallows the rest\n\nplain closing line'
     const doc = markdownToDoc(schema, weird)
     expect(doc.textContent).toContain('plain closing line')
   })

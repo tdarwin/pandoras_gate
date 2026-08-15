@@ -7,9 +7,9 @@ Built with Electron + TypeScript + React. Everything you write is plain markdown
 ## Features (MVP)
 
 - **True WYSIWYG prose editor** (TipTap/ProseMirror): bold looks bold, headings look like headings — markdown is the storage format, never the writing surface. Chapter details (frontmatter) live in a collapsible panel above the text.
-- **Project structure**: series → novel → chapters + story-bible metadata, all plain files (`novel.yaml`, `chapters/*.md`, `metadata/**`).
-- **Story bible**: synopsis, per-chapter summaries, character profiles, world/system rules (LitRPG-friendly structured frontmatter), glossary, timeline — browsable and editable in-app.
-- **AI metadata pipeline**: on chapter save, the AI proposes full-document updates to the story bible; you review as tracked changes right in the editor (✓/✕ on each suggestion, keep typing while you decide) or as word-level diffs in the queue. Rejected suggestions stay rejected.
+- **Project structure**: series → novel → chapters + Codex metadata, all plain files (`novel.yaml`, `chapters/*.md`, `metadata/**`).
+- **Codex**: the novel's canon reference — synopsis, per-chapter summaries, character profiles, world/system rules (LitRPG-friendly structured frontmatter), glossary, timeline — browsable and editable in-app.
+- **AI metadata pipeline**: on chapter save, the AI proposes full-document updates to the Codex; you review as tracked changes right in the editor (✓/✕ on each suggestion, keep typing while you decide) or as word-level diffs in the queue. Rejected suggestions stay rejected.
 - **One-paste publishing**: "Copy for RoyalRoad / Patreon" puts the chapter on the clipboard as platform-shaped rich HTML (scene breaks, heading depth, and stat tables adjusted per site, duplicate title heading dropped) with a plain-text fallback.
 - **Context-aware chat**: the chat assembles story context (chapter, synopsis, world rules, matched characters, summaries, glossary) within the model's token budget, with a visible context inspector.
 - **Local models**: curated catalog with hardware-aware recommendations and resumable downloads, or import any GGUF. Inference runs in an isolated utility process (Metal on Apple Silicon; CUDA/Vulkan/CPU on Windows).
@@ -24,16 +24,16 @@ brew tap tdarwin/pandora https://github.com/tdarwin/pandoras_gate
 brew install --cask tdarwin/pandora/pandoras-gate
 ```
 
-Releases are not yet signed with an Apple Developer ID, so the cask clears
-macOS's quarantine flag after install (otherwise Gatekeeper reports the app
-as damaged). If you instead download the DMG from
-[Releases](https://github.com/tdarwin/pandoras_gate/releases) manually, run
-`xattr -cr "/Applications/Pandora's Gate.app"` after copying it in.
+Releases are signed with an Apple Developer ID and notarized, so the app
+opens without Gatekeeper warnings — install from the cask or drag the DMG
+from [Releases](https://github.com/tdarwin/pandoras_gate/releases) straight
+into Applications. (Releases up to 0.3.0 predate signing; for those, run
+`xattr -cr "/Applications/Pandora's Gate.app"` after installing.)
 
 Releases are produced by `.github/workflows/release.yml` on every `v*` tag:
-tests → DMG build (signed + notarized when the `MAC_CSC_LINK`/`APPLE_*`
-secrets exist) → GitHub release → the cask in `Casks/` is updated with the
-new version and checksum.
+tests → DMG build, signed + notarized (from the `MAC_CSC_*`/`APPLE_*`
+secrets; unsigned when they're absent, e.g. on forks) → GitHub release →
+the cask in `Casks/` is updated with the new version and checksum.
 
 ## Development
 
@@ -56,7 +56,7 @@ send telemetry.
 src/main/        # Electron main: fs/git/network, IPC handlers, LLM providers, metadata pipeline
 src/llm-worker/  # node-llama-cpp inference in an Electron utilityProcess
 src/preload/     # contextBridge — the only surface the renderer sees
-src/renderer/    # React UI: editor, chat, story bible, proposals, history, models
+src/renderer/    # React UI: editor, chat, Codex, proposals, history, models
 src/shared/      # zod schemas + typed IPC contract shared by all processes
 resources/       # runtime assets the main process loads via `?asset` (window/dock icon)
 build/           # electron-builder inputs: app icons, macOS entitlements

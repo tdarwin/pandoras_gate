@@ -60,6 +60,12 @@ interface ProposalsStore {
   refresh: () => Promise<void>
   runForActiveChapter: (opts?: { silent?: boolean }) => Promise<void>
   generateOutline: (scope: 'novel' | 'chapter', guidance?: string) => Promise<void>
+  /** Editing pass over the active chapter or the whole novel. */
+  runReview: (
+    reviewType: 'proofread' | 'copy-edit' | 'developmental' | 'fact-check',
+    scope: 'chapter' | 'novel',
+    guidance?: string
+  ) => Promise<void>
   resolve: (
     proposalId: string,
     path: string,
@@ -157,7 +163,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     const novel = project.novel
     const file = project.activeFile
     if (!novel || !file || !file.startsWith('chapters/') || get().running) return
-    const model = chat.models.find((m) => m.id === chat.selectedModelId)
+    const model = chat.modelForRole('codex')
     if (!model) {
       if (!opts?.silent) set({ error: 'Pick a model in the chat panel first.' })
       return
@@ -194,7 +200,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     const chat = useChatStore.getState()
     const novel = project.novel
     if (!novel || get().running) return
-    const model = chat.models.find((m) => m.id === chat.selectedModelId)
+    const model = chat.modelForRole('drafting')
     if (!model) {
       set({ error: 'Pick a model in the chat panel first.' })
       return
@@ -217,6 +223,50 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
         runningStatus: null,
         lastRunStatus:
           result.data.status === 'ran' ? 'Outline ready for review' : 'No outline changes suggested'
+      })
+      await get().refresh()
+    } else {
+      set({ running: false, runningStatus: null, error: result.error.message })
+    }
+  },
+
+  runReview: async (reviewType, scope, guidance) => {
+    const project = useProjectStore.getState()
+    const chat = useChatStore.getState()
+    const novel = project.novel
+    if (!novel || get().running) return
+    if (scope === 'chapter' && !project.activeFile?.startsWith('chapters/')) return
+    // Line edits use the copy-editing model; reports the developmental one.
+    const role =
+      reviewType === 'proofread' || reviewType === 'copy-edit' ? 'copyEdit' : 'developmental'
+    const model = chat.modelForRole(role)
+    if (!model) {
+      set({ error: 'Pick a model in the chat panel first.' })
+      return
+    }
+
+    await project.snapshotActiveChapter()
+    set({ running: true, error: null, lastRunStatus: null })
+    const result = await window.pandora.invoke('review:run', {
+      novelDir: novel.dir,
+      scope,
+      ...(scope === 'chapter' ? { chapterFile: project.activeFile! } : {}),
+      reviewType,
+      ...(guidance?.trim() ? { guidance: guidance.trim() } : {}),
+      provider: model.provider,
+      modelId: model.id
+    })
+    if (result.ok) {
+      const isReport = reviewType === 'developmental' || reviewType === 'fact-check'
+      set({
+        running: false,
+        runningStatus: null,
+        lastRunStatus:
+          result.data.status === 'ran'
+            ? isReport
+              ? 'Report ready for review'
+              : `${result.data.itemCount} chapter${result.data.itemCount === 1 ? '' : 's'} with edits`
+            : 'Nothing to change'
       })
       await get().refresh()
     } else {

@@ -61,7 +61,7 @@ const run = (): ReturnType<typeof runMetadataUpdate> =>
   runMetadataUpdate({ novelDir, chapterFile: CHAPTER, provider, modelId: 'mock-model' })
 
 describe('path and content guards', () => {
-  it('allows only story-bible and outline paths', () => {
+  it('allows only Codex and outline paths', () => {
     expect(isAllowedProposalPath('metadata/characters/kael.md')).toBe(true)
     expect(isAllowedProposalPath('metadata/synopsis.md')).toBe(true)
     expect(isAllowedProposalPath('metadata/timeline.yaml')).toBe(true)

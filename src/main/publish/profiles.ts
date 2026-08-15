@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it'
+import { underlineTags } from '../../shared/markdownUnderline'
 
 /**
  * Publishing profiles: chapter markdown → HTML shaped for a platform's post
@@ -19,13 +20,12 @@ import MarkdownIt from 'markdown-it'
 export type PublishPlatform = 'royalroad' | 'patreon'
 
 function baseRenderer() {
-  // Same dialect the editor writes: CommonMark + strikethrough, raw HTML
-  // treated as text — plus tables, which prose files may carry for stats.
+  // Same dialect the editor writes: CommonMark + strikethrough + tables +
+  // <u> underline pairs, raw HTML otherwise treated as text.
   // xhtmlOut off: paste targets want HTML5-style tags (<hr>, <br>).
-  return MarkdownIt('commonmark', { html: false, xhtmlOut: false }).enable([
-    'strikethrough',
-    'table'
-  ])
+  return MarkdownIt('commonmark', { html: false, xhtmlOut: false })
+    .enable(['strikethrough', 'table'])
+    .use(underlineTags)
 }
 
 const royalroad = baseRenderer()

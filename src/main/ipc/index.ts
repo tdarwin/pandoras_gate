@@ -1,4 +1,4 @@
-import { app, clipboard, dialog, ipcMain, shell } from 'electron'
+import { app, clipboard, dialog, ipcMain } from 'electron'
 import {
   ipcContract,
   type IpcChannel,
@@ -9,6 +9,7 @@ import {
 import { basename } from 'node:path'
 import * as project from '../project/service'
 import * as gitService from '../git/service'
+import { refreshAppMenu } from '../menu'
 import { readAppState, touchRecentNovel } from '../store'
 import { getProvider, startChat, cancelChat } from '../llm/chat'
 import { importGguf, removeLocalModel } from '../llm/local'
@@ -30,8 +31,8 @@ import {
   writePrefs
 } from '../store'
 import { getRemoteUrl, setRemoteUrl, pushToRemote } from '../git/sync'
-import { logWarn, logError, logsDir } from '../log'
-import { withSpan, telemetryEnabled } from '../telemetry'
+import { logWarn, logError } from '../log'
+import { withSpan } from '../telemetry'
 import { setSecret, hasSecret } from '../secrets'
 import { assembleContext, estimateTokens, resolveContextTarget } from '../context/assembler'
 import { toolOverheadTokens } from '../llm/tools'
@@ -45,6 +46,7 @@ import {
   resolveProposalItem
 } from '../metadata/pipeline'
 import { startDraft, finishDraft } from '../draft/service'
+import { runEditingReview } from '../review/service'
 
 /**
  * Registers a handler for a contract channel. Incoming payloads are validated
@@ -298,17 +300,15 @@ export function registerIpcHandlers(): void {
     return { started: true as const }
   })
 
-  handle('app:openLogs', async () => {
-    await shell.openPath(logsDir())
-    return { opened: true as const }
-  })
-
   handle('app:rendererError', (req) => {
     logError('renderer', `${req.source ?? 'error'}: ${req.message}`, req.stack)
     return { logged: true as const }
   })
 
-  handle('telemetry:status', () => ({ enabled: telemetryEnabled() }))
+  handle('menu:setContext', async (req) => {
+    await refreshAppMenu(req)
+    return { updated: true as const }
+  })
 
   handle('chat:cancel', (req) => ({ cancelled: cancelChat(req.requestId) }))
 
@@ -363,7 +363,7 @@ export function registerIpcHandlers(): void {
 
   handle('prefs:set', (req) =>
     writePrefs({
-      ...(req.autoStoryBible !== undefined ? { autoStoryBible: req.autoStoryBible } : {}),
+      ...(req.autoCodex !== undefined ? { autoCodex: req.autoCodex } : {}),
       ...(req.snapshotOnBlur !== undefined ? { snapshotOnBlur: req.snapshotOnBlur } : {}),
       ...(req.snapshotIntervalMinutes !== undefined
         ? { snapshotIntervalMinutes: req.snapshotIntervalMinutes }
@@ -371,7 +371,8 @@ export function registerIpcHandlers(): void {
       ...(req.contextTargetTokens !== undefined
         ? { contextTargetTokens: req.contextTargetTokens }
         : {}),
-      ...(req.theme !== undefined ? { theme: req.theme } : {})
+      ...(req.theme !== undefined ? { theme: req.theme } : {}),
+      ...(req.modelRoles !== undefined ? { modelRoles: req.modelRoles } : {})
     })
   )
 
@@ -451,6 +452,22 @@ export function registerIpcHandlers(): void {
     return runMetadataUpdate({
       novelDir: req.novelDir,
       chapterFile: req.chapterFile,
+      provider: getProvider(req.provider),
+      modelId: req.modelId,
+      onStatus: (text) => {
+        if (!event.sender.isDestroyed()) event.sender.send('pipeline:status', { text })
+      }
+    })
+  })
+
+  handle('review:run', async (req, event) => {
+    await gitService.flushAutocommit(req.novelDir)
+    return runEditingReview({
+      novelDir: req.novelDir,
+      scope: req.scope,
+      ...(req.chapterFile ? { chapterFile: req.chapterFile } : {}),
+      reviewType: req.reviewType,
+      ...(req.guidance ? { guidance: req.guidance } : {}),
       provider: getProvider(req.provider),
       modelId: req.modelId,
       onStatus: (text) => {

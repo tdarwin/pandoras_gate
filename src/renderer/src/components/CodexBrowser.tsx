@@ -8,6 +8,7 @@ interface Listing {
   world: { file: string; name: string }[]
   summaries: { file: string; title: string }[]
   outlines: { file: string; title: string }[]
+  reviews: { file: string; title: string }[]
   hasSynopsis: boolean
   hasGlossary: boolean
   hasTimeline: boolean
@@ -40,7 +41,7 @@ function Section({
   )
 }
 
-export default function StoryBible(): React.JSX.Element {
+export default function CodexBrowser(): React.JSX.Element {
   const novel = useProjectStore((s) => s.novel)!
   const activeFile = useProjectStore((s) => s.activeFile)
   const openChapter = useProjectStore((s) => s.openChapter)
@@ -183,6 +184,12 @@ export default function StoryBible(): React.JSX.Element {
       {listing.summaries.length > 0 && (
         <Section title="Chapter summaries">
           {listing.summaries.map((s) => item(s.file, s.title))}
+        </Section>
+      )}
+
+      {listing.reviews.length > 0 && (
+        <Section title="Editing reviews">
+          {listing.reviews.map((r) => item(r.file, r.title))}
         </Section>
       )}
 

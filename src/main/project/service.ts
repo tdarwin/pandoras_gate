@@ -108,7 +108,7 @@ export async function createNovel(params: CreateNovelParams): Promise<NovelState
   )
   await writeFile(join(novelDir, '.pandora', 'state.json'), JSON.stringify({ chapters: {} }), 'utf8')
 
-  // Seed the story bible with editable starter docs.
+  // Seed the Codex with editable starter docs.
   await writeFile(
     join(novelDir, 'metadata', 'synopsis.md'),
     `---\nlogline: ''\nthemes: []\nstatus: draft\n---\n\nA working synopsis of the whole novel. Replace this with a few paragraphs about where the story is going — the AI keeps it updated as you write, and uses it to stay oriented.\n`,
@@ -305,7 +305,7 @@ export async function deleteArchivedChapter(novelDir: string, file: string): Pro
 }
 
 /* ------------------------------------------------------------------ */
-/* Story bible (metadata docs)                                         */
+/* Codex (metadata docs)                                               */
 /* ------------------------------------------------------------------ */
 
 export interface MetadataListing {
@@ -313,6 +313,8 @@ export interface MetadataListing {
   world: { file: string; name: string }[]
   summaries: { file: string; title: string }[]
   outlines: { file: string; title: string }[]
+  /** Editing-review reports the author accepted (metadata/reviews/). */
+  reviews: { file: string; title: string }[]
   hasSynopsis: boolean
   hasGlossary: boolean
   hasTimeline: boolean
@@ -360,10 +362,15 @@ export async function listMetadata(novelDir: string): Promise<MetadataListing> {
     file: `metadata/summaries/${d.file}`,
     title: d.name
   }))
+  const reviews = (await listDocs(join(novelDir, 'metadata/reviews'))).map((d) => ({
+    file: `metadata/reviews/${d.file}`,
+    title: d.name
+  }))
   return {
     characters,
     world,
     summaries,
+    reviews,
     outlines: await outlineTitles(novelDir),
     hasSynopsis: await exists(join(novelDir, 'metadata/synopsis.md')),
     hasGlossary: await exists(join(novelDir, 'metadata/glossary.md')),
@@ -412,7 +419,7 @@ export async function createMetadataDoc(
 }
 
 export async function deleteMetadataDoc(novelDir: string, file: string): Promise<void> {
-  if (!file.startsWith('metadata/')) throw new Error('Only story-bible docs can be deleted here')
+  if (!file.startsWith('metadata/')) throw new Error('Only Codex docs can be deleted here')
   const { rm } = await import('node:fs/promises')
   await rm(join(novelDir, file), { force: true })
 }

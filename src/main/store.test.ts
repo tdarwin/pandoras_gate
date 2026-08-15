@@ -159,7 +159,7 @@ describe('migrateLegacyStatePaths', () => {
     ]
     await mkdir(join(newDir, 'models', 'org__repo-GGUF'), { recursive: true })
     for (const f of files) await writeFile(join(newDir, f), 'gguf')
-    const prefs = { autoStoryBible: true, theme: 'system' }
+    const prefs = { autoCodex: true, theme: 'system' }
     await writeState({
       recentNovels: [novelDir],
       localModels: files.map((f) => modelEntry(join(oldDir, f))),

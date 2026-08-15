@@ -548,7 +548,7 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
 
 export const TOOL_SYSTEM_NOTE = `
 
-You have tools that act on the novel's Codex (its story bible). When the author asks you to create, update, or fix Codex documents, character sheets, world/system docs, outlines, the synopsis, glossary, or timeline — CALL A TOOL. Never describe changes in chat as if you made them; without a tool call, nothing happens.
+You have tools that act on the novel's Codex — its canon reference. When the author asks you to create, update, or fix Codex documents, character sheets, world/system docs, outlines, the synopsis, glossary, or timeline — CALL A TOOL. Never describe changes in chat as if you made them; without a tool call, nothing happens.
 
 Choosing a tool:
 - One specific document (e.g. "create a profile for Mira", "write up the magic system we just discussed"): call list_codex_docs first to check what exists (and read_codex_doc if updating), then write_codex_doc with the COMPLETE new file content.

@@ -10,10 +10,28 @@ export interface EditorHandle {
   focus: () => void
   toggleBold: () => void
   toggleItalic: () => void
+  toggleUnderline: () => void
+  toggleStrike: () => void
+  /** Inline code (monospace span). */
+  toggleCode: () => void
   /** 0 = body text. */
   setHeading: (level: 0 | 1 | 2 | 3) => void
   toggleBlockquote: () => void
   toggleBulletList: () => void
+  toggleOrderedList: () => void
+  toggleCodeBlock: () => void
+  insertHorizontalRule: () => void
+  /** Inserts a 3×3 table with a header row at the cursor. */
+  insertTable: () => void
+  addRowAfter: () => void
+  addColumnAfter: () => void
+  deleteRow: () => void
+  deleteColumn: () => void
+  deleteTable: () => void
+  /** Whether a mark/node is active at the selection (toolbar highlighting). */
+  isActive: (name: string, attrs?: Record<string, unknown>) => boolean
+  /** Fires on every document/selection change; returns an unsubscribe. */
+  subscribe: (cb: () => void) => () => void
 }
 
 interface MarkdownEditorProps {
@@ -125,12 +143,32 @@ export default function MarkdownEditor({
       focus: () => editor.commands.focus(),
       toggleBold: () => editor.chain().focus().toggleBold().run(),
       toggleItalic: () => editor.chain().focus().toggleItalic().run(),
+      toggleUnderline: () => editor.chain().focus().toggleUnderline().run(),
+      toggleStrike: () => editor.chain().focus().toggleStrike().run(),
+      toggleCode: () => editor.chain().focus().toggleCode().run(),
       setHeading: (level) => {
         if (level === 0) editor.chain().focus().setParagraph().run()
         else editor.chain().focus().setHeading({ level }).run()
       },
       toggleBlockquote: () => editor.chain().focus().toggleBlockquote().run(),
-      toggleBulletList: () => editor.chain().focus().toggleBulletList().run()
+      toggleBulletList: () => editor.chain().focus().toggleBulletList().run(),
+      toggleOrderedList: () => editor.chain().focus().toggleOrderedList().run(),
+      toggleCodeBlock: () => editor.chain().focus().toggleCodeBlock().run(),
+      insertHorizontalRule: () => editor.chain().focus().setHorizontalRule().run(),
+      insertTable: () =>
+        editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+      addRowAfter: () => editor.chain().focus().addRowAfter().run(),
+      addColumnAfter: () => editor.chain().focus().addColumnAfter().run(),
+      deleteRow: () => editor.chain().focus().deleteRow().run(),
+      deleteColumn: () => editor.chain().focus().deleteColumn().run(),
+      deleteTable: () => editor.chain().focus().deleteTable().run(),
+      isActive: (name, attrs) => (attrs ? editor.isActive(name, attrs) : editor.isActive(name)),
+      subscribe: (cb) => {
+        editor.on('transaction', cb)
+        return () => {
+          editor.off('transaction', cb)
+        }
+      }
     })
     return () => onReadyRef.current?.(null)
   }, [editor])

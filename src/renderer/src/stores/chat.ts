@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { ChatMessage, ModelInfo } from '@shared/llm/types'
 import type { IpcEventPayload } from '@shared/ipc'
 import { useProjectStore } from './project'
+import { usePrefsStore, type ModelRole } from './prefs'
 
 export interface ContextReport {
   budgetTokens: number
@@ -41,6 +42,11 @@ interface ChatStore {
   loadForNovel: (novelDir: string) => Promise<void>
   saveApiKey: (key: string) => Promise<boolean>
   selectModel: (id: string) => void
+  /**
+   * The model to use for an AI task role: the assigned model from
+   * Preferences when it's installed/available, else the chat model.
+   */
+  modelForRole: (role: ModelRole) => ModelInfo | undefined
   importLocalModel: () => Promise<void>
   send: (text: string) => Promise<void>
   cancel: () => Promise<void>
@@ -186,6 +192,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       void window.pandora.invoke('llm:novelModel:set', { novelDir: novel.dir, modelId: id })
     }
     warmIfLocal(get().models, id)
+  },
+
+  modelForRole: (role) => {
+    const { models, selectedModelId } = get()
+    const assigned = usePrefsStore.getState().modelRoles[role]
+    return (
+      (assigned ? models.find((m) => m.id === assigned) : undefined) ??
+      models.find((m) => m.id === selectedModelId)
+    )
   },
 
   importLocalModel: async () => {

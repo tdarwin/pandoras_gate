@@ -2,9 +2,11 @@ import MarkdownIt from 'markdown-it'
 import {
   MarkdownParser,
   MarkdownSerializer,
+  type MarkdownSerializerState,
   defaultMarkdownSerializer
 } from 'prosemirror-markdown'
 import type { Node as PMNode, Schema } from '@tiptap/pm/model'
+import { underlineTags } from '@shared/markdownUnderline'
 
 /**
  * Markdown ⇄ ProseMirror bridge bound to the TipTap schema. Markdown stays
@@ -17,8 +19,30 @@ import type { Node as PMNode, Schema } from '@tiptap/pm/model'
  * nothing a user wrote is ever dropped.
  */
 
-/** CommonMark + strikethrough; raw HTML is treated as literal text. */
-const tokenizer = MarkdownIt('commonmark', { html: false }).enable('strikethrough')
+/** CommonMark + GFM strikethrough and pipe tables; raw HTML is treated as
+ * literal text, except <u>…</u> which round-trips the underline mark
+ * (shared dialect — see @shared/markdownUnderline). */
+const tokenizer = MarkdownIt('commonmark', { html: false })
+  .enable(['strikethrough', 'table'])
+  .use(underlineTags)
+
+// ProseMirror table cells hold block content, but markdown-it emits cell
+// text as bare inline tokens — wrap each cell in a paragraph pair so the
+// parser can build tableCell(paragraph(...)).
+tokenizer.core.ruler.push('pm_table_cells', (state) => {
+  if (!state.tokens.some((t) => t.type === 'table_open')) return
+  const out: typeof state.tokens = []
+  for (const tok of state.tokens) {
+    if (tok.type === 'th_open' || tok.type === 'td_open') {
+      out.push(tok, new state.Token('paragraph_open', 'p', 1))
+    } else if (tok.type === 'th_close' || tok.type === 'td_close') {
+      out.push(new state.Token('paragraph_close', 'p', -1), tok)
+    } else {
+      out.push(tok)
+    }
+  }
+  state.tokens = out
+})
 
 function buildParser(schema: Schema): MarkdownParser {
   return new MarkdownParser(schema, tokenizer, {
@@ -47,9 +71,16 @@ function buildParser(schema: Schema): MarkdownParser {
       })
     },
     hardbreak: { node: 'hardBreak' },
+    table: { block: 'table' },
+    thead: { ignore: true },
+    tbody: { ignore: true },
+    tr: { block: 'tableRow' },
+    th: { block: 'tableHeader' },
+    td: { block: 'tableCell' },
     em: { mark: 'italic' },
     strong: { mark: 'bold' },
     s: { mark: 'strike' },
+    u: { mark: 'underline' },
     link: { mark: 'link', getAttrs: (tok) => ({ href: tok.attrGet('href') }) },
     code_inline: { mark: 'code', noCloseToken: true }
   })
@@ -60,6 +91,46 @@ function buildParser(schema: Schema): MarkdownParser {
  * vs code_block.params, orderedList.start vs ordered_list.order) or where
  * we pin house style ("-" bullets). */
 const d = defaultMarkdownSerializer
+
+/** Serializer-state internals the table capture borrows (stable at runtime,
+ * absent from the public typings). */
+interface StateInternals {
+  out: string
+  delim: string
+  closed: PMNode | null
+}
+
+/**
+ * Renders a cell's content as a single-line inline-markdown string by
+ * running the state's own inline renderer against a swapped-out buffer.
+ * Block boundaries inside a cell flatten to spaces; pipes are escaped so
+ * they can't break the row.
+ */
+function cellText(state: MarkdownSerializerState, cell: PMNode): string {
+  const s = state as unknown as MarkdownSerializerState & StateInternals
+  const saved = { out: s.out, delim: s.delim, closed: s.closed }
+  s.delim = ''
+  s.closed = null
+  const parts: string[] = []
+  cell.forEach((block) => {
+    if (block.isTextblock) {
+      s.out = ''
+      state.renderInline(block, false)
+      if (s.out) parts.push(s.out)
+    } else if (block.textContent.trim()) {
+      parts.push(block.textContent)
+    }
+  })
+  s.out = saved.out
+  s.delim = saved.delim
+  s.closed = saved.closed
+  return parts
+    .join(' ')
+    .replace(/\\\n/g, ' ')
+    .replace(/\s*\n\s*/g, ' ')
+    .replace(/\|/g, '\\|')
+    .trim()
+}
 
 const serializer = new MarkdownSerializer(
   {
@@ -92,6 +163,28 @@ const serializer = new MarkdownSerializer(
     paragraph: d.nodes.paragraph!,
     image: d.nodes.image!,
     hardBreak: d.nodes.hard_break!,
+    // GFM pipe table: first row serves as the header row (GFM requires one).
+    // Rows and cells are rendered here wholesale, never via own handlers.
+    table(state, node) {
+      const rows: string[][] = []
+      node.forEach((row) => {
+        const cells: string[] = []
+        row.forEach((cell) => cells.push(cellText(state, cell)))
+        rows.push(cells)
+      })
+      const cols = Math.max(1, ...rows.map((r) => r.length))
+      const line = (cells: string[]): string =>
+        `| ${Array.from({ length: cols }, (_, i) => cells[i] ?? '').join(' | ')} |`
+      state.write(line(rows[0] ?? []))
+      state.ensureNewLine()
+      state.write(`| ${Array.from({ length: cols }, () => '---').join(' | ')} |`)
+      state.ensureNewLine()
+      for (const row of rows.slice(1)) {
+        state.write(line(row))
+        state.ensureNewLine()
+      }
+      state.closeBlock(node)
+    },
     text: d.nodes.text!
   },
   {
@@ -99,7 +192,8 @@ const serializer = new MarkdownSerializer(
     italic: d.marks.em!,
     code: d.marks.code!,
     link: d.marks.link!,
-    strike: { open: '~~', close: '~~', mixable: true, expelEnclosingWhitespace: true }
+    strike: { open: '~~', close: '~~', mixable: true, expelEnclosingWhitespace: true },
+    underline: { open: '<u>', close: '</u>', mixable: true, expelEnclosingWhitespace: true }
   }
 )
 

@@ -15,11 +15,13 @@ interface AppState {
   /** Last-used model per novel dir, restored when the novel opens. */
   novelModels?: Record<string, string>
   prefs?: {
-    autoStoryBible?: boolean
+    autoCodex?: boolean
     snapshotOnBlur?: boolean
     snapshotIntervalMinutes?: number
     contextTargetTokens?: number
     theme?: string
+    /** Only assigned roles are stored; missing = use the chat model. */
+    modelRoles?: Record<string, string>
   }
 }
 
@@ -33,12 +35,21 @@ export const CONTEXT_TARGETS = [0, 8192, 16384, 32768] as const
 
 export type ThemePref = 'dark' | 'light' | 'system'
 
+/**
+ * AI task roles a model can be assigned to. Unassigned roles fall back to
+ * the chat panel's model, so nothing here is required configuration.
+ */
+export const MODEL_ROLES = ['drafting', 'copyEdit', 'developmental', 'codex'] as const
+export type ModelRole = (typeof MODEL_ROLES)[number]
+export type ModelRoleMap = Record<ModelRole, string | null>
+
 export interface Prefs {
-  autoStoryBible: boolean
+  autoCodex: boolean
   snapshotOnBlur: boolean
   snapshotIntervalMinutes: number
   contextTargetTokens: number
   theme: ThemePref
+  modelRoles: ModelRoleMap
 }
 
 export async function readPrefs(): Promise<Prefs> {
@@ -46,8 +57,9 @@ export async function readPrefs(): Promise<Prefs> {
   const interval = state.prefs?.snapshotIntervalMinutes ?? 0
   const contextTarget = state.prefs?.contextTargetTokens ?? 0
   const theme = state.prefs?.theme
+  const storedRoles = state.prefs?.modelRoles ?? {}
   return {
-    autoStoryBible: state.prefs?.autoStoryBible ?? true,
+    autoCodex: state.prefs?.autoCodex ?? true,
     snapshotOnBlur: state.prefs?.snapshotOnBlur ?? true,
     snapshotIntervalMinutes: (SNAPSHOT_INTERVALS as readonly number[]).includes(interval)
       ? interval
@@ -55,15 +67,30 @@ export async function readPrefs(): Promise<Prefs> {
     contextTargetTokens: (CONTEXT_TARGETS as readonly number[]).includes(contextTarget)
       ? contextTarget
       : 0,
-    theme: theme === 'light' || theme === 'system' ? theme : 'dark'
+    theme: theme === 'light' || theme === 'system' ? theme : 'dark',
+    modelRoles: Object.fromEntries(
+      MODEL_ROLES.map((role) => [role, storedRoles[role] ?? null])
+    ) as ModelRoleMap
   }
 }
 
-export async function writePrefs(update: Partial<Prefs>): Promise<Prefs> {
+export async function writePrefs(
+  update: Partial<Omit<Prefs, 'modelRoles'>> & { modelRoles?: Partial<ModelRoleMap> }
+): Promise<Prefs> {
   const state = await readAppState()
   const current = await readPrefs()
-  const next = { ...current, ...update }
-  await writeAppState({ ...state, prefs: next })
+  const next: Prefs = {
+    ...current,
+    ...update,
+    modelRoles: { ...current.modelRoles, ...update.modelRoles }
+  }
+  // Store compactly: only roles that are actually assigned.
+  const storedRoles: Record<string, string> = {}
+  for (const role of MODEL_ROLES) {
+    const id = next.modelRoles[role]
+    if (id) storedRoles[role] = id
+  }
+  await writeAppState({ ...state, prefs: { ...next, modelRoles: storedRoles } })
   return next
 }
 

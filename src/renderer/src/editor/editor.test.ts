@@ -70,6 +70,34 @@ describe('TipTap editor instance', () => {
     editor.destroy()
   })
 
+  it('underline / strike / ordered list commands produce markdown', () => {
+    const editor = makeEditor('plain text\n')
+    editor.commands.setTextSelection({ from: 1, to: 6 })
+    editor.commands.toggleUnderline()
+    expect(docToMarkdown(editor.state.doc)).toBe('<u>plain</u> text\n')
+    editor.commands.toggleUnderline()
+    editor.commands.toggleStrike()
+    expect(docToMarkdown(editor.state.doc)).toBe('~~plain~~ text\n')
+    editor.commands.toggleStrike()
+    editor.chain().selectAll().toggleOrderedList().run()
+    expect(docToMarkdown(editor.state.doc)).toBe('1. plain text\n')
+    editor.destroy()
+  })
+
+  it('inserts tables that serialize as GFM and parse back', () => {
+    const editor = makeEditor('before\n')
+    editor.commands.setTextSelection(editor.state.doc.content.size)
+    editor.commands.insertTable({ rows: 2, cols: 2, withHeaderRow: true })
+    editor.commands.insertContent('Head')
+    const md = docToMarkdown(editor.state.doc)
+    expect(md).toContain('| Head |')
+    expect(md).toContain('| --- | --- |')
+    // The serialized form parses back into an identical document shape.
+    const reparsed = docToMarkdown(markdownToDoc(editor.schema, md))
+    expect(reparsed).toBe(md)
+    editor.destroy()
+  })
+
   it('emits update events with serialized markdown', () => {
     let emitted = ''
     const editor = makeEditor('', (md) => {

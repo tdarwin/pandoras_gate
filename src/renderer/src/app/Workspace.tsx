@@ -4,13 +4,16 @@ import { useProposalsStore } from '../stores/proposals'
 import { useDraftStore } from '../stores/draft'
 import { usePrefsStore } from '../stores/prefs'
 import { useChatStore } from '../stores/chat'
+import { useUiStore } from '../stores/ui'
 import ChapterSidebar from '../components/ChapterSidebar'
 import ChatPanel from '../components/ChatPanel'
 import HistoryPanel from '../components/HistoryPanel'
 import ProposalsPanel, { WordDiff } from '../components/ProposalsPanel'
 import AiPromptModal from '../components/AiPromptModal'
+import ReviewModal from '../components/ReviewModal'
 import ChapterDetails from '../components/ChapterDetails'
 import MarkdownEditor, { type EditorHandle } from '../editor/MarkdownEditor'
+import EditorToolbar from '../editor/EditorToolbar'
 import PlainEditor from '../editor/PlainEditor'
 import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
 import { stringify as stringifyYaml } from 'yaml'
@@ -22,49 +25,6 @@ function wordCount(body: string): { words: number; readMinutes: number } {
   return { words, readMinutes: Math.max(1, Math.round(words / 230)) }
 }
 
-function StyleToolbar({
-  handleRef
-}: {
-  handleRef: React.RefObject<EditorHandle | null>
-}): React.JSX.Element {
-  const btn =
-    'rounded px-1.5 py-0.5 text-xs text-ink-faint hover:bg-raised hover:text-ink'
-  return (
-    <span className="flex items-center gap-0.5 border-r border-line pr-2">
-      <select
-        value=""
-        onChange={(e) => {
-          const v = e.target.value
-          if (v !== '') handleRef.current?.setHeading(Number(v) as 0 | 1 | 2 | 3)
-          e.target.value = ''
-        }}
-        title="Paragraph style"
-        className="rounded border border-line bg-panel px-1 py-0.5 text-xs text-ink-muted outline-none"
-      >
-        <option value="" disabled>
-          Style
-        </option>
-        <option value="0">Body text</option>
-        <option value="1">Heading 1</option>
-        <option value="2">Heading 2</option>
-        <option value="3">Heading 3</option>
-      </select>
-      <button onClick={() => handleRef.current?.toggleBold()} title="Bold (⌘B)" className={`${btn} font-bold`}>
-        B
-      </button>
-      <button onClick={() => handleRef.current?.toggleItalic()} title="Italic (⌘I)" className={`${btn} italic`}>
-        I
-      </button>
-      <button onClick={() => handleRef.current?.toggleBlockquote()} title="Quote" className={btn}>
-        ❝
-      </button>
-      <button onClick={() => handleRef.current?.toggleBulletList()} title="Bullet list" className={btn}>
-        •
-      </button>
-    </span>
-  )
-}
-
 export default function Workspace(): React.JSX.Element {
   const novel = useProjectStore((s) => s.novel)!
   const activeFile = useProjectStore((s) => s.activeFile)
@@ -74,7 +34,7 @@ export default function Workspace(): React.JSX.Element {
   const saveActiveChapter = useProjectStore((s) => s.saveActiveChapter)
   const snapshotActiveChapter = useProjectStore((s) => s.snapshotActiveChapter)
   const applyNovelState = useProjectStore((s) => s.applyNovelState)
-  const autoStoryBible = usePrefsStore((s) => s.autoStoryBible)
+  const autoCodex = usePrefsStore((s) => s.autoCodex)
   const snapshotOnBlur = usePrefsStore((s) => s.snapshotOnBlur)
   const snapshotIntervalMinutes = usePrefsStore((s) => s.snapshotIntervalMinutes)
   const openChapter = useProjectStore((s) => s.openChapter)
@@ -82,7 +42,7 @@ export default function Workspace(): React.JSX.Element {
   const [showHistory, setShowHistory] = useState(false)
   const [showChat, setShowChat] = useState(true)
   const [showProposals, setShowProposals] = useState(false)
-  const [modal, setModal] = useState<'draft' | 'outline-chapter' | null>(null)
+  const [modal, setModal] = useState<'draft' | 'outline-chapter' | 'review' | null>(null)
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
 
   const proposalsRunning = useProposalsStore((s) => s.running)
@@ -94,7 +54,7 @@ export default function Workspace(): React.JSX.Element {
   const applyReview = useProposalsStore((s) => s.applyReview)
   const rejectReview = useProposalsStore((s) => s.rejectReview)
   const exitReview = useProposalsStore((s) => s.exitReview)
-  const editorHandleRef = useRef<EditorHandle | null>(null)
+  const [editorHandle, setEditorHandle] = useState<EditorHandle | null>(null)
   const pendingCount = useProposalsStore((s) => s.proposals.reduce((n, p) => n + p.items.length, 0))
   const runProposals = useProposalsStore((s) => s.runForActiveChapter)
   const generateOutline = useProposalsStore((s) => s.generateOutline)
@@ -161,10 +121,10 @@ export default function Workspace(): React.JSX.Element {
 
   // Auto metadata run: a while after writing settles on a chapter.
   useEffect(() => {
-    if (!autoStoryBible || dirty || drafting || !activeFile?.startsWith('chapters/')) return
+    if (!autoCodex || dirty || drafting || !activeFile?.startsWith('chapters/')) return
     const t = setTimeout(() => void runProposals({ silent: true }), AUTO_METADATA_DELAY_MS)
     return () => clearTimeout(t)
-  }, [autoStoryBible, dirty, drafting, activeFile, runProposals])
+  }, [autoCodex, dirty, drafting, activeFile, runProposals])
 
   const activeChapter = novel.manifest.chapters.find((c) => c.file === activeFile)
   const activeLabel =
@@ -193,6 +153,17 @@ export default function Workspace(): React.JSX.Element {
     }
     window.setTimeout(() => setCopyStatus(null), 6000)
   }
+
+  // File > Copy Chapter For — only requests made while mounted are honored,
+  // so a remount (novel switch) never replays a stale copy.
+  const copyForRequest = useUiStore((s) => s.copyForRequest)
+  const consumedCopySeq = useRef(copyForRequest?.seq ?? 0)
+  useEffect(() => {
+    if (!copyForRequest || copyForRequest.seq === consumedCopySeq.current) return
+    consumedCopySeq.current = copyForRequest.seq
+    void copyFor(copyForRequest.platform)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- signal consumer
+  }, [copyForRequest])
 
   const markRevised = async (): Promise<void> => {
     if (!activeFile) return
@@ -314,28 +285,11 @@ export default function Workspace(): React.JSX.Element {
                 )}
               </span>
               <span className="flex items-center gap-2">
-                {!isYamlFile && !drafting && <StyleToolbar handleRef={editorHandleRef} />}
                 <span className="max-w-72 truncate text-xs text-ink-faint" title={copyStatus ?? undefined}>
                   {copyStatus ?? (dirty ? 'Editing…' : 'Saved')}
                 </span>
                 {isChapter && !drafting && (
                   <>
-                    <select
-                      value=""
-                      onChange={(e) => {
-                        const platform = e.target.value as 'royalroad' | 'patreon' | ''
-                        e.target.value = ''
-                        if (platform) void copyFor(platform)
-                      }}
-                      title="Copy this chapter to the clipboard, formatted for a platform's post editor"
-                      className="rounded border border-line bg-panel px-1 py-0.5 text-xs text-ink-muted outline-none"
-                    >
-                      <option value="" disabled>
-                        Copy for…
-                      </option>
-                      <option value="royalroad">RoyalRoad</option>
-                      <option value="patreon">Patreon</option>
-                    </select>
                     <button
                       onClick={() => setModal('draft')}
                       title="Have the AI write or continue this chapter — you review and revise"
@@ -350,6 +304,14 @@ export default function Workspace(): React.JSX.Element {
                       className="rounded px-2 py-0.5 text-xs text-ink-faint hover:bg-raised hover:text-ink-muted disabled:opacity-60"
                     >
                       Outline
+                    </button>
+                    <button
+                      onClick={() => setModal('review')}
+                      disabled={proposalsRunning}
+                      title="Ask for a proofread, copy edit, developmental edit, or fact check"
+                      className="rounded px-2 py-0.5 text-xs text-ink-faint hover:bg-raised hover:text-ink-muted disabled:opacity-60"
+                    >
+                      Review
                     </button>
                     <button
                       onClick={() => void runProposals()}
@@ -444,6 +406,7 @@ export default function Workspace(): React.JSX.Element {
                     lockedKeys={isChapter ? ['title', 'status'] : []}
                     onChange={(data) => setContent(serializeFrontmatter({ data, body: doc.body }))}
                   />
+                  <EditorToolbar handle={drafting ? null : editorHandle} />
                   <div className="min-h-0 flex-1 overflow-hidden">
                     <MarkdownEditor
                       docId={activeFile}
@@ -453,9 +416,7 @@ export default function Workspace(): React.JSX.Element {
                       }
                       forceSync={drafting}
                       onSave={() => void snapshotActiveChapter()}
-                      onReady={(handle) => {
-                        editorHandleRef.current = handle
-                      }}
+                      onReady={setEditorHandle}
                     />
                   </div>
                 </>
@@ -477,7 +438,7 @@ export default function Workspace(): React.JSX.Element {
       {modal === 'draft' && (
         <AiPromptModal
           title={`Draft “${activeLabel}” with AI`}
-          description="The AI writes into the chapter using your outline, story bible, and what's already on the page. A snapshot is taken first, so the whole draft is one undoable step."
+          description="The AI writes into the chapter using your outline, Codex, and what's already on the page. A snapshot is taken first, so the whole draft is one undoable step."
           placeholder="Optional direction — tone, beats to hit, POV, pacing… (⌘↵ to start)"
           cta="Start drafting"
           onSubmit={(guidance) => void startDraft(guidance)}
@@ -491,6 +452,12 @@ export default function Workspace(): React.JSX.Element {
           placeholder="Optional direction — what should this chapter accomplish? (⌘↵ to generate)"
           cta="Generate outline"
           onSubmit={(guidance) => void generateOutline('chapter', guidance)}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === 'review' && (
+        <ReviewModal
+          chapterTitle={isChapter ? (activeLabel ?? null) : null}
           onClose={() => setModal(null)}
         />
       )}

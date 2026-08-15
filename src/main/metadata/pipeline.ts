@@ -19,7 +19,7 @@ import { tracedChatStream } from '../llm/genai-otel'
 
 /**
  * The metadata pipeline: on chapter save, ask the model for full-document
- * rewrites of affected story-bible docs, queue them as pending proposals, and
+ * rewrites of affected Codex docs, queue them as pending proposals, and
  * apply/reject each only on the author's say-so.
  */
 
@@ -97,7 +97,7 @@ async function deleteProposal(novelDir: string, id: string): Promise<void> {
 /* Path safety                                                         */
 /* ------------------------------------------------------------------ */
 
-/** Model output may only touch story-bible and outline files. */
+/** Model output may only touch Codex and outline files. */
 export function isAllowedProposalPath(path: string): boolean {
   const n = normalize(path).replaceAll('\\', '/')
   if (n.includes('..') || n.startsWith('/')) return false
@@ -137,9 +137,9 @@ async function safeRead(path: string): Promise<string | null> {
   }
 }
 
-const SYSTEM_PROMPT = `You are the Codex maintainer for a novel-writing studio (the Codex is the novel's story bible). After the author saves a chapter, you update the Codex so both the author and future AI assistance stay oriented.
+const SYSTEM_PROMPT = `You are the Codex maintainer for a novel-writing studio (the Codex is the novel's canon reference: character profiles, world/system rules, summaries, synopsis, glossary, and timeline). After the author saves a chapter, you update the Codex so both the author and future AI assistance stay oriented.
 
-You receive the current chapter, existing story-bible documents, and file conventions. Respond with COMPLETE new file contents for every document that needs creating or updating — never partial edits, never placeholders like "(unchanged)". Only include documents that genuinely need changes based on this chapter. Keep each document concise and factual; do not invent events that did not happen.
+You receive the current chapter, existing Codex documents, and file conventions. Respond with COMPLETE new file contents for every document that needs creating or updating — never partial edits, never placeholders like "(unchanged)". Only include documents that genuinely need changes based on this chapter. Keep each document concise and factual; do not invent events that did not happen.
 
 File conventions (all paths relative to the novel folder):
 - metadata/summaries/<chapter-file-name>.md — REQUIRED every run: a summary of THIS chapter. Frontmatter: title, logline (one sentence). Body: 3-8 sentence summary.

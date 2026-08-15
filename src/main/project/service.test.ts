@@ -72,7 +72,7 @@ describe('createNovel', () => {
   })
 })
 
-describe('story bible', () => {
+describe('codex', () => {
   it('seeds synopsis, glossary, and timeline templates on creation', async () => {
     const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
     const listing = await listMetadata(novelDir)

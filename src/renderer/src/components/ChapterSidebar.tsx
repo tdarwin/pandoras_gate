@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useProjectStore } from '../stores/project'
-import StoryBible from './StoryBible'
+import { useUiStore } from '../stores/ui'
+import CodexBrowser from './CodexBrowser'
 
 function ArchiveSection(): React.JSX.Element | null {
   const novel = useProjectStore((s) => s.novel)!
@@ -79,7 +80,7 @@ function ArchiveSection(): React.JSX.Element | null {
 }
 
 export default function ChapterSidebar(): React.JSX.Element {
-  const [tab, setTab] = useState<'chapters' | 'bible'>('chapters')
+  const [tab, setTab] = useState<'chapters' | 'codex'>('chapters')
   const novel = useProjectStore((s) => s.novel)!
   const activeFile = useProjectStore((s) => s.activeFile)
   const openChapter = useProjectStore((s) => s.openChapter)
@@ -98,6 +99,17 @@ export default function ChapterSidebar(): React.JSX.Element {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dropIndex, setDropIndex] = useState<number | null>(null)
+
+  // File → New Chapter (⌘N) opens the inline title input. Only signals sent
+  // while mounted count — a remount must not replay an old ⌘N.
+  const newChapterSignal = useUiStore((s) => s.newChapterSignal)
+  const seenChapterSignal = useRef(newChapterSignal)
+  useEffect(() => {
+    if (newChapterSignal === seenChapterSignal.current) return
+    seenChapterSignal.current = newChapterSignal
+    setTab('chapters')
+    setAdding(true)
+  }, [newChapterSignal])
 
   const submitNew = async (): Promise<void> => {
     if (newTitle.trim()) await createChapter(newTitle.trim())
@@ -154,17 +166,17 @@ export default function ChapterSidebar(): React.JSX.Element {
           Chapters
         </button>
         <button
-          onClick={() => setTab('bible')}
+          onClick={() => setTab('codex')}
           className={`flex-1 rounded-md px-2 py-1 text-xs font-medium ${
-            tab === 'bible' ? 'bg-raised text-ink' : 'text-ink-faint hover:text-ink-muted'
+            tab === 'codex' ? 'bg-raised text-ink' : 'text-ink-faint hover:text-ink-muted'
           }`}
         >
           Codex
         </button>
       </div>
 
-      {tab === 'bible' ? (
-        <StoryBible />
+      {tab === 'codex' ? (
+        <CodexBrowser />
       ) : (
         <>
           <div className="mt-4 flex items-center justify-between px-3">

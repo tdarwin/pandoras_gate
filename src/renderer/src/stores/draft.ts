@@ -106,7 +106,7 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
     const activeFile = project.activeFile
     if (!activeFile?.startsWith('chapters/')) return
 
-    const model = chat.models.find((m) => m.id === chat.selectedModelId)
+    const model = chat.modelForRole('drafting')
     if (!model) {
       set({ error: 'Pick a model in the chat panel first.' })
       return

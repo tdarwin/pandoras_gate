@@ -21,6 +21,14 @@ export const ModelInfoSchema = z.object({
     .optional()
 })
 
+/** Per-task model assignments; null = follow the chat panel's model. */
+export const ModelRolesSchema = z.object({
+  drafting: z.string().nullable(),
+  copyEdit: z.string().nullable(),
+  developmental: z.string().nullable(),
+  codex: z.string().nullable()
+})
+
 export const StreamEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('delta'), text: z.string() }),
   z.object({
@@ -135,6 +143,7 @@ export const ipcContract = {
       world: z.array(z.object({ file: z.string(), name: z.string() })),
       summaries: z.array(z.object({ file: z.string(), title: z.string() })),
       outlines: z.array(z.object({ file: z.string(), title: z.string() })),
+      reviews: z.array(z.object({ file: z.string(), title: z.string() })),
       hasSynopsis: z.boolean(),
       hasGlossary: z.boolean(),
       hasTimeline: z.boolean()
@@ -215,17 +224,19 @@ export const ipcContract = {
   'prefs:get': {
     request: z.undefined(),
     response: z.object({
-      autoStoryBible: z.boolean(),
+      autoCodex: z.boolean(),
       snapshotOnBlur: z.boolean(),
       snapshotIntervalMinutes: z.number(),
       /** Story-context token target for AI chats/drafts; 0 = automatic. */
       contextTargetTokens: z.number(),
-      theme: z.enum(['dark', 'light', 'system'])
+      theme: z.enum(['dark', 'light', 'system']),
+      /** Per-task model assignments; null = use the chat panel's model. */
+      modelRoles: ModelRolesSchema
     })
   },
   'prefs:set': {
     request: z.object({
-      autoStoryBible: z.boolean().optional(),
+      autoCodex: z.boolean().optional(),
       snapshotOnBlur: z.boolean().optional(),
       snapshotIntervalMinutes: z
         .union([z.literal(0), z.literal(5), z.literal(10), z.literal(15), z.literal(20)])
@@ -233,14 +244,16 @@ export const ipcContract = {
       contextTargetTokens: z
         .union([z.literal(0), z.literal(8192), z.literal(16384), z.literal(32768)])
         .optional(),
-      theme: z.enum(['dark', 'light', 'system']).optional()
+      theme: z.enum(['dark', 'light', 'system']).optional(),
+      modelRoles: ModelRolesSchema.partial().optional()
     }),
     response: z.object({
-      autoStoryBible: z.boolean(),
+      autoCodex: z.boolean(),
       snapshotOnBlur: z.boolean(),
       snapshotIntervalMinutes: z.number(),
       contextTargetTokens: z.number(),
-      theme: z.enum(['dark', 'light', 'system'])
+      theme: z.enum(['dark', 'light', 'system']),
+      modelRoles: ModelRolesSchema
     })
   },
   'sync:getConfig': {
@@ -281,10 +294,6 @@ export const ipcContract = {
     }),
     response: z.object({ started: z.literal(true) })
   },
-  'app:openLogs': {
-    request: z.undefined(),
-    response: z.object({ opened: z.literal(true) })
-  },
   'app:rendererError': {
     request: z.object({
       message: z.string(),
@@ -293,9 +302,16 @@ export const ipcContract = {
     }),
     response: z.object({ logged: z.literal(true) })
   },
-  'telemetry:status': {
-    request: z.undefined(),
-    response: z.object({ enabled: z.boolean() })
+  /** Keeps native menu item enablement in step with what's open. */
+  'menu:setContext': {
+    request: z.object({
+      novelOpen: z.boolean(),
+      /** Any editor document open (enables Save). */
+      documentOpen: z.boolean(),
+      /** A chapters/ file specifically (enables Copy Chapter For). */
+      chapterOpen: z.boolean()
+    }),
+    response: z.object({ updated: z.literal(true) })
   },
   'chat:cancel': {
     request: z.object({ requestId: z.string() }),
@@ -438,6 +454,22 @@ export const ipcContract = {
       itemCount: z.number().optional()
     })
   },
+  'review:run': {
+    request: z.object({
+      novelDir: z.string(),
+      scope: z.enum(['chapter', 'novel']),
+      chapterFile: z.string().optional(),
+      reviewType: z.enum(['proofread', 'copy-edit', 'developmental', 'fact-check']),
+      guidance: z.string().optional(),
+      provider: z.enum(['local', 'openrouter']),
+      modelId: z.string()
+    }),
+    response: z.object({
+      status: z.enum(['ran', 'skipped-unchanged', 'no-changes']),
+      proposalId: z.string().optional(),
+      itemCount: z.number().optional()
+    })
+  },
   'proposals:review': {
     request: z.object({ novelDir: z.string() }),
     response: z.object({
@@ -547,6 +579,24 @@ export const ipcEvents = {
   'draft:requested': z.object({
     chapterFile: z.string(),
     instructions: z.string()
+  }),
+  /** Native application-menu commands the renderer carries out. */
+  'menu:action': z.object({
+    action: z.enum([
+      'about',
+      'preferences',
+      'new-novel',
+      'open-novel',
+      'open-recent',
+      'close-novel',
+      'new-chapter',
+      'save',
+      'copy-for'
+    ]),
+    /** Novel directory for 'open-recent'. */
+    dir: z.string().optional(),
+    /** Publish target for 'copy-for'. */
+    platform: z.enum(['royalroad', 'patreon']).optional()
   })
 } as const satisfies Record<string, z.ZodType>
 

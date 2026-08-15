@@ -237,7 +237,7 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
       : [
           "You are the author's writing assistant inside Pandora's Gate, a novel-writing studio.",
           `The author${source.author ? ` (${source.author})` : ''} is working on the novel "${source.novelTitle}".`,
-          'You help with brainstorming, prose feedback, continuity, and craft — and you can ACT on the novel itself: revising and drafting chapters, and maintaining the Codex (the story bible of characters, world rules, outlines, and summaries).',
+          'You help with brainstorming, prose feedback, continuity, and craft — and you can ACT on the novel itself: revising and drafting chapters, and maintaining the Codex (the novel\'s canon reference: characters, world rules, outlines, and summaries).',
           'Story materials follow; treat them as canon. Be concrete.'
         ].join(' ')) + customSuffix
   used += count(basePrompt)
@@ -422,7 +422,7 @@ export function assembleContext(req: AssembleRequest, count: TokenCounter = esti
   if (lean) addCodexIndex()
 
   /* 5 — world/system rules: chapter-relevant docs first, capped per doc and
-   * as a group so a sprawling world bible can't crowd out everything else.
+   * as a group so a sprawling Codex can't crowd out everything else.
    * Lean mode: stays on disk, represented by the index. */
   if (!lean) {
     const docs = source.worldDocs.filter((d) => d.content.trim())

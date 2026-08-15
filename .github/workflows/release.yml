@@ -55,6 +55,20 @@ jobs:
           npx electron-vite build
           npx electron-builder --config electron-builder.yml --mac --publish always
 
+      # Tripwire: when signing is configured, a release that somehow built
+      # unsigned or un-notarized (expired cert, mistyped secret, notary
+      # outage) must fail the workflow instead of shipping quietly.
+      - name: Verify signature and notarization
+        if: ${{ secrets.MAC_CSC_LINK != '' }}
+        run: |
+          set -euo pipefail
+          APP=$(find dist -maxdepth 2 -name '*.app' | head -1)
+          echo "Verifying: $APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          xcrun stapler validate "$APP"
+          spctl -a -t exec -vv "$APP" 2>&1 | tee /tmp/spctl.out
+          grep -q "Notarized Developer ID" /tmp/spctl.out
+
       - name: Update Homebrew cask
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -80,15 +94,6 @@ jobs:
             depends_on macos: :ventura
 
             app "Pandora's Gate.app"
-
-            # Releases are not yet signed with an Apple Developer ID; without
-            # this, Gatekeeper reports the app as damaged. Remove once
-            # releases are notarized.
-            postflight do
-              system_command "/usr/bin/xattr",
-                             args: ["-cr", "#{appdir}/Pandora's Gate.app"],
-                             sudo: false
-            end
 
             zap trash: [
               "~/Library/Application Support/pandoras-gate",

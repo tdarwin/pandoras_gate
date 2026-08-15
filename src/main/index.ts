@@ -4,6 +4,7 @@ import appIcon from '../../resources/icon.png?asset'
 import { existsSync, renameSync } from 'node:fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
+import { refreshAppMenu } from './menu'
 import { legacyUserDataDir, migrateLegacyStatePaths } from './store'
 import { flushAllAutocommits } from './git/service'
 import { initTelemetry, shutdownTelemetry } from './telemetry'
@@ -119,6 +120,7 @@ app.whenReady().then(() => {
   })
 
   registerIpcHandlers()
+  void refreshAppMenu()
   createWindow()
   logInfo('app', `started v${app.getVersion()}`)
   void initTelemetry()
