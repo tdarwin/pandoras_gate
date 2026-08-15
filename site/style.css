@@ -1,0 +1,578 @@
+/* Pandora's Gate — pandorasgate.app
+   Hand-written, no build step, no external requests. Surfaces are the app's own
+   zinc theme tokens; the accent is sampled from the gold linework in the app
+   icon (#d0b060) rather than the app's indigo UI accent, so the page reads as
+   one piece with the mark at the top of it. Dark is the default, as in the app. */
+
+:root {
+  --surface: #09090b;
+  --panel: #18181b;
+  --raised: #27272a;
+  --line: #27272a;
+  --line-strong: #3f3f46;
+  --ink: #e4e4e7;
+  --ink-strong: #fafafa;
+  --ink-muted: #a1a1aa;
+  --ink-faint: #71717a;
+  --accent: #d4b468;
+  --accent-strong: #e3c887;
+  --accent-ink: #17130a;
+  --glow: rgba(212, 180, 104, 0.14);
+  --radius: 12px;
+  --wrap: 1080px;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --surface: #fafaf9;
+    --panel: #ffffff;
+    --raised: #f5f5f4;
+    --line: #e7e5e4;
+    --line-strong: #d6d3d1;
+    --ink: #292524;
+    --ink-strong: #0c0a09;
+    --ink-muted: #57534e;
+    --ink-faint: #a8a29e;
+    /* Darkened well past the icon's gold — #d4b468 on white fails contrast. */
+    --accent: #8a6d1f;
+    --accent-strong: #6f571a;
+    --accent-ink: #ffffff;
+    --glow: rgba(212, 180, 104, 0.16);
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5rem;
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  * {
+    transition: none !important;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 17px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  color: var(--ink-strong);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin: 0 0 0.6em;
+}
+
+a {
+  color: var(--accent-strong);
+  text-decoration-color: color-mix(in srgb, var(--accent-strong) 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-color: currentColor;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.875em;
+}
+
+.wrap {
+  width: 100%;
+  max-width: var(--wrap);
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+.narrow {
+  max-width: 720px;
+}
+
+.center {
+  text-align: center;
+}
+
+section {
+  padding: 5.5rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.section-title {
+  font-size: clamp(1.7rem, 3.5vw, 2.25rem);
+  margin-bottom: 0.4em;
+}
+
+.section-sub {
+  color: var(--ink-muted);
+  margin: 0 0 2.5rem;
+  max-width: 60ch;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+}
+
+.skip:focus {
+  left: 1rem;
+  top: 1rem;
+  z-index: 100;
+  background: var(--panel);
+  color: var(--ink-strong);
+  padding: 0.6rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  backdrop-filter: saturate(180%) blur(14px);
+  border-bottom: 1px solid var(--line);
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  height: 4rem;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 600;
+  color: var(--ink-strong);
+  text-decoration: none;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.brand img {
+  border-radius: 7px;
+  display: block;
+}
+
+.site-header nav {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  font-size: 0.925rem;
+}
+
+.site-header nav a {
+  color: var(--ink-muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.site-header nav a:hover {
+  color: var(--ink-strong);
+}
+
+.site-header nav .nav-cta {
+  color: var(--accent-strong);
+  font-weight: 500;
+}
+
+/* ── Hero ───────────────────────────────────────────────────────────── */
+
+.hero {
+  border-top: 0;
+  padding: 5rem 0 5.5rem;
+  text-align: center;
+  background:
+    radial-gradient(60rem 28rem at 50% -6rem, var(--glow), transparent 70%);
+}
+
+.hero-icon {
+  border-radius: 24px;
+  margin-bottom: 2rem;
+  box-shadow: 0 18px 50px -18px rgba(0, 0, 0, 0.6);
+}
+
+.hero h1 {
+  font-size: clamp(2.1rem, 5.6vw, 3.4rem);
+  letter-spacing: -0.03em;
+  margin-bottom: 0.5em;
+  text-wrap: balance;
+}
+
+.lede {
+  max-width: 60ch;
+  margin: 0 auto;
+  color: var(--ink-muted);
+  font-size: 1.09rem;
+  text-wrap: pretty;
+}
+
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.85rem;
+  margin: 2.25rem 0 2rem;
+}
+
+.hero-note {
+  color: var(--ink-faint);
+  font-size: 0.9rem;
+  margin: 1.5rem 0 0;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.7rem 1.4rem;
+  border-radius: 9px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--ink-strong);
+  font-size: 0.975rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.btn:hover {
+  background: var(--raised);
+  border-color: var(--ink-faint);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn-primary:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+/* ── Copyable command lines ─────────────────────────────────────────── */
+
+.copy-line {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: 34rem;
+  margin: 0 auto 0.75rem;
+  padding: 0.6rem 0.6rem 0.6rem 1rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  text-align: left;
+}
+
+.copy-line code {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: 0.85rem;
+  scrollbar-width: thin;
+}
+
+.copy-btn {
+  flex-shrink: 0;
+  padding: 0.35rem 0.75rem;
+  border-radius: 7px;
+  border: 1px solid var(--line-strong);
+  background: var(--raised);
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.copy-btn:hover {
+  color: var(--ink-strong);
+  border-color: var(--ink-faint);
+}
+
+.copy-btn.copied {
+  color: var(--accent-strong);
+  border-color: var(--accent);
+}
+
+#install .copy-line {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+/* ── Problem statement ──────────────────────────────────────────────── */
+
+.problem h2 {
+  font-size: clamp(1.7rem, 3.5vw, 2.25rem);
+}
+
+.problem p {
+  color: var(--ink-muted);
+  text-wrap: pretty;
+}
+
+.problem strong {
+  color: var(--ink-strong);
+  font-weight: 600;
+}
+
+.emphasis {
+  margin-top: 1.75rem;
+  padding-left: 1.25rem;
+  border-left: 2px solid var(--accent);
+  color: var(--ink) !important;
+  font-size: 1.05rem;
+}
+
+/* ── Feature grid ───────────────────────────────────────────────────── */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(285px, 1fr));
+  gap: 1.15rem;
+}
+
+.card {
+  padding: 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.card h3 {
+  font-size: 1.05rem;
+  margin-bottom: 0.5em;
+}
+
+.card p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.95rem;
+  text-wrap: pretty;
+}
+
+.link-card {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.link-card:hover {
+  border-color: var(--accent);
+  background: var(--raised);
+}
+
+.link-card h3 {
+  color: var(--accent-strong);
+}
+
+.link-card code {
+  color: var(--ink);
+}
+
+.links-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+/* ── Folder structure split ─────────────────────────────────────────── */
+
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3rem;
+  align-items: center;
+}
+
+.split-text h2 {
+  font-size: clamp(1.7rem, 3.5vw, 2.25rem);
+}
+
+.split-text p {
+  color: var(--ink-muted);
+  text-wrap: pretty;
+}
+
+.tree {
+  margin: 0;
+  padding: 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.83rem;
+  line-height: 1.75;
+  color: var(--ink);
+}
+
+.tree .c {
+  color: var(--ink-faint);
+}
+
+/* ── Install ────────────────────────────────────────────────────────── */
+
+#install h3 {
+  font-size: 1.05rem;
+  margin-top: 2.5rem;
+}
+
+#install p {
+  color: var(--ink-muted);
+}
+
+.steps {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--ink-muted);
+}
+
+.steps li {
+  margin-bottom: 0.75rem;
+}
+
+.steps strong {
+  color: var(--ink-strong);
+  font-weight: 600;
+}
+
+.aside {
+  margin-top: 3rem;
+  padding: 1rem 1.25rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--line-strong);
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+/* ── Support ────────────────────────────────────────────────────────── */
+
+.support {
+  background: radial-gradient(48rem 22rem at 50% 120%, var(--glow), transparent 70%);
+}
+
+.support h2 {
+  font-size: clamp(1.6rem, 3.2vw, 2rem);
+}
+
+.support p {
+  color: var(--ink-muted);
+  margin-bottom: 2rem;
+  text-wrap: pretty;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────── */
+
+.site-footer {
+  border-top: 1px solid var(--line);
+  padding: 2.5rem 0;
+  color: var(--ink-faint);
+  font-size: 0.9rem;
+}
+
+.footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.footer-inner p {
+  margin: 0;
+}
+
+.footer-inner nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+}
+
+.footer-inner a {
+  color: var(--ink-muted);
+  text-decoration: none;
+}
+
+.footer-inner a:hover {
+  color: var(--ink-strong);
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────── */
+
+@media (max-width: 880px) {
+  .split {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+}
+
+@media (max-width: 720px) {
+  body {
+    font-size: 16px;
+  }
+
+  section {
+    padding: 4rem 0;
+  }
+
+  .hero {
+    padding: 3.5rem 0 4rem;
+  }
+
+  .site-header nav {
+    gap: 1rem;
+    font-size: 0.875rem;
+  }
+
+  /* The section anchors stay reachable from the brand + CTA links. */
+  .site-header nav a[href^='#'] {
+    display: none;
+  }
+
+  .cta-row .btn {
+    flex: 1 1 auto;
+  }
+}

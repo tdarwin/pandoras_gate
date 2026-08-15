@@ -1,0 +1,78 @@
+name: Feature request
+description: Suggest something Pandora's Gate should do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas are welcome — including ones that disagree with how the app works today.
+
+        The most useful requests describe the **writing problem** first. The feature you
+        have in mind is a proposed solution, and there may be a better one; the problem is
+        the part that can't be replaced.
+
+        Worth knowing before you write: a few things are settled by design — novels stay as
+        flat files on your disk, the editor never shows raw markdown, there are no accounts
+        or cloud sync, and local models are treated as first-class. Those aren't off-limits
+        as topics, but a request that assumes the opposite needs to make its case.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem?
+      description: What are you trying to do while writing, and where does the app get in the way?
+      placeholder: |
+        When I come back to a series after a few months, I can't tell which unresolved
+        threads I left dangling. The timeline shows what happened, but nothing tracks what
+        was set up and never paid off.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like it to do?
+      description: Your proposed solution, as concretely as you can picture it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: How do you handle it now?
+      description: |
+        Workarounds you've tried, in this app or another one. Knowing what nearly works is
+        genuinely useful.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of the app?
+      options:
+        - Editor / writing
+        - Chat / AI assistant
+        - Codex and proposals
+        - Outlining or AI drafting
+        - Models (local GGUF or OpenRouter)
+        - Publishing / export
+        - History and snapshots
+        - Project, series, and chapter management
+        - Something new that doesn't exist yet
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: How do you write?
+      description: |
+        Optional, but it helps weigh requests. Genre, whether you publish serially, roughly
+        how long your novels get, and whether you mostly run local or remote models.
+      placeholder: "Progression fantasy, serialized on RoyalRoad, ~120 chapters, mostly local models on an M3 Max."
+
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: Would you want to build it?
+      options:
+        - label: I'd be interested in implementing this myself (see CONTRIBUTING.md — no obligation)
