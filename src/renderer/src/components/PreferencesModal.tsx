@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { MODEL_ROLES, recommend } from '@shared/llm/catalog'
 import { usePrefsStore, type ModelRole } from '../stores/prefs'
 import { useProjectStore } from '../stores/project'
 import { useChatStore } from '../stores/chat'
@@ -311,6 +312,8 @@ function ModelRolesSection(): React.JSX.Element {
   const models = useChatStore((s) => s.models)
   const initChat = useChatStore((s) => s.init)
   const loadModels = useChatStore((s) => s.loadModels)
+  /** Best installed catalog model per role, for the "Recommended" nudge. */
+  const [suggestions, setSuggestions] = useState<Partial<Record<ModelRole, string>>>({})
 
   // Prefs can open before the chat panel ever initialized (Welcome screen).
   useEffect(() => {
@@ -318,6 +321,26 @@ function ModelRolesSection(): React.JSX.Element {
     if (models.length === 0) void loadModels()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    void (async () => {
+      const result = await window.pandora.invoke('models:catalog', undefined)
+      if (!result.ok) return
+      // Only models actually on disk — suggesting one the user hasn't
+      // downloaded would be a dead end in a dropdown of installed models.
+      const installed = result.data.entries.filter((e) => e.installedPath !== null)
+      const next: Partial<Record<ModelRole, string>> = {}
+      for (const role of MODEL_ROLES) {
+        const best = recommend(installed, {
+          useCase: role,
+          style: null,
+          showUnfiltered: true
+        })[0]
+        if (best?.installedPath) next[role] = best.installedPath
+      }
+      setSuggestions(next)
+    })()
+  }, [models])
 
   return (
     <div>
@@ -328,11 +351,24 @@ function ModelRolesSection(): React.JSX.Element {
       {ROLE_ROWS.map(({ key, label, hint }) => {
         const assigned = prefs.modelRoles[key]
         const missing = assigned !== null && !models.some((m) => m.id === assigned)
+        const suggested = suggestions[key]
+        const suggestedName =
+          suggested && suggested !== assigned
+            ? models.find((m) => m.id === suggested)?.name
+            : undefined
         return (
           <div key={key} className="flex items-start justify-between gap-4 py-2">
             <span>
               <span className="block text-sm text-ink">{label}</span>
               <span className="block text-xs leading-relaxed text-ink-faint">{hint}</span>
+              {suggestedName && (
+                <button
+                  onClick={() => void prefs.update({ modelRoles: { [key]: suggested } })}
+                  className="mt-0.5 text-xs text-indigo-400 hover:text-indigo-300"
+                >
+                  Recommended: {suggestedName} — use it
+                </button>
+              )}
             </span>
             <select
               value={assigned ?? ''}

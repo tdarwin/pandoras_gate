@@ -1,24 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { IpcEventPayload } from '@shared/ipc'
+import {
+  USE_CASE_LABELS,
+  MODEL_ROLES,
+  type CatalogEntryStatus,
+  type HostedPick,
+  type ModelRole
+} from '@shared/llm/catalog'
 import { useChatStore } from '../stores/chat'
-import { useDownloadsStore, formatSpeed, formatEta } from '../stores/downloads'
-
-interface CatalogEntry {
-  id: string
-  name: string
-  description: string
-  sizeBytes: number
-  minMemoryGB: number
-  recommendedMemoryGB: number
-  contextLength: number
-  license: string
-  tier: 'light' | 'mid' | 'large'
-  tags: string[]
-  fit: 'recommended' | 'slow' | 'too-large'
-  installedPath: string | null
-  downloading: boolean
-  downloadedBytes: number
-}
+import { usePrefsStore } from '../stores/prefs'
+import { useDownloadsStore } from '../stores/downloads'
+import ModelPicker from './ModelPicker'
 
 interface Hardware {
   totalMemoryGB: number
@@ -36,12 +28,6 @@ function count(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`
   return String(n)
 }
-
-const FIT_LABEL = {
-  recommended: { text: 'Recommended for your machine', cls: 'text-emerald-400' },
-  slow: { text: 'Will run, but slowly', cls: 'text-amber-400' },
-  'too-large': { text: 'Too large for this machine', cls: 'text-red-400' }
-} as const
 
 const FIT_SHORT = {
   recommended: { text: 'fits well', cls: 'text-emerald-400' },
@@ -263,8 +249,54 @@ function Section({
   )
 }
 
+/**
+ * Buttons to assign an installed model to the roles the catalog says it is
+ * good at. This is the payoff for keeping the picker's vocabulary and the
+ * model-role vocabulary the same: "good at copy editing" becomes "use it for
+ * copy editing" in one click, instead of a trip to Preferences.
+ */
+function RoleAssignments({
+  modelId,
+  useCases
+}: {
+  modelId: string
+  useCases: readonly ModelRole[]
+}): React.JSX.Element | null {
+  const modelRoles = usePrefsStore((s) => s.modelRoles)
+  const update = usePrefsStore((s) => s.update)
+  if (useCases.length === 0) return null
+
+  return (
+    <span className="mt-1 flex flex-wrap items-center gap-1">
+      <span className="text-[10px] text-ink-faint">Use for:</span>
+      {useCases.map((role) => {
+        const assigned = modelRoles[role] === modelId
+        return (
+          <button
+            key={role}
+            onClick={() => void update({ modelRoles: { [role]: assigned ? null : modelId } })}
+            title={
+              assigned
+                ? `Stop using this model for ${USE_CASE_LABELS[role].toLowerCase()}`
+                : `Use this model for ${USE_CASE_LABELS[role].toLowerCase()}`
+            }
+            className={
+              assigned
+                ? 'rounded border border-indigo-500 bg-indigo-950 px-1.5 py-0.5 text-[10px] text-indigo-300'
+                : 'rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-faint hover:bg-raised hover:text-ink-muted'
+            }
+          >
+            {USE_CASE_LABELS[role]}
+          </button>
+        )
+      })}
+    </span>
+  )
+}
+
 export default function ModelsManager({ onClose }: { onClose: () => void }): React.JSX.Element {
-  const [entries, setEntries] = useState<CatalogEntry[]>([])
+  const [entries, setEntries] = useState<CatalogEntryStatus[]>([])
+  const [hosted, setHosted] = useState<HostedPick[]>([])
   const [hardware, setHardware] = useState<Hardware | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [orKey, setOrKey] = useState('')
@@ -276,6 +308,7 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
   const saveApiKey = useChatStore((s) => s.saveApiKey)
   const loadModels = useChatStore((s) => s.loadModels)
   const importLocalModel = useChatStore((s) => s.importLocalModel)
+  const initPrefs = usePrefsStore((s) => s.init)
 
   const localModels = models.filter((m) => m.provider === 'local')
 
@@ -283,6 +316,7 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
     const result = await window.pandora.invoke('models:catalog', undefined)
     if (result.ok) {
       setEntries(result.data.entries)
+      setHosted(result.data.hosted)
       setHardware(result.data.hardware)
     } else {
       setError(result.error.message)
@@ -292,6 +326,9 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
   useEffect(() => {
     void refresh()
     void loadModels()
+    // Role buttons and the unfiltered toggle both read prefs; the manager can
+    // be the first thing opened in a session.
+    void initPrefs()
     // Completion/failure notifications; live progress comes from the
     // downloads store.
     const unsubscribe = window.pandora.on('model:downloadProgress', (raw) => {
@@ -303,7 +340,7 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
       }
     })
     return unsubscribe
-  }, [refresh, loadModels])
+  }, [refresh, loadModels, initPrefs])
 
   const downloadHf = async (repoId: string, file: HfFile): Promise<void> => {
     setError(null)
@@ -348,7 +385,7 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
       <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-line bg-panel shadow-2xl">
         <div className="flex items-center justify-between border-b border-line px-5 py-3">
           <div>
-            <h2 className="text-sm font-semibold text-ink">Local models</h2>
+            <h2 className="text-sm font-semibold text-ink">Models</h2>
             {hardware && (
               <p className="text-xs text-ink-faint">
                 {hardware.appleSilicon ? 'Apple Silicon' : hardware.arch} ·{' '}
@@ -378,16 +415,24 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
               </p>
             ) : (
               <ul className="flex flex-col gap-1.5">
-                {localModels.map((m) => (
+                {localModels.map((m) => {
+                  // Catalog entries know which roles a model suits; imported
+                  // GGUFs are unknown to us, so they simply get no buttons.
+                  const catalogEntry = entries.find((e) => e.installedPath === m.id)
+                  const roles = (catalogEntry?.useCases ?? []).filter((u): u is ModelRole =>
+                    (MODEL_ROLES as readonly string[]).includes(u)
+                  )
+                  return (
                   <li
                     key={m.id}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-line bg-surface/60 px-3 py-2"
+                    className="flex items-start justify-between gap-3 rounded-lg border border-line bg-surface/60 px-3 py-2"
                   >
                     <span className="min-w-0">
                       <span className="block truncate text-sm text-ink">{m.name}</span>
                       <span className="text-[10px] text-ink-faint">
                         {Math.round(m.contextLength / 1024)}k context
                       </span>
+                      <RoleAssignments modelId={m.id} useCases={roles} />
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       {selectedModelId === m.id ? (
@@ -408,82 +453,21 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
                       </button>
                     </span>
                   </li>
-                ))}
+                  )
+                })}
               </ul>
             )}
           </Section>
 
-          <Section title="Recommended models">
-            <ul className="flex flex-col gap-3">
-              {entries
-                .filter((e) => !e.installedPath)
-                .map((e) => {
-                  const progress = downloads[e.id]
-                  const fit = FIT_LABEL[e.fit]
-                  const pct =
-                    progress && e.sizeBytes > 0
-                      ? Math.min(100, Math.round((progress.downloadedBytes / e.sizeBytes) * 100))
-                      : 0
-                  return (
-                    <li key={e.id} className="rounded-lg border border-line bg-surface/60 p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-medium text-ink">{e.name}</h4>
-                            {e.tags.includes('recommended') && (
-                              <span className="rounded-full bg-indigo-950 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-indigo-300">
-                                Popular
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-1 text-xs leading-relaxed text-ink-faint">
-                            {e.description}
-                          </p>
-                          <p className="mt-1.5 text-[11px] text-ink-faint">
-                            {gb(e.sizeBytes)} · {Math.round(e.contextLength / 1024)}k context ·{' '}
-                            {e.license} · <span className={fit.cls}>{fit.text}</span>
-                          </p>
-                        </div>
-                        <div className="shrink-0">
-                          {progress ? (
-                            <button
-                              onClick={() => void cancel(e.id)}
-                              className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink-muted hover:bg-raised"
-                            >
-                              Cancel
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => void download(e.id)}
-                              disabled={e.fit === 'too-large'}
-                              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              Download
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {progress && (
-                        <div className="mt-3">
-                          <div className="h-1.5 overflow-hidden rounded-full bg-raised">
-                            <div
-                              className="h-full rounded-full bg-indigo-500 transition-all"
-                              style={{ width: `${pct}%` }}
-                            />
-                          </div>
-                          <p className="mt-1 tabular-nums text-[11px] text-ink-faint">
-                            {gb(progress.downloadedBytes)} of {gb(e.sizeBytes)} ({pct}%)
-                            {progress.speedBps > 0 && <> · {formatSpeed(progress.speedBps)}</>}
-                            {progress.etaSeconds !== null && (
-                              <> · about {formatEta(progress.etaSeconds)} left</>
-                            )}
-                          </p>
-                        </div>
-                      )}
-                    </li>
-                  )
-                })}
-            </ul>
+          <Section title="Find a model">
+            <ModelPicker
+              entries={entries}
+              hosted={hosted}
+              downloads={downloads}
+              apiKeyConfigured={apiKeyConfigured}
+              onDownload={(id) => void download(id)}
+              onCancel={(id) => void cancel(id)}
+            />
 
             <HuggingFaceBrowser
               downloading={downloads}

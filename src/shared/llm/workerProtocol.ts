@@ -8,6 +8,12 @@ export type WorkerRequest =
       type: 'chat'
       requestId: string
       modelPath: string
+      /**
+       * Ceiling on the context window. Sent on every chat rather than relied on
+       * from a prior `load`, so a chat that arrives without a warm load still
+       * gets the window the assembler budgeted against.
+       */
+      contextSize?: number
       messages: ChatMessage[]
       temperature?: number
       maxTokens?: number

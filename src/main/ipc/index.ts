@@ -12,7 +12,7 @@ import * as gitService from '../git/service'
 import { refreshAppMenu } from '../menu'
 import { readAppState, touchRecentNovel } from '../store'
 import { getProvider, startChat, cancelChat } from '../llm/chat'
-import { importGguf, removeLocalModel } from '../llm/local'
+import { importGguf, removeLocalModel, recordResolvedContext } from '../llm/local'
 import {
   catalogStatus,
   startDownload,
@@ -47,6 +47,14 @@ import {
 } from '../metadata/pipeline'
 import { startDraft, finishDraft } from '../draft/service'
 import { runEditingReview } from '../review/service'
+
+/**
+ * Drops keys whose value is `undefined` so a partial update can be spread over
+ * current state without an absent field blanking it.
+ */
+function definedOnly<T extends object>(obj: T): Partial<T> {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>
+}
 
 /**
  * Registers a handler for a contract channel. Incoming payloads are validated
@@ -346,7 +354,13 @@ export function registerIpcHandlers(): void {
     const entry = models.find((m) => m.path === req.modelId)
     if (!entry) return { warming: false }
     // Fire-and-forget: first chat gets a hot model instead of a load stall.
-    void llmWorkerHost.loadModel(entry.path, entry.contextLength).catch(() => {})
+    // The resolved window is recorded because it's the real one — the entry's
+    // value is only an estimate until a load has actually sized it against
+    // this machine's memory.
+    void llmWorkerHost
+      .loadModel(entry.path, entry.trainContextLength ?? entry.contextLength)
+      .then((contextLength) => recordResolvedContext(entry.path, contextLength))
+      .catch(() => {})
     return { warming: true }
   })
 
@@ -361,20 +375,10 @@ export function registerIpcHandlers(): void {
 
   handle('prefs:get', () => readPrefs())
 
-  handle('prefs:set', (req) =>
-    writePrefs({
-      ...(req.autoCodex !== undefined ? { autoCodex: req.autoCodex } : {}),
-      ...(req.snapshotOnBlur !== undefined ? { snapshotOnBlur: req.snapshotOnBlur } : {}),
-      ...(req.snapshotIntervalMinutes !== undefined
-        ? { snapshotIntervalMinutes: req.snapshotIntervalMinutes }
-        : {}),
-      ...(req.contextTargetTokens !== undefined
-        ? { contextTargetTokens: req.contextTargetTokens }
-        : {}),
-      ...(req.theme !== undefined ? { theme: req.theme } : {}),
-      ...(req.modelRoles !== undefined ? { modelRoles: req.modelRoles } : {})
-    })
-  )
+  // Passed through wholesale rather than field-by-field: the request schema in
+  // ipc.ts already permits exactly the settable prefs and strips anything else,
+  // and an explicit list silently drops any pref added without editing it here.
+  handle('prefs:set', (req) => writePrefs(definedOnly(req)))
 
   handle('sync:getConfig', async (req) => ({
     remoteUrl: await getRemoteUrl(req.novelDir),

@@ -2,33 +2,11 @@ import { app, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { mkdir, rm } from 'node:fs/promises'
 import type { ModelDownloader } from 'node-llama-cpp'
-import catalogJson from './catalog.json'
-import { detectHardware, fitForModel, type Fit } from './hardware'
+import { catalogSource } from './catalog-source'
+import type { CatalogModel, HostedPick, CatalogEntryStatus } from '../../shared/llm/catalog'
+import { memoryRequirementsGB, memoryVerdict } from '../../shared/llm/memory'
+import { detectHardware } from './hardware'
 import { importGguf, listLocalModels, removeLocalModel } from './local'
-
-export interface CatalogModel {
-  id: string
-  name: string
-  description: string
-  hfUri: string
-  filename: string
-  sizeBytes: number
-  minMemoryGB: number
-  recommendedMemoryGB: number
-  contextLength: number
-  license: string
-  tier: 'light' | 'mid' | 'large'
-  tags: string[]
-}
-
-export interface CatalogEntryStatus extends CatalogModel {
-  fit: Fit
-  installedPath: string | null
-  downloading: boolean
-  downloadedBytes: number
-}
-
-const catalog = catalogJson as { catalogVersion: number; models: CatalogModel[] }
 
 function modelsDir(): string {
   return join(app.getPath('userData'), 'models')
@@ -42,24 +20,43 @@ interface ActiveDownload {
 
 const activeDownloads = new Map<string, ActiveDownload>()
 
+/** Looks a catalog model up in whichever catalog is currently live. */
+async function catalogModel(modelId: string): Promise<CatalogModel> {
+  const { models } = await catalogSource.load()
+  const entry = models.find((m) => m.id === modelId)
+  if (!entry) throw new Error(`Unknown catalog model: ${modelId}`)
+  return entry
+}
+
 export async function catalogStatus(): Promise<{
   hardware: ReturnType<typeof detectHardware>
   entries: CatalogEntryStatus[]
+  hosted: HostedPick[]
 }> {
   const hw = detectHardware()
-  const installed = await listLocalModels()
+  const [catalog, installed] = await Promise.all([catalogSource.load(), listLocalModels()])
+  const totalBytes = hw.totalMemoryGB * 1024 ** 3
   const entries = catalog.models.map((m) => {
     const installedEntry = installed.find((i) => i.path === join(modelsDir(), m.filename))
     const active = activeDownloads.get(m.id)
+    // Fit is decided by whether the machine can hold the weights *and* a
+    // workable context, not by weights alone — a model that loads but leaves
+    // room for 2k of context is no use for writing a novel.
+    const verdict = memoryVerdict(m.memory, totalBytes)
+    const { minimumGB, comfortableGB } = memoryRequirementsGB(m.memory)
     return {
       ...m,
-      fit: fitForModel(hw, m.minMemoryGB, m.recommendedMemoryGB),
+      fit: verdict.fit,
+      usableContext: verdict.usableContext,
+      cramped: verdict.cramped,
+      minimumGB,
+      comfortableGB,
       installedPath: installedEntry?.path ?? null,
       downloading: active !== undefined,
       downloadedBytes: active?.downloadedBytes ?? 0
     }
   })
-  return { hardware: hw, entries }
+  return { hardware: hw, entries, hosted: catalog.hosted }
 }
 
 interface DownloadSpec {
@@ -147,8 +144,7 @@ async function downloadGguf(sender: WebContents, spec: DownloadSpec): Promise<vo
 }
 
 export async function startDownload(sender: WebContents, modelId: string): Promise<void> {
-  const entry = catalog.models.find((m) => m.id === modelId)
-  if (!entry) throw new Error(`Unknown catalog model: ${modelId}`)
+  const entry = await catalogModel(modelId)
   await downloadGguf(sender, {
     key: modelId,
     label: entry.name,
@@ -196,8 +192,7 @@ export async function cancelDownload(modelId: string): Promise<boolean> {
 
 /** Removes a downloaded catalog model from disk and the registry. */
 export async function deleteDownloadedModel(modelId: string): Promise<void> {
-  const entry = catalog.models.find((m) => m.id === modelId)
-  if (!entry) throw new Error(`Unknown catalog model: ${modelId}`)
+  const entry = await catalogModel(modelId)
   const path = join(modelsDir(), entry.filename)
   await removeLocalModel(path)
   await rm(path, { force: true })

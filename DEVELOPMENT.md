@@ -53,10 +53,83 @@ npm run typecheck  # strict TS across main/preload/renderer
 npm run build      # electron-vite production build into out/
 npm run package    # electron-builder DMG/NSIS (signing config required)
 npm run package:dir # unpacked build — fast, good for smoke tests
+npm run verify:catalog # check the model catalog against Hugging Face + OpenRouter (network)
 ```
 
 `npm run test` and `npm run typecheck` are the gate. CI runs both before it will build a
-release, and a PR that fails either won't be merged.
+release, and a PR that fails either won't be merged. `verify:catalog` hits the network, so
+it is deliberately outside the gate — run it when you touch the catalog.
+
+## Updating the model catalog
+
+Recommendations go stale fast. The catalog is fetched at runtime from
+`https://pandorasgate.app/catalog.json`, with the copy compiled into the app as the
+fallback for offline use, a failed fetch, or a catalog published against a newer schema
+than the installed build understands.
+
+The two copies — `src/main/llm/catalog.json` (bundled) and `site/catalog.json` (published)
+— must stay byte-identical; a unit test enforces it. To change the picks:
+
+1. Edit `src/main/llm/catalog.json`, then `npm run verify:catalog -- --write`. The `--write`
+   pass reads each model's GGUF header over HTTP (header only — a few MB, not the model) and
+   rewrites the `memory` block from node-llama-cpp's own estimator, then writes both copies.
+2. `npm run verify:catalog` — confirms every Hugging Face repo and file exists at the exact
+   byte size, that none are gated (gated repos can't be downloaded in-app), and that every
+   hosted slug is still offered by OpenRouter.
+3. `npm run test` — offline invariants: schema, unique ids and filenames, coverage of every
+   use case and memory tier, and that a 16GB machine still gets an option for every task.
+4. Merge. The Pages workflow redeploys `site/` on any change under `site/**`, so the new
+   catalog reaches installed apps within their 24-hour cache window — no release needed.
+
+Curation sources, in order of trust: the Hugging Face API (`?filter=gguf&sort=downloads`)
+for what people actually run, the EQ-Bench creative-writing leaderboards for prose quality,
+and r/LocalLLaMA for the fine-tune categories that never appear on leaderboards. **Do not
+curate from web search** — results for "best LLM for creative writing" are saturated with
+AI-generated listicles citing models that do not exist. Always read the model card: two of
+the highest-download "creative"-sounding repos found while building this catalog turned out
+to be a coding model and an agentic vision model.
+
+The `useCases` vocabulary is the model-role vocabulary (`MODEL_ROLES` plus `chat`), defined
+once in `src/shared/llm/catalog.ts`. Adding a role there is a compile error everywhere it
+needs to be handled, which is the point.
+
+Never hand-author the `memory` block. It is what decides whether a model is offered at all
+and what context window the user is promised, and the numbers are not guessable — KV cache
+cost varies by an order of magnitude between architectures (Gemma 4 31B needs ~55GB at a
+256k window; Qwen 3.6 35B needs ~15GB).
+
+## How much context a local model actually gets
+
+There is no fixed local context window. Weights and KV cache share one pool:
+
+```
+available = min(total − 3.5GB, total × 0.85)     # usableMemoryBytes()
+context   = largest sampled window whose KV cache fits in available − weights
+```
+
+`src/shared/llm/memory.ts` owns this and is the only place the thresholds live —
+`MINIMUM_CONTEXT` (4k, below which a model is not offered), `CRAMPED_CONTEXT` (8k, below
+which the picker warns and points at hosted models), `COMFORTABLE_CONTEXT` (16k, the
+assembler's retrieval-first threshold) and `DEFAULT_CONTEXT_CEILING` (64k, the policy cap).
+
+Both limits are applied as a *minimum* rather than subtracting one from the other: a fixed
+OS reserve dominates on small machines, the fraction dominates on large ones. Taking a
+fraction *and* a fixed floor reserved half of an 8GB machine and wrongly concluded that no
+local model could run there.
+
+Three layers, deliberately:
+
+- **Catalog (pre-download)** — estimated from the baked `memory` profile against total
+  memory. Advisory: it decides what to recommend and what to promise.
+- **Import** — a first estimate stored on the registry entry.
+- **Load (authoritative)** — the worker calls node-llama-cpp's
+  `resolveContextContextSize` against live VRAM/RAM state and reports what it actually
+  resolved; `recordResolvedContext` writes it back so the context assembler budgets against
+  the real window rather than an estimate.
+
+Sizing is against *total* memory rather than free, on purpose: free memory swings by
+gigabytes minute to minute, and advice that changes every time you open the dialog is worse
+than advice that is slightly pessimistic.
 
 ## Architecture
 

@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "package": "electron-vite build && electron-builder --config electron-builder.yml",
-    "package:dir": "electron-vite build && electron-builder --config electron-builder.yml --dir"
+    "package:dir": "electron-vite build && electron-builder --config electron-builder.yml --dir",
+    "verify:catalog": "node --import ./scripts/ts-resolve.mjs scripts/verify-catalog.ts"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

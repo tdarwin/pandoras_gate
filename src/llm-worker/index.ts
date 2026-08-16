@@ -19,7 +19,12 @@ function send(msg: WorkerResponse): void {
 let llamaPromise: Promise<Llama> | null = null
 let model: LlamaModel | null = null
 let loadedPath: string | null = null
-let configuredContextSize: number | undefined
+/**
+ * Context size resolved for the currently loaded model, keyed by its path so a
+ * model switch can never inherit the previous model's window. Cleared in
+ * `ensureModel` alongside the model itself.
+ */
+let resolvedContext: { modelPath: string; contextSize: number } | null = null
 const activeChats = new Map<string, AbortController>()
 let nextCallId = 1
 const pendingToolResults = new Map<string, (result: string) => void>()
@@ -56,6 +61,7 @@ async function ensureModel(modelPath: string): Promise<LlamaModel> {
     }
     model = null
     loadedPath = null
+    resolvedContext = null
   }
   const inst = await getLlamaInstance()
   model = await inst.loadModel({ modelPath })
@@ -63,11 +69,37 @@ async function ensureModel(modelPath: string): Promise<LlamaModel> {
   return model
 }
 
+/**
+ * Works out the context window this machine can actually give the loaded model.
+ *
+ * node-llama-cpp resolves this against live VRAM/RAM state without allocating
+ * anything, which is the only honest answer — the app used to assume a flat 16k
+ * for every model on every machine, which under-served small models badly and
+ * over-promised on large ones. `ceiling` is the app's policy cap; the resolver
+ * may return less if the memory isn't there.
+ */
+async function resolveContextSize(m: LlamaModel, ceiling?: number): Promise<number> {
+  if (resolvedContext?.modelPath === loadedPath) return resolvedContext.contextSize
+  const max = Math.min(m.trainContextSize, ceiling ?? m.trainContextSize)
+  let contextSize = max
+  try {
+    contextSize = await m.fileInsights.configurationResolver.resolveContextContextSize(
+      { max },
+      { modelGpuLayers: m.gpuLayers, modelTrainContextSize: m.trainContextSize }
+    )
+  } catch {
+    // InsufficientMemoryError, or an estimator that can't judge this build.
+    // Fall back to the requested ceiling and let createContext's own memory
+    // checks be the backstop.
+  }
+  resolvedContext = { modelPath: loadedPath ?? '', contextSize }
+  return contextSize
+}
+
 async function handleLoad(modelPath: string, contextSize?: number): Promise<void> {
   try {
-    configuredContextSize = contextSize
     const m = await ensureModel(modelPath)
-    const contextLength = Math.min(m.trainContextSize, contextSize ?? m.trainContextSize)
+    const contextLength = await resolveContextSize(m, contextSize)
     send({ type: 'loaded', modelPath, contextLength })
   } catch (err) {
     send({
@@ -86,9 +118,12 @@ async function handleChat(req: Extract<WorkerRequest, { type: 'chat' }>): Promis
     const inst = await getLlamaInstance()
     const { LlamaChatSession } = await import('node-llama-cpp')
 
-    const context = await m.createContext({
-      contextSize: configuredContextSize ? { max: configuredContextSize } : undefined
-    })
+    // Resolved per model, not read from a global the chat path may never have
+    // set — a chat that arrives without a warm load used to allocate whatever
+    // llama.cpp felt like, which the context assembler then budgeted against
+    // wrongly in both directions.
+    const contextSize = await resolveContextSize(m, req.contextSize)
+    const context = await m.createContext({ contextSize: { max: contextSize } })
     try {
       const sequence = context.getSequence()
 
