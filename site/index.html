@@ -215,8 +215,15 @@
         <button type="button" class="copy-btn" aria-label="Copy install command">Copy</button>
       </div>
       <p>
-        Installed before 0.5.0, when the cask lived in the app repo? Re-point Homebrew at
-        the new tap once. Your novels and preferences are untouched.
+        The cask used to live in the app repo, under the <code>tdarwin/pandora</code> tap.
+        If that tap still shows up here, upgrades won't follow the move:
+      </p>
+      <div class="copy-line" data-copy>
+        <code>brew tap | grep tdarwin</code>
+        <button type="button" class="copy-btn" aria-label="Copy tap check command">Copy</button>
+      </div>
+      <p>
+        Re-point Homebrew once. Your novels and preferences are untouched.
       </p>
       <div class="copy-line" data-copy>
         <code>brew uninstall --cask pandoras-gate</code>

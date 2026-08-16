@@ -84,9 +84,15 @@ brew install --cask tdarwin/tap/pandoras-gate
 That taps [tdarwin/homebrew-tap](https://github.com/tdarwin/homebrew-tap) on the way
 through — no separate `brew tap` step.
 
-If you installed before 0.5.0, the cask used to live in this repo. Re-point Homebrew at
-the new tap once and future upgrades follow along. Your novels and preferences are
-untouched — a plain `uninstall` doesn't run the cask's `zap`:
+The cask used to live in this repo, under the `tdarwin/pandora` tap. If that tap still
+shows up, you're on the old one and upgrades won't follow the move:
+
+```bash
+brew tap | grep tdarwin
+```
+
+Re-point Homebrew once. Your novels and preferences are untouched — a plain `uninstall`
+doesn't run the cask's `zap`:
 
 ```bash
 brew uninstall --cask pandoras-gate
