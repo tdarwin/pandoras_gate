@@ -77,14 +77,21 @@ The design goals that follow from that:
 
 **Requirements:** macOS Ventura (13) or later, Apple Silicon.
 
-This repository doubles as a Homebrew tap:
-
 ```bash
-brew tap tdarwin/pandora https://github.com/tdarwin/pandoras_gate
+brew install --cask tdarwin/tap/pandoras-gate
 ```
 
+That taps [tdarwin/homebrew-tap](https://github.com/tdarwin/homebrew-tap) on the way
+through — no separate `brew tap` step.
+
+If you installed before 0.5.0, the cask used to live in this repo. Re-point Homebrew at
+the new tap once and future upgrades follow along. Your novels and preferences are
+untouched — a plain `uninstall` doesn't run the cask's `zap`:
+
 ```bash
-brew install --cask tdarwin/pandora/pandoras-gate
+brew uninstall --cask pandoras-gate
+brew untap tdarwin/pandora
+brew install --cask tdarwin/tap/pandoras-gate
 ```
 
 Releases are signed with an Apple Developer ID and notarized, so the app opens without

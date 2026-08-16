@@ -103,9 +103,10 @@ issue and make the case.
 ## Releases
 
 Maintainers cut releases by tagging; `.github/workflows/release.yml` handles the rest.
-Contributors don't need to bump versions or touch `Casks/`. Note that forks build unsigned
-automatically — the signing steps skip themselves when the secrets aren't present, so CI on
-your fork should be green.
+Contributors don't need to bump versions or touch the Homebrew cask, which the workflow
+regenerates and pushes to [tdarwin/homebrew-tap](https://github.com/tdarwin/homebrew-tap).
+Note that forks build unsigned automatically — the signing and cask steps skip themselves
+when the secrets aren't present, so CI on your fork should be green.
 
 ## Questions
 

@@ -53,7 +53,7 @@
       </div>
 
       <div class="copy-line" data-copy>
-        <code>brew install --cask tdarwin/pandora/pandoras-gate</code>
+        <code>brew install --cask tdarwin/tap/pandoras-gate</code>
         <button type="button" class="copy-btn" aria-label="Copy install command">Copy</button>
       </div>
 
@@ -209,14 +209,26 @@
       <p class="section-sub">macOS 13 (Ventura) or later, Apple Silicon.</p>
 
       <h3>With Homebrew</h3>
-      <p>This project's repository doubles as a Homebrew tap:</p>
+      <p>One command — the tap comes along with it:</p>
       <div class="copy-line" data-copy>
-        <code>brew tap tdarwin/pandora https://github.com/tdarwin/pandoras_gate</code>
-        <button type="button" class="copy-btn" aria-label="Copy tap command">Copy</button>
+        <code>brew install --cask tdarwin/tap/pandoras-gate</code>
+        <button type="button" class="copy-btn" aria-label="Copy install command">Copy</button>
+      </div>
+      <p>
+        Installed before 0.5.0, when the cask lived in the app repo? Re-point Homebrew at
+        the new tap once. Your novels and preferences are untouched.
+      </p>
+      <div class="copy-line" data-copy>
+        <code>brew uninstall --cask pandoras-gate</code>
+        <button type="button" class="copy-btn" aria-label="Copy uninstall command">Copy</button>
       </div>
       <div class="copy-line" data-copy>
-        <code>brew install --cask tdarwin/pandora/pandoras-gate</code>
-        <button type="button" class="copy-btn" aria-label="Copy install command">Copy</button>
+        <code>brew untap tdarwin/pandora</code>
+        <button type="button" class="copy-btn" aria-label="Copy untap command">Copy</button>
+      </div>
+      <div class="copy-line" data-copy>
+        <code>brew install --cask tdarwin/tap/pandoras-gate</code>
+        <button type="button" class="copy-btn" aria-label="Copy reinstall command">Copy</button>
       </div>
 
       <h3>Or download the DMG</h3>
