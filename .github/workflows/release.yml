@@ -110,13 +110,25 @@ jobs:
           done
           echo "Publishing ${#ASSETS[@]} asset(s): ${ASSETS[*]}"
 
+          # Release notes come from CHANGELOG.md, so what users see is written
+          # for them rather than being a list of commit subjects. A missing or
+          # empty entry falls back to generated notes — forgetting to write the
+          # changelog should degrade the notes, never block the release.
+          NOTES=(--generate-notes)
+          if node scripts/changelog-section.mjs "$VERSION" > /tmp/release-notes.md; then
+            echo "Using the CHANGELOG.md entry for $VERSION."
+            NOTES=(--notes-file /tmp/release-notes.md)
+          else
+            echo "No CHANGELOG.md entry for $VERSION — falling back to generated notes."
+          fi
+
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME exists — uploading into it."
             gh release upload "$GITHUB_REF_NAME" "${ASSETS[@]}" --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
               --title "$VERSION" \
-              --generate-notes \
+              "${NOTES[@]}" \
               "${ASSETS[@]}"
           fi
 

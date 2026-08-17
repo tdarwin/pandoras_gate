@@ -3,13 +3,22 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join, dirname, sep } from 'node:path'
 import { logInfo } from './log'
+import { MODEL_ROLES, type ModelRoleMap } from '../shared/llm/catalog'
+
+// Roles are declared with the catalog vocabulary they share; re-exported here
+// because this module is where the rest of main reaches for prefs types.
+export { MODEL_ROLES }
+export type { ModelRole, ModelRoleMap } from '../shared/llm/catalog'
 
 interface AppState {
   recentNovels: string[]
   localModels?: {
     path: string
     name: string
+    /** Effective window for this machine, refreshed when the worker sizes it. */
     contextLength: number
+    /** Absent on entries written before 0.5; backfillModelMetadata() fills it in. */
+    trainContextLength?: number
     sizeBytes: number
   }[]
   /** Last-used model per novel dir, restored when the novel opens. */
@@ -22,6 +31,7 @@ interface AppState {
     theme?: string
     /** Only assigned roles are stored; missing = use the chat model. */
     modelRoles?: Record<string, string>
+    showUnfilteredModels?: boolean
   }
 }
 
@@ -35,14 +45,6 @@ export const CONTEXT_TARGETS = [0, 8192, 16384, 32768] as const
 
 export type ThemePref = 'dark' | 'light' | 'system'
 
-/**
- * AI task roles a model can be assigned to. Unassigned roles fall back to
- * the chat panel's model, so nothing here is required configuration.
- */
-export const MODEL_ROLES = ['drafting', 'copyEdit', 'developmental', 'codex'] as const
-export type ModelRole = (typeof MODEL_ROLES)[number]
-export type ModelRoleMap = Record<ModelRole, string | null>
-
 export interface Prefs {
   autoCodex: boolean
   snapshotOnBlur: boolean
@@ -50,6 +52,8 @@ export interface Prefs {
   contextTargetTokens: number
   theme: ThemePref
   modelRoles: ModelRoleMap
+  /** Opt-in to seeing models that write explicit content without refusing. */
+  showUnfilteredModels: boolean
 }
 
 export async function readPrefs(): Promise<Prefs> {
@@ -70,7 +74,8 @@ export async function readPrefs(): Promise<Prefs> {
     theme: theme === 'light' || theme === 'system' ? theme : 'dark',
     modelRoles: Object.fromEntries(
       MODEL_ROLES.map((role) => [role, storedRoles[role] ?? null])
-    ) as ModelRoleMap
+    ) as ModelRoleMap,
+    showUnfilteredModels: state.prefs?.showUnfilteredModels ?? false
   }
 }
 

@@ -8,7 +8,8 @@ import { refreshAppMenu } from './menu'
 import { legacyUserDataDir, migrateLegacyStatePaths } from './store'
 import { flushAllAutocommits } from './git/service'
 import { initTelemetry, shutdownTelemetry } from './telemetry'
-import { logInfo, logError } from './log'
+import { logInfo, logWarn, logError } from './log'
+import { backfillModelMetadata } from './llm/local'
 
 /**
  * One-time migration from the app's original name ("pandoras-box"). Moves
@@ -124,6 +125,12 @@ app.whenReady().then(() => {
   createWindow()
   logInfo('app', `started v${app.getVersion()}`)
   void initTelemetry()
+  // Models registered before 0.5 carry no trained-window figure, which pins
+  // them to the old flat 16k cap. Backfilled in the background: it starts the
+  // worker to read GGUF headers, so it must not hold up the window.
+  void backfillModelMetadata().catch((err) =>
+    logWarn('llm', 'context metadata backfill failed', err)
+  )
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

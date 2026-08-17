@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { NovelStateSchema } from './schemas/project'
+import { CatalogEntryStatusSchema, HostedPickSchema, type ModelRoleMap } from './llm/catalog'
 
 export const ChatMessageSchema = z.object({
   role: z.enum(['system', 'user', 'assistant', 'tool']),
@@ -21,13 +22,18 @@ export const ModelInfoSchema = z.object({
     .optional()
 })
 
-/** Per-task model assignments; null = follow the chat panel's model. */
+/**
+ * Per-task model assignments; null = follow the chat panel's model.
+ *
+ * The `satisfies` clause is the guard: add a role to MODEL_ROLES and this
+ * stops compiling until the channel schema catches up.
+ */
 export const ModelRolesSchema = z.object({
   drafting: z.string().nullable(),
   copyEdit: z.string().nullable(),
   developmental: z.string().nullable(),
   codex: z.string().nullable()
-})
+}) satisfies z.ZodType<ModelRoleMap>
 
 export const StreamEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('delta'), text: z.string() }),
@@ -231,7 +237,9 @@ export const ipcContract = {
       contextTargetTokens: z.number(),
       theme: z.enum(['dark', 'light', 'system']),
       /** Per-task model assignments; null = use the chat panel's model. */
-      modelRoles: ModelRolesSchema
+      modelRoles: ModelRolesSchema,
+      /** Opt-in to seeing models that write explicit content without refusing. */
+      showUnfilteredModels: z.boolean()
     })
   },
   'prefs:set': {
@@ -245,7 +253,8 @@ export const ipcContract = {
         .union([z.literal(0), z.literal(8192), z.literal(16384), z.literal(32768)])
         .optional(),
       theme: z.enum(['dark', 'light', 'system']).optional(),
-      modelRoles: ModelRolesSchema.partial().optional()
+      modelRoles: ModelRolesSchema.partial().optional(),
+      showUnfilteredModels: z.boolean().optional()
     }),
     response: z.object({
       autoCodex: z.boolean(),
@@ -253,7 +262,8 @@ export const ipcContract = {
       snapshotIntervalMinutes: z.number(),
       contextTargetTokens: z.number(),
       theme: z.enum(['dark', 'light', 'system']),
-      modelRoles: ModelRolesSchema
+      modelRoles: ModelRolesSchema,
+      showUnfilteredModels: z.boolean()
     })
   },
   'sync:getConfig': {
@@ -326,24 +336,9 @@ export const ipcContract = {
         arch: z.string(),
         appleSilicon: z.boolean()
       }),
-      entries: z.array(
-        z.object({
-          id: z.string(),
-          name: z.string(),
-          description: z.string(),
-          sizeBytes: z.number(),
-          minMemoryGB: z.number(),
-          recommendedMemoryGB: z.number(),
-          contextLength: z.number(),
-          license: z.string(),
-          tier: z.enum(['light', 'mid', 'large']),
-          tags: z.array(z.string()),
-          fit: z.enum(['recommended', 'slow', 'too-large']),
-          installedPath: z.string().nullable(),
-          downloading: z.boolean(),
-          downloadedBytes: z.number()
-        })
-      )
+      entries: z.array(CatalogEntryStatusSchema),
+      /** OpenRouter picks; usable only once an API key is configured. */
+      hosted: z.array(HostedPickSchema)
     })
   },
   'models:download': {
@@ -389,10 +384,6 @@ export const ipcContract = {
   'models:cancelDownload': {
     request: z.object({ modelId: z.string() }),
     response: z.object({ cancelled: z.boolean() })
-  },
-  'models:delete': {
-    request: z.object({ modelId: z.string() }),
-    response: z.object({ deleted: z.literal(true) })
   },
   'project:setChatInstructions': {
     request: z.object({ novelDir: z.string(), instructions: z.string() }),
@@ -568,6 +559,16 @@ export const ipcEvents = {
     totalBytes: z.number(),
     done: z.boolean(),
     error: z.string().optional()
+  }),
+  /**
+   * The worker sized a local model's context window against live memory. The
+   * renderer budgets story context from its cached model list, so without this
+   * the first session after selecting a model plans against the import-time
+   * estimate rather than the window actually allocated.
+   */
+  'model:contextResolved': z.object({
+    modelId: z.string(),
+    contextLength: z.number()
   }),
   /** Fired when the agent (or a pipeline run) created new proposals. */
   'proposals:changed': z.object({}),

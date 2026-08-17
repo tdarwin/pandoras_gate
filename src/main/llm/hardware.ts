@@ -1,4 +1,9 @@
 import os from 'node:os'
+import type { Fit } from '../../shared/llm/catalog'
+
+// Defined with the catalog schema so main, renderer, and catalog.json can't
+// disagree about what a fit label is.
+export type { Fit }
 
 export interface HardwareInfo {
   totalMemoryGB: number
@@ -16,8 +21,6 @@ export function detectHardware(): HardwareInfo {
     appleSilicon: process.platform === 'darwin' && process.arch === 'arm64'
   }
 }
-
-export type Fit = 'recommended' | 'slow' | 'too-large'
 
 /**
  * Sizing heuristic: the model working set (weights + KV cache headroom) should

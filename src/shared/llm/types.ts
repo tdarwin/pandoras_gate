@@ -1,5 +1,8 @@
 export type ProviderId = 'local' | 'openrouter'
 
+// A local model's context window is not a constant: it depends on how much
+// memory is left after the weights load. See `src/shared/llm/memory.ts`.
+
 export interface ModelInfo {
   id: string
   name: string

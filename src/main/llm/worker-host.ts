@@ -26,8 +26,19 @@ class LlmWorkerHost {
   >()
   private pendingLoads = new Map<
     string,
-    { resolve: (contextLength: number) => void; reject: (err: Error) => void }
+    {
+      resolve: (r: { contextLength: number; resolved: boolean }) => void
+      reject: (err: Error) => void
+    }
   >()
+  /** Notified whenever the worker sizes a window against live memory. */
+  private contextListeners = new Set<(modelPath: string, contextLength: number) => void>()
+
+  /** Subscribes to resolved context windows; returns an unsubscribe function. */
+  onContextResolved(listener: (modelPath: string, contextLength: number) => void): () => void {
+    this.contextListeners.add(listener)
+    return () => this.contextListeners.delete(listener)
+  }
 
   private async ensureStarted(): Promise<void> {
     if (this.proc && this.readyPromise) return this.readyPromise
@@ -98,8 +109,16 @@ class LlmWorkerHost {
         break
       }
       case 'loaded': {
-        this.pendingLoads.get(msg.modelPath)?.resolve(msg.contextLength)
+        this.pendingLoads
+          .get(msg.modelPath)
+          ?.resolve({ contextLength: msg.contextLength, resolved: msg.resolved })
         this.pendingLoads.delete(msg.modelPath)
+        break
+      }
+      case 'contextResolved': {
+        for (const listener of this.contextListeners) {
+          listener(msg.modelPath, msg.contextLength)
+        }
         break
       }
       case 'loadError': {
@@ -130,9 +149,12 @@ class LlmWorkerHost {
     this.proc?.postMessage(msg)
   }
 
-  async loadModel(modelPath: string, contextSize?: number): Promise<number> {
+  async loadModel(
+    modelPath: string,
+    contextSize?: number
+  ): Promise<{ contextLength: number; resolved: boolean }> {
     await this.ensureStarted()
-    return new Promise<number>((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       this.pendingLoads.set(modelPath, { resolve, reject })
       this.send({ type: 'load', modelPath, ...(contextSize ? { contextSize } : {}) })
     })

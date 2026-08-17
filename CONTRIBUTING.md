@@ -105,6 +105,11 @@ issue and make the case.
 Maintainers cut releases by tagging; `.github/workflows/release.yml` handles the rest.
 Contributors don't need to bump versions or touch the Homebrew cask, which the workflow
 regenerates and pushes to [tdarwin/homebrew-tap](https://github.com/tdarwin/homebrew-tap).
+
+If your change is something a user would notice, add a line under `## [Unreleased]` in
+[CHANGELOG.md](CHANGELOG.md) — that file becomes the release notes, so describe what
+changed for someone writing a novel, not what changed in the diff. Internal refactors,
+test-only changes, and build tweaks don't need an entry.
 Note that forks build unsigned automatically — the signing and cask steps skip themselves
 when the secrets aren't present, so CI on your fork should be green.
 

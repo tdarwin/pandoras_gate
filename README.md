@@ -64,9 +64,20 @@ The design goals that follow from that:
   have it produce a first draft you rewrite.
 - **Model roles**: assign different models to drafting, copy-edit, developmental notes,
   and Codex maintenance — a big remote model for structure, a fast local one for passes.
+- **Model recommendations by task**: pick what you want help with — drafting, copy
+  editing, continuity notes, Codex upkeep — and optionally what you write (literary,
+  genre, romance, horror, RPG), and the catalog narrows to a few models that suit it, each
+  with a plain-language strength and an honest trade-off. Models that write explicit
+  content without refusing are included behind an opt-in toggle.
+- **Honest context windows**: every model says how much context *your* machine can actually
+  give it — computed from the weights and KV-cache cost against your memory, not a fixed
+  number. Where that turns out to be too little to write against, the app says so and points
+  you at a hosted model instead of letting you download something that won't do the job.
 - **Local models**: curated catalog with hardware-aware recommendations and resumable
   downloads, or import any GGUF. Inference runs in an isolated utility process (Metal on
-  Apple Silicon; CUDA/Vulkan/CPU on Windows).
+  Apple Silicon; CUDA/Vulkan/CPU on Windows). The catalog is published at
+  [pandorasgate.app/catalog.json](https://pandorasgate.app/catalog.json) and refreshed
+  without an app update; the build ships a copy as an offline fallback.
 - **One-paste publishing**: "Copy for RoyalRoad / Patreon" puts the chapter on the
   clipboard as platform-shaped rich HTML (scene breaks, heading depth, and stat tables
   adjusted per site, duplicate title heading dropped) with a plain-text fallback.
@@ -113,8 +124,9 @@ target is configured in `electron-builder.yml` and can be built locally.
 
 1. **New Novel** (or **Open Novel**) — pick a folder; the app scaffolds `novel.yaml`,
    `chapters/`, and `metadata/`, and initializes the hidden git repo.
-2. Add a model: **Preferences → Models** for an OpenRouter API key (stored in the OS
-   keychain, never in a file), or the model browser to download a local GGUF.
+2. Add a model: the chat panel's **Models** button opens the model manager. Tell it what
+   you want help with and download one of the local models it suggests, or paste an
+   OpenRouter API key (stored in the OS keychain, never in a file) to use hosted models.
 3. Write a chapter and save. The Codex pipeline proposes summary, character, and world
    updates; review them in the proposals queue.
 
