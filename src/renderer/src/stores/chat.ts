@@ -79,6 +79,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   init: () => {
     if (initialized) return
     initialized = true
+
+    // Story context is budgeted from this cached model list, so the window has
+    // to be corrected here as soon as the worker sizes it — otherwise the first
+    // session with a model plans against the import-time estimate, which on a
+    // tight machine means targeting more tokens than were actually allocated.
+    window.pandora.on('model:contextResolved', (raw) => {
+      const { modelId, contextLength } = raw as IpcEventPayload<'model:contextResolved'>
+      set((s) => ({
+        models: s.models.map((m) => (m.id === modelId ? { ...m, contextLength } : m))
+      }))
+    })
+
     window.pandora.on('chat:event', (raw) => {
       const { requestId, event } = raw as IpcEventPayload<'chat:event'>
       if (requestId !== get().requestId) return

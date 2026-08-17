@@ -20,11 +20,17 @@ let llamaPromise: Promise<Llama> | null = null
 let model: LlamaModel | null = null
 let loadedPath: string | null = null
 /**
- * Context size resolved for the currently loaded model, keyed by its path so a
- * model switch can never inherit the previous model's window. Cleared in
- * `ensureModel` alongside the model itself.
+ * Context size resolved for the currently loaded model. Keyed by path *and*
+ * ceiling: the same model asked for a different ceiling is a different answer,
+ * and caching on path alone made the window depend on whether a warm load or a
+ * chat happened to run first. Cleared in `ensureModel` with the model itself.
  */
-let resolvedContext: { modelPath: string; contextSize: number } | null = null
+let resolvedContext: {
+  modelPath: string
+  ceiling: number
+  contextSize: number
+  resolved: boolean
+} | null = null
 const activeChats = new Map<string, AbortController>()
 let nextCallId = 1
 const pendingToolResults = new Map<string, (result: string) => void>()
@@ -78,10 +84,17 @@ async function ensureModel(modelPath: string): Promise<LlamaModel> {
  * over-promised on large ones. `ceiling` is the app's policy cap; the resolver
  * may return less if the memory isn't there.
  */
-async function resolveContextSize(m: LlamaModel, ceiling?: number): Promise<number> {
-  if (resolvedContext?.modelPath === loadedPath) return resolvedContext.contextSize
+async function resolveContextSize(
+  m: LlamaModel,
+  ceiling?: number
+): Promise<{ contextSize: number; resolved: boolean }> {
   const max = Math.min(m.trainContextSize, ceiling ?? m.trainContextSize)
+  if (resolvedContext?.modelPath === loadedPath && resolvedContext.ceiling === max) {
+    return { contextSize: resolvedContext.contextSize, resolved: resolvedContext.resolved }
+  }
+
   let contextSize = max
+  let resolved = true
   try {
     contextSize = await m.fileInsights.configurationResolver.resolveContextContextSize(
       { max },
@@ -90,17 +103,25 @@ async function resolveContextSize(m: LlamaModel, ceiling?: number): Promise<numb
   } catch {
     // InsufficientMemoryError, or an estimator that can't judge this build.
     // Fall back to the requested ceiling and let createContext's own memory
-    // checks be the backstop.
+    // checks be the backstop — but say the number is a guess, so main doesn't
+    // record it as the model's real window.
+    resolved = false
   }
-  resolvedContext = { modelPath: loadedPath ?? '', contextSize }
-  return contextSize
+
+  resolvedContext = { modelPath: loadedPath ?? '', ceiling: max, contextSize, resolved }
+  // Announced rather than returned, so a window resolved on the chat path is
+  // recorded too — not just one a warm load asked for.
+  if (resolved) {
+    send({ type: 'contextResolved', modelPath: loadedPath ?? '', contextLength: contextSize })
+  }
+  return { contextSize, resolved }
 }
 
 async function handleLoad(modelPath: string, contextSize?: number): Promise<void> {
   try {
     const m = await ensureModel(modelPath)
-    const contextLength = await resolveContextSize(m, contextSize)
-    send({ type: 'loaded', modelPath, contextLength })
+    const { contextSize: contextLength, resolved } = await resolveContextSize(m, contextSize)
+    send({ type: 'loaded', modelPath, contextLength, resolved })
   } catch (err) {
     send({
       type: 'loadError',
@@ -122,7 +143,7 @@ async function handleChat(req: Extract<WorkerRequest, { type: 'chat' }>): Promis
     // set — a chat that arrives without a warm load used to allocate whatever
     // llama.cpp felt like, which the context assembler then budgeted against
     // wrongly in both directions.
-    const contextSize = await resolveContextSize(m, req.contextSize)
+    const { contextSize } = await resolveContextSize(m, req.contextSize)
     const context = await m.createContext({ contextSize: { max: contextSize } })
     try {
       const sequence = context.getSequence()

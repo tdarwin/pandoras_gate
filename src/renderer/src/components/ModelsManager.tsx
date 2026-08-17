@@ -362,22 +362,14 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
     void refresh()
   }
 
-  const removeCatalog = async (id: string): Promise<void> => {
-    await window.pandora.invoke('models:delete', { modelId: id })
+  const removeLocal = async (path: string): Promise<void> => {
+    // Main decides whether to delete the file, by location: anything the app
+    // downloaded is removed, an imported file is only deregistered. Deciding
+    // here on catalog membership orphaned the file whenever a model had since
+    // dropped out of the catalog.
+    await window.pandora.invoke('llm:removeLocalModel', { path })
     await refresh()
     await loadModels()
-  }
-
-  const removeLocal = async (path: string): Promise<void> => {
-    // Catalog-installed models get their file deleted too; imports are only
-    // deregistered (the user's own file stays put).
-    const catalogEntry = entries.find((e) => e.installedPath === path)
-    if (catalogEntry) {
-      await removeCatalog(catalogEntry.id)
-    } else {
-      await window.pandora.invoke('llm:removeLocalModel', { path })
-      await loadModels()
-    }
   }
 
   return (

@@ -93,6 +93,26 @@ describe('CatalogSource', () => {
     expect(catalog.models.length).toBe(bundled.models.length)
   })
 
+  it('still takes a published catalog that uses vocabulary this build lacks', async () => {
+    // The point of publishing the catalog is that it reaches installed apps.
+    // Strict enums used to make a single new style freeze every older install
+    // on its bundled copy for as long as it stayed installed.
+    const forwardLooking = publishedCatalog() as { models: Record<string, unknown>[] }
+    forwardLooking.models[0].styles = ['genre', 'cyberpunk']
+    mockFetch(() => jsonResponse(forwardLooking))
+    const catalog = await new CatalogSource().load()
+    expect(catalog.models.map((m) => m.id)).toEqual(['published-only'])
+    expect(catalog.models[0].styles).toEqual(['genre'])
+  })
+
+  it('keeps the usable entries when one is malformed', async () => {
+    const partly = publishedCatalog() as { models: Record<string, unknown>[] }
+    partly.models.push({ id: 'broken' })
+    mockFetch(() => jsonResponse(partly))
+    const catalog = await new CatalogSource().load()
+    expect(catalog.models.map((m) => m.id)).toEqual(['published-only'])
+  })
+
   it('falls back when the published catalog targets a newer schema', async () => {
     // Forward compatibility: an old app must not choke on a new catalog.
     mockFetch(() => jsonResponse(publishedCatalog({ catalogVersion: CATALOG_SCHEMA_VERSION + 1 })))

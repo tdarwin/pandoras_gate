@@ -29,7 +29,19 @@ export type WorkerRequest =
 /** Messages llm-worker -> main. */
 export type WorkerResponse =
   | { type: 'ready' }
-  | { type: 'loaded'; modelPath: string; contextLength: number }
+  | {
+      type: 'loaded'
+      modelPath: string
+      contextLength: number
+      /** False when the estimator couldn't judge and this is the ceiling, not a measurement. */
+      resolved: boolean
+    }
+  /**
+   * A context window was sized against live memory. Emitted whenever the worker
+   * resolves one — including on the chat path, which no `load` request covers —
+   * so the registry always reflects the window actually in use.
+   */
+  | { type: 'contextResolved'; modelPath: string; contextLength: number }
   | { type: 'loadError'; modelPath: string; message: string }
   | { type: 'event'; requestId: string; event: StreamEvent }
   | { type: 'tokenCount'; id: number; count: number }

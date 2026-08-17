@@ -1,16 +1,12 @@
-import { app, type WebContents } from 'electron'
+import type { WebContents } from 'electron'
 import { join } from 'node:path'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import type { ModelDownloader } from 'node-llama-cpp'
 import { catalogSource } from './catalog-source'
 import type { CatalogModel, HostedPick, CatalogEntryStatus } from '../../shared/llm/catalog'
 import { memoryRequirementsGB, memoryVerdict } from '../../shared/llm/memory'
 import { detectHardware } from './hardware'
-import { importGguf, listLocalModels, removeLocalModel } from './local'
-
-function modelsDir(): string {
-  return join(app.getPath('userData'), 'models')
-}
+import { importGguf, listLocalModels, modelsDir } from './local'
 
 interface ActiveDownload {
   downloader: ModelDownloader
@@ -190,10 +186,3 @@ export async function cancelDownload(modelId: string): Promise<boolean> {
   return true
 }
 
-/** Removes a downloaded catalog model from disk and the registry. */
-export async function deleteDownloadedModel(modelId: string): Promise<void> {
-  const entry = await catalogModel(modelId)
-  const path = join(modelsDir(), entry.filename)
-  await removeLocalModel(path)
-  await rm(path, { force: true })
-}

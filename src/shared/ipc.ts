@@ -385,10 +385,6 @@ export const ipcContract = {
     request: z.object({ modelId: z.string() }),
     response: z.object({ cancelled: z.boolean() })
   },
-  'models:delete': {
-    request: z.object({ modelId: z.string() }),
-    response: z.object({ deleted: z.literal(true) })
-  },
   'project:setChatInstructions': {
     request: z.object({ novelDir: z.string(), instructions: z.string() }),
     response: NovelStateSchema
@@ -563,6 +559,16 @@ export const ipcEvents = {
     totalBytes: z.number(),
     done: z.boolean(),
     error: z.string().optional()
+  }),
+  /**
+   * The worker sized a local model's context window against live memory. The
+   * renderer budgets story context from its cached model list, so without this
+   * the first session after selecting a model plans against the import-time
+   * estimate rather than the window actually allocated.
+   */
+  'model:contextResolved': z.object({
+    modelId: z.string(),
+    contextLength: z.number()
   }),
   /** Fired when the agent (or a pipeline run) created new proposals. */
   'proposals:changed': z.object({}),

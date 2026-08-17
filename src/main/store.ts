@@ -15,7 +15,10 @@ interface AppState {
   localModels?: {
     path: string
     name: string
+    /** Effective window for this machine, refreshed when the worker sizes it. */
     contextLength: number
+    /** Absent on entries written before 0.5; backfillModelMetadata() fills it in. */
+    trainContextLength?: number
     sizeBytes: number
   }[]
   /** Last-used model per novel dir, restored when the novel opens. */

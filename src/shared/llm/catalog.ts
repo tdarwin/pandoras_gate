@@ -62,8 +62,31 @@ export type Fit = (typeof FITS)[number]
  * Schema version this build understands. A catalog published with a higher
  * version is ignored in favour of the bundled copy, so adding required fields
  * later can't break an already-installed app.
+ *
+ * Bump it only for changes an old build genuinely cannot cope with — the cost
+ * is that every installed app stops taking published updates until its users
+ * upgrade. Adding a use case, style or tier does *not* need a bump: unknown
+ * vocabulary is filtered out on read (see `knownValues` below), so an older
+ * app keeps receiving the picks it can still understand.
  */
 export const CATALOG_SCHEMA_VERSION = 2
+
+/**
+ * Accepts a list of vocabulary values, dropping any this build doesn't know.
+ *
+ * Strict enums here would make publishing a catalog that uses a new style or
+ * use case silently freeze every older install on its bundled copy — the whole
+ * point of publishing the catalog is that it reaches those installs.
+ */
+function knownValues<const T extends readonly string[]>(
+  values: T
+): z.ZodType<T[number][], unknown> {
+  return z
+    .array(z.unknown())
+    .transform((raw) =>
+      raw.filter((v): v is T[number] => typeof v === 'string' && values.includes(v))
+    )
+}
 
 /** Fields every recommendable model carries, local or hosted. */
 const recommendableFields = {
@@ -73,8 +96,12 @@ const recommendableFields = {
   bestFor: z.string().min(1),
   /** The honest downside. Every model has one; saying it builds trust. */
   tradeoff: z.string().min(1),
-  useCases: z.array(z.enum(USE_CASES)).min(1),
-  styles: z.array(z.enum(STYLES)),
+  // An entry left with no recognizable use case can't be recommended by this
+  // build, so it fails validation and gets dropped — one entry, not the catalog.
+  useCases: knownValues(USE_CASES).refine((v) => v.length > 0, {
+    message: 'no use case this build recognizes'
+  }),
+  styles: knownValues(STYLES),
   /**
    * Writes explicit content on request. The same property makes it less likely
    * to refuse anything else, which is why it's surfaced rather than inferred.
@@ -128,6 +155,50 @@ export const CatalogFileSchema = z.object({
 })
 
 export type CatalogFile = z.infer<typeof CatalogFileSchema>
+
+/**
+ * Parses a catalog leniently: entries that don't validate are dropped and the
+ * rest are kept.
+ *
+ * All-or-nothing validation means one malformed or forward-looking entry costs
+ * the user every other recommendation in the file. Since the catalog is fetched
+ * from the network and may be written by a newer release than the one reading
+ * it, partial acceptance is the useful behaviour — the same "degrade with a
+ * readable message" rule the app applies to hand-edited novel files.
+ */
+export function parseCatalogLenient(
+  raw: unknown
+): { catalog: CatalogFile; dropped: number } | { error: string } {
+  const envelope = z
+    .object({
+      catalogVersion: z.number().int().positive(),
+      models: z.array(z.unknown()),
+      hosted: z.array(z.unknown())
+    })
+    .safeParse(raw)
+  if (!envelope.success) {
+    return { error: envelope.error.issues[0]?.message ?? 'not a catalog' }
+  }
+
+  const models: CatalogModel[] = []
+  const hosted: HostedPick[] = []
+  let dropped = 0
+  for (const entry of envelope.data.models) {
+    const parsed = CatalogModelSchema.safeParse(entry)
+    if (parsed.success) models.push(parsed.data)
+    else dropped++
+  }
+  for (const entry of envelope.data.hosted) {
+    const parsed = HostedPickSchema.safeParse(entry)
+    if (parsed.success) hosted.push(parsed.data)
+    else dropped++
+  }
+
+  if (models.length === 0 && hosted.length === 0) {
+    return { error: 'no usable entries' }
+  }
+  return { catalog: { catalogVersion: envelope.data.catalogVersion, models, hosted }, dropped }
+}
 
 /** A catalog model plus this machine's view of it. */
 export const CatalogEntryStatusSchema = z.object({

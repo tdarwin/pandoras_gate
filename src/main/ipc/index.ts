@@ -1,4 +1,4 @@
-import { app, clipboard, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain } from 'electron'
 import {
   ipcContract,
   type IpcChannel,
@@ -12,13 +12,17 @@ import * as gitService from '../git/service'
 import { refreshAppMenu } from '../menu'
 import { readAppState, touchRecentNovel } from '../store'
 import { getProvider, startChat, cancelChat } from '../llm/chat'
-import { importGguf, removeLocalModel, recordResolvedContext } from '../llm/local'
+import {
+  importGguf,
+  removeLocalModel,
+  recordResolvedContext,
+  contextCeilingFor
+} from '../llm/local'
 import {
   catalogStatus,
   startDownload,
   startHfDownload,
-  cancelDownload,
-  deleteDownloadedModel
+  cancelDownload
 } from '../llm/downloader'
 import { searchHfGgufModels, listHfGgufFiles } from '../llm/hf'
 import { detectHardware, fitForSize } from '../llm/hardware'
@@ -92,6 +96,20 @@ function handle<C extends IpcChannel>(
 }
 
 export function registerIpcHandlers(): void {
+  // The worker resolves context windows on both the warm-load and the chat
+  // path, so recording is driven by the worker rather than by whichever caller
+  // happened to trigger the load. The renderer is told as well, because it
+  // budgets story context from its own cached copy of the model list.
+  llmWorkerHost.onContextResolved((modelPath, contextLength) => {
+    void recordResolvedContext(modelPath, contextLength).catch(() => {})
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.webContents.isDestroyed()) {
+        win.webContents.send('model:contextResolved', { modelId: modelPath, contextLength })
+      }
+    }
+  })
+
+
   handle('app:getInfo', () => ({
     version: app.getVersion(),
     electron: process.versions.electron ?? 'unknown',
@@ -354,13 +372,9 @@ export function registerIpcHandlers(): void {
     const entry = models.find((m) => m.path === req.modelId)
     if (!entry) return { warming: false }
     // Fire-and-forget: first chat gets a hot model instead of a load stall.
-    // The resolved window is recorded because it's the real one — the entry's
-    // value is only an estimate until a load has actually sized it against
-    // this machine's memory.
-    void llmWorkerHost
-      .loadModel(entry.path, entry.trainContextLength ?? entry.contextLength)
-      .then((contextLength) => recordResolvedContext(entry.path, contextLength))
-      .catch(() => {})
+    // The window is recorded by the worker's contextResolved listener, not
+    // here — that covers the chat path too, which no warm load precedes.
+    void llmWorkerHost.loadModel(entry.path, contextCeilingFor(entry)).catch(() => {})
     return { warming: true }
   })
 
@@ -395,11 +409,6 @@ export function registerIpcHandlers(): void {
     pushed: true as const,
     remoteUrl: await pushToRemote(req.novelDir)
   }))
-
-  handle('models:delete', async (req) => {
-    await deleteDownloadedModel(req.modelId)
-    return { deleted: true as const }
-  })
 
   handle('project:setChatInstructions', async (req) => {
     const manifest = await project.readNovelManifest(req.novelDir)

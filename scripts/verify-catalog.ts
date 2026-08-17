@@ -18,8 +18,11 @@
  * their machine will actually give a model *before* they download it, so it is
  * measured, never hand-authored.
  *
- * Node strips the types natively (Node 22.6+), so there is no build step and
- * no extra dependency.
+ * Needs Node 22.18+ or 23.6+: those are the releases where type stripping runs
+ * unflagged. (22.6 added it behind --experimental-strip-types, which the npm
+ * script doesn't pass, so 22.6–22.17 fails with "Unknown file extension .ts".)
+ * scripts/ts-resolve.mjs additionally needs module.registerHooks, added in
+ * 22.15/23.5. No build step and no extra dependency.
  */
 import { readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'

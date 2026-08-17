@@ -9,7 +9,7 @@ and get a change merged. For the *why* behind the project, see the
 
 | Tool | Version | Notes |
 | --- | --- | --- |
-| Node.js | 22 LTS or newer | CI builds on Node 22 |
+| Node.js | 22.18+ or 23.6+ | CI builds on Node 22; `verify:catalog` needs unflagged TS stripping |
 | npm | ships with Node | the repo uses `package-lock.json`; `npm ci` in CI |
 | git | any recent | also used *by* the app, via `isomorphic-git` |
 | Xcode Command Line Tools | current | macOS only; needed for native modules |

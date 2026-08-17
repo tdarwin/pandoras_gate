@@ -1,6 +1,17 @@
-import { registerHooks } from 'node:module'
+import module from 'node:module'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+
+// Fail with the actual requirement rather than "registerHooks is not a
+// function" or "Unknown file extension .ts" six frames deep.
+if (typeof module.registerHooks !== 'function') {
+  console.error(
+    `This script needs Node 22.18+ or 23.6+ (running ${process.version}).\n` +
+      'Earlier versions lack unflagged TypeScript stripping and/or module.registerHooks.'
+  )
+  process.exit(1)
+}
+const { registerHooks } = module
 
 /**
  * Lets plain `node` run scripts that import the app's TypeScript sources.

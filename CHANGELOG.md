@@ -46,7 +46,14 @@ Write for a novelist, not for a reviewer of the diff.
 - **Local models are no longer capped at a 16k context window.** The cap was a fixed number
   applied to every model on every machine, and it was wrong in both directions: a small
   model on a 16GB laptop can hold 64k, while a large one on the same machine has room for
-  about 4k. A 16GB machine now typically gets **64k** where it used to get 16k.
+  about 4k. A 16GB machine now typically gets **64k** where it used to get 16k. Models you
+  already downloaded are re-measured in the background the first time you open this
+  version, so they get the larger window too.
+- **Removing a model now deletes the file** whenever the app was the one that downloaded
+  it, including from the Hugging Face browser. Previously it only deleted models the
+  current catalog still listed, so anything that had since been rotated out was quietly
+  left on disk. Models you imported from your own disk are still only unregistered — the
+  file stays where you put it.
 
 ### Fixed
 

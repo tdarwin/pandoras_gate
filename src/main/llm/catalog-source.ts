@@ -1,5 +1,10 @@
 import bundledJson from './catalog.json'
-import { CatalogFileSchema, CATALOG_SCHEMA_VERSION, type CatalogFile } from '../../shared/llm/catalog'
+import {
+  CatalogFileSchema,
+  CATALOG_SCHEMA_VERSION,
+  parseCatalogLenient,
+  type CatalogFile
+} from '../../shared/llm/catalog'
 import { logInfo, logWarn } from '../log'
 
 /**
@@ -52,20 +57,24 @@ export class CatalogSource {
       })
       if (!res.ok) return this.fallback(`HTTP ${res.status}`)
 
-      const parsed = CatalogFileSchema.safeParse(await res.json())
-      if (!parsed.success) {
-        return this.fallback(`published catalog failed validation: ${parsed.error.issues[0]?.message}`)
+      const parsed = parseCatalogLenient(await res.json())
+      if ('error' in parsed) {
+        return this.fallback(`published catalog failed validation: ${parsed.error}`)
       }
       // Forward compatibility: a catalog written for a later schema may rely on
       // fields this build ignores, so prefer the copy we were built against.
-      if (parsed.data.catalogVersion > CATALOG_SCHEMA_VERSION) {
+      if (parsed.catalog.catalogVersion > CATALOG_SCHEMA_VERSION) {
         return this.fallback(
-          `published catalog is version ${parsed.data.catalogVersion}, this build understands ${CATALOG_SCHEMA_VERSION}`
+          `published catalog is version ${parsed.catalog.catalogVersion}, this build understands ${CATALOG_SCHEMA_VERSION}`
         )
       }
 
-      logInfo('llm', `loaded published model catalog (${parsed.data.models.length} models)`)
-      return parsed.data
+      logInfo(
+        'llm',
+        `loaded published model catalog (${parsed.catalog.models.length} models` +
+          `${parsed.dropped > 0 ? `, ${parsed.dropped} entry/entries this build can't use` : ''})`
+      )
+      return parsed.catalog
     } catch (err) {
       return this.fallback(err instanceof Error ? err.message : String(err))
     }

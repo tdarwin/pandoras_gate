@@ -1,10 +1,12 @@
-import { basename } from 'node:path'
-import { access } from 'node:fs/promises'
+import { app } from 'electron'
+import { basename, dirname, join, sep } from 'node:path'
+import { access, rm } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import type { ChatRequest, LLMProvider, ModelInfo, StreamEvent } from '../../shared/llm/types'
 import { DEFAULT_CONTEXT_CEILING } from '../../shared/llm/memory'
 import { llmWorkerHost } from './worker-host'
 import { readAppState, writeAppState } from '../store'
-import { logWarn } from '../log'
+import { logInfo, logWarn } from '../log'
 
 /**
  * Local models are GGUF files the user imported (or downloaded via the
@@ -24,6 +26,50 @@ export interface LocalModelEntry {
   /** The window the model was trained on; the ceiling on the above. */
   trainContextLength?: number
   sizeBytes: number
+}
+
+/** Where the app puts models it downloaded itself, as opposed to imports. */
+export function modelsDir(): string {
+  return join(app.getPath('userData'), 'models')
+}
+
+function realpathOrSelf(p: string): string {
+  try {
+    return realpathSync.native(p)
+  } catch {
+    return p
+  }
+}
+
+/**
+ * True for files the app downloaded, wherever in the models tree they sit.
+ *
+ * Compared in both literal and symlink-resolved form: on macOS `/var` is a link
+ * to `/private/var`, so a stored path and `modelsDir()` can name the same
+ * directory in two different ways. Getting that wrong would silently leave
+ * downloads on disk. Resolves the parent rather than the file so a deleted or
+ * symlinked model doesn't change the answer.
+ */
+export function isManagedModelFile(path: string): boolean {
+  const roots = new Set([modelsDir(), realpathOrSelf(modelsDir())])
+  const parent = dirname(path)
+  const parents = new Set([parent, realpathOrSelf(parent)])
+  for (const p of parents) {
+    for (const root of roots) {
+      if ((p + sep).startsWith(root + sep)) return true
+    }
+  }
+  return false
+}
+
+/**
+ * The window to ask the worker for: the model's own limit, capped by app
+ * policy. Both the warm-load and chat paths go through this — passing the
+ * trained window directly let a large-memory machine resolve a 256k context
+ * and a ~17GB KV cache, while the picker had promised 64k.
+ */
+export function contextCeilingFor(entry: LocalModelEntry): number {
+  return Math.min(entry.trainContextLength ?? entry.contextLength, DEFAULT_CONTEXT_CEILING)
 }
 
 /** Missing files already warned about, so a stale entry logs once per run. */
@@ -92,12 +138,76 @@ export async function recordResolvedContext(path: string, contextLength: number)
   })
 }
 
+/**
+ * Deregisters a model, and deletes the file when the app is the one that put it
+ * there.
+ *
+ * Ownership is decided by location, not by whether the live catalog still lists
+ * the model. Deciding by catalog membership meant that once a model was rotated
+ * out of the catalog — which happens routinely now that it updates without an
+ * app release — "Remove" silently left multi-gigabyte files behind. A file the
+ * user imported from their own disk is still only deregistered.
+ */
 export async function removeLocalModel(path: string): Promise<void> {
   const state = await readAppState()
   await writeAppState({
     ...state,
     localModels: (state.localModels ?? []).filter((m) => m.path !== path)
   })
+  if (isManagedModelFile(path)) {
+    await rm(path, { force: true })
+    // Catalog downloads live in modelsDir() directly; Hugging Face browser
+    // downloads get a per-repo subdirectory that is now empty.
+    const dir = path.slice(0, path.lastIndexOf(sep))
+    if (dir !== modelsDir()) await rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+/**
+ * Fills in metadata for models registered by earlier versions.
+ *
+ * Before 0.5 the registry stored `contextLength = min(trained, 16384)` and no
+ * trained window at all, so those entries would stay pinned at the old flat cap
+ * forever: the ceiling derived from them can never exceed 16k, so the resolver
+ * has nothing to widen to. Reads the GGUF header once per stale entry and
+ * rewrites both fields.
+ *
+ * Best-effort by design — a model on an unplugged drive is skipped and retried
+ * next launch rather than dropped.
+ */
+export async function backfillModelMetadata(): Promise<{ updated: number }> {
+  const state = await readAppState()
+  const models = state.localModels ?? []
+  const stale = models.filter((m) => m.trainContextLength === undefined)
+  if (stale.length === 0) return { updated: 0 }
+
+  const updates = new Map<string, { trainContextLength: number; contextLength: number }>()
+  for (const entry of stale) {
+    try {
+      await access(entry.path)
+      const info = await llmWorkerHost.ggufInfo(entry.path)
+      if (!info) continue
+      updates.set(entry.path, {
+        trainContextLength: info.trainContextLength,
+        contextLength: Math.min(info.trainContextLength, DEFAULT_CONTEXT_CEILING)
+      })
+    } catch {
+      // Unreadable or missing — leave it stale and try again next launch.
+    }
+  }
+  if (updates.size === 0) return { updated: 0 }
+
+  // Re-read: a download may have registered a model while we were reading headers.
+  const latest = await readAppState()
+  await writeAppState({
+    ...latest,
+    localModels: (latest.localModels ?? []).map((m) => {
+      const update = updates.get(m.path)
+      return update ? { ...m, ...update } : m
+    })
+  })
+  logInfo('llm', `backfilled context metadata for ${updates.size} model(s)`)
+  return { updated: updates.size }
 }
 
 export class LocalProvider implements LLMProvider {
@@ -125,7 +235,7 @@ export class LocalProvider implements LLMProvider {
       {
         requestId: crypto.randomUUID(),
         modelPath: entry.path,
-        contextSize: entry.contextLength,
+        contextSize: contextCeilingFor(entry),
         messages: req.messages,
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
         ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
