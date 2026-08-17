@@ -157,6 +157,47 @@ export const CatalogFileSchema = z.object({
 export type CatalogFile = z.infer<typeof CatalogFileSchema>
 
 /**
+ * Vocabulary values in a raw catalog that this build does not recognize.
+ *
+ * Leniency is right for a *fetched* catalog — a newer publication should still
+ * be usable — but wrong for the copy we ship: there, an unknown value is a
+ * typo, and filtering it silently means `styles: ["romanse"]` becomes `[]` with
+ * every test and `verify:catalog` still passing, and the tag simply gone. Run
+ * this against the bundled file to get the loud failure back.
+ *
+ * Works on the raw JSON rather than parsed output, because by then the
+ * offending values have already been dropped.
+ */
+export function unknownVocabulary(raw: unknown): string[] {
+  const problems: string[] = []
+  const checkList = (id: string, field: string, values: unknown, known: readonly string[]): void => {
+    if (!Array.isArray(values)) return
+    for (const value of values) {
+      if (typeof value !== 'string' || !known.includes(value)) {
+        problems.push(`${id}.${field}: ${JSON.stringify(value)}`)
+      }
+    }
+  }
+
+  const file = raw as { models?: unknown; hosted?: unknown }
+  for (const group of [file?.models, file?.hosted]) {
+    if (!Array.isArray(group)) continue
+    for (const raw of group) {
+      const entry = raw as Record<string, unknown>
+      const id = typeof entry?.id === 'string' ? entry.id : '<no id>'
+      checkList(id, 'useCases', entry?.useCases, USE_CASES)
+      checkList(id, 'styles', entry?.styles, STYLES)
+      // Not filtered on read — an unknown tier drops the whole entry — but a
+      // typo here would be just as silent.
+      if (entry?.tier !== undefined && !(TIERS as readonly unknown[]).includes(entry.tier)) {
+        problems.push(`${id}.tier: ${JSON.stringify(entry.tier)}`)
+      }
+    }
+  }
+  return problems
+}
+
+/**
  * Parses a catalog leniently: entries that don't validate are dropped and the
  * rest are kept.
  *

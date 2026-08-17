@@ -1,6 +1,6 @@
 import { app } from 'electron'
-import { basename, dirname, join, sep } from 'node:path'
-import { access, rm } from 'node:fs/promises'
+import { basename, dirname, join, resolve, sep } from 'node:path'
+import { access, rm, rmdir } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import type { ChatRequest, LLMProvider, ModelInfo, StreamEvent } from '../../shared/llm/types'
 import { DEFAULT_CONTEXT_CEILING } from '../../shared/llm/memory'
@@ -51,8 +51,11 @@ function realpathOrSelf(p: string): string {
  * symlinked model doesn't change the answer.
  */
 export function isManagedModelFile(path: string): boolean {
-  const roots = new Set([modelsDir(), realpathOrSelf(modelsDir())])
-  const parent = dirname(path)
+  // Normalized first: an un-resolved `…/models/../elsewhere/x.gguf` would
+  // otherwise pass the prefix check, and this decides what gets deleted.
+  const target = resolve(path)
+  const roots = new Set([modelsDir(), realpathOrSelf(modelsDir())].map((r) => resolve(r)))
+  const parent = dirname(target)
   const parents = new Set([parent, realpathOrSelf(parent)])
   for (const p of parents) {
     for (const root of roots) {
@@ -154,13 +157,17 @@ export async function removeLocalModel(path: string): Promise<void> {
     ...state,
     localModels: (state.localModels ?? []).filter((m) => m.path !== path)
   })
-  if (isManagedModelFile(path)) {
-    await rm(path, { force: true })
-    // Catalog downloads live in modelsDir() directly; Hugging Face browser
-    // downloads get a per-repo subdirectory that is now empty.
-    const dir = path.slice(0, path.lastIndexOf(sep))
-    if (dir !== modelsDir()) await rm(dir, { recursive: true, force: true }).catch(() => {})
-  }
+  if (!isManagedModelFile(path)) return
+
+  const target = resolve(path)
+  await rm(target, { force: true })
+
+  // The per-repo directory a Hugging Face download creates is shared by every
+  // quant pulled from that repo, so it may only go when the last one does.
+  // `rmdir` refuses a non-empty directory — which is exactly that test — and,
+  // unlike a recursive remove, it cannot take a sibling quant with it.
+  const dir = dirname(target)
+  if (dir !== resolve(modelsDir())) await rmdir(dir).catch(() => {})
 }
 
 /**

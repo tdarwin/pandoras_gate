@@ -27,7 +27,12 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { CatalogFileSchema, type CatalogModel, type HostedPick } from '../src/shared/llm/catalog.ts'
+import {
+  CatalogFileSchema,
+  unknownVocabulary,
+  type CatalogModel,
+  type HostedPick
+} from '../src/shared/llm/catalog.ts'
 import { CONTEXT_SAMPLES, type MemoryProfile } from '../src/shared/llm/memory.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -254,7 +259,21 @@ async function main(): Promise<void> {
     fail('site/catalog.json', 'differs from the bundled copy; they must stay byte-identical')
   }
 
-  const parsed = CatalogFileSchema.safeParse(JSON.parse(bundledRaw))
+  const rawCatalog: unknown = JSON.parse(bundledRaw)
+
+  // The schema filters unknown use cases and styles so a catalog published by a
+  // newer release still works in an older app. That would quietly swallow a
+  // typo here, so the file we ship is checked against the strict vocabulary
+  // before anything else.
+  const unknown = unknownVocabulary(rawCatalog)
+  if (unknown.length > 0) {
+    console.error('catalog.json uses vocabulary this build does not define:')
+    for (const problem of unknown) console.error(`  ${problem}`)
+    console.error('\nFix the typo, or add the value to USE_CASES/STYLES/TIERS.')
+    process.exit(1)
+  }
+
+  const parsed = CatalogFileSchema.safeParse(rawCatalog)
   if (!parsed.success) {
     console.error('catalog.json failed schema validation:')
     console.error(JSON.stringify(parsed.error.issues, null, 2))

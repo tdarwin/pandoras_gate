@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url'
 
 // Fail with the actual requirement rather than "registerHooks is not a
 // function" or "Unknown file extension .ts" six frames deep.
-if (typeof module.registerHooks !== 'function') {
+//
+// `process.features.typescript` is the precise test: it is set only once type
+// stripping runs unflagged (22.18+/23.6+). Checking registerHooks alone let
+// 22.15–22.17 through the guard and straight into the extension error.
+if (!process.features.typescript || typeof module.registerHooks !== 'function') {
   console.error(
     `This script needs Node 22.18+ or 23.6+ (running ${process.version}).\n` +
       'Earlier versions lack unflagged TypeScript stripping and/or module.registerHooks.'

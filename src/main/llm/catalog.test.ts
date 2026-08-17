@@ -8,7 +8,8 @@ import {
   STYLES,
   TIERS,
   USE_CASES,
-  recommend
+  recommend,
+  unknownVocabulary
 } from '../../shared/llm/catalog'
 import {
   COMFORTABLE_CONTEXT,
@@ -48,6 +49,14 @@ describe('bundled catalog', () => {
 
   it('declares a version this build understands', () => {
     expect(bundled.catalogVersion).toBeLessThanOrEqual(CATALOG_SCHEMA_VERSION)
+  })
+
+  it('uses only vocabulary this build knows', () => {
+    // The schema filters unknown use cases and styles so a *published* catalog
+    // from a newer release still works. That leniency would hide a typo in the
+    // copy we ship — "romanse" would parse fine and simply vanish — so the
+    // bundled file is held to the strict list.
+    expect(unknownVocabulary(bundled)).toEqual([])
   })
 
   it('is byte-identical to the published copy', () => {

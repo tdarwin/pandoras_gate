@@ -127,6 +127,54 @@ describe('removeLocalModel', () => {
     await expect(access(outside)).resolves.toBeUndefined()
   })
 
+  it('leaves the other quants alone when one is removed from a shared repo', async () => {
+    // Regression: the per-repo directory is shared by every quant pulled from
+    // that repo, so removing one used to recursively delete the rest — they
+    // vanished from disk while still registered.
+    const repoDir = join(dirs.userData, 'models', 'owner__repo')
+    const q4 = join(repoDir, 'model-Q4_K_M.gguf')
+    const q8 = join(repoDir, 'model-Q8_0.gguf')
+    await mkdir(repoDir, { recursive: true })
+    await writeFile(q4, 'gguf')
+    await writeFile(q8, 'gguf')
+    await writeFile(
+      join(dirs.userData, 'app-state.json'),
+      JSON.stringify({
+        recentNovels: [],
+        localModels: [
+          { path: q4, name: 'Q4', contextLength: 8192, sizeBytes: 1 },
+          { path: q8, name: 'Q8', contextLength: 8192, sizeBytes: 1 }
+        ]
+      })
+    )
+
+    await removeLocalModel(q4)
+    await expect(access(q4)).rejects.toThrow()
+    await expect(access(q8)).resolves.toBeUndefined()
+    expect((await listLocalModels()).map((m) => m.name)).toEqual(['Q8'])
+    // The shared directory has to survive while a sibling still lives in it.
+    await expect(access(repoDir)).resolves.toBeUndefined()
+  })
+
+  it('refuses to treat a path escaping the models directory as managed', async () => {
+    // This function decides what gets deleted, so an un-normalized path must
+    // not be able to walk out of modelsDir() and back somewhere else.
+    const escaped = join(dirs.userData, 'models', '..', 'elsewhere', 'mine.gguf')
+    expect(isManagedModelFile(escaped)).toBe(false)
+
+    await mkdir(join(dirs.userData, 'elsewhere'), { recursive: true })
+    await writeFile(join(dirs.userData, 'elsewhere', 'mine.gguf'), 'gguf')
+    await writeFile(
+      join(dirs.userData, 'app-state.json'),
+      JSON.stringify({
+        recentNovels: [],
+        localModels: [{ path: escaped, name: 'Escaped', contextLength: 8192, sizeBytes: 1 }]
+      })
+    )
+    await removeLocalModel(escaped)
+    await expect(access(join(dirs.userData, 'elsewhere', 'mine.gguf'))).resolves.toBeUndefined()
+  })
+
   it('cleans up the per-repo directory a Hugging Face download created', async () => {
     const repoDir = join(dirs.userData, 'models', 'owner__repo')
     const nested = join(repoDir, 'model.gguf')
