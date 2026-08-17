@@ -253,19 +253,24 @@ Releases are cut by `.github/workflows/release.yml` on any `v*` tag:
 1. `npm run test` and `npm run typecheck`
 2. Signing is configured **if** the `MAC_CSC_*` / `APPLE_*` secrets exist — forks build
    unsigned automatically, no changes needed
-3. The GitHub release for the tag is created up front, before the build
-4. `electron-builder --mac --publish always` builds the DMG and uploads it to that release
-5. When signing was configured, a tripwire step verifies `codesign`, `stapler validate`,
+3. `electron-builder --mac --publish never` builds and signs the DMG, publishing nothing
+4. When signing was configured, a tripwire step verifies `codesign`, `stapler validate`,
    and a "Notarized Developer ID" verdict from `spctl` — a release that quietly built
    unsigned fails the workflow instead of shipping
+5. Only then is the GitHub release created and the DMG uploaded
 6. `Casks/pandoras-gate.rb` is regenerated with the new version and checksum and pushed to
    [tdarwin/homebrew-tap](https://github.com/tdarwin/homebrew-tap), so the Homebrew tap
    updates itself
 
-Step 3 exists because electron-builder runs a GitHub publisher per artifact. Without a
-release to upload into, each one creates its own, splitting the DMG and the blockmap across
-two releases for the same tag — and the tag's download URL only resolves to one of them.
-That broke the v0.4.1 DMG. Pre-creating the release removes the race.
+The build/verify/publish split matters twice over. It keeps a build that failed signing or
+notarization from ever becoming a visible release — `--publish always` used to upload
+before the tripwire ran, so a bad build reached users and only then failed the workflow.
+And it sidesteps an electron-builder bug: its GitHub publisher runs once per artifact, and
+with no release for the tag each copy creates its own, splitting assets across two releases
+where the tag's download URL resolves to only one. That is what broke the v0.4.1 DMG.
+
+The publish step is re-runnable — an existing release is uploaded into rather than
+recreated — so a failed run can be retried from the Actions tab without cleanup.
 
 The cask lives in a separate repo because Homebrew only resolves the
 `brew install --cask tdarwin/tap/pandoras-gate` shorthand — the single command users
