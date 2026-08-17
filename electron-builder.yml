@@ -41,7 +41,10 @@ publish:
   provider: github
   owner: tdarwin
   repo: pandoras_gate
-  # Publish directly to the tag's release — the draft default splits assets
-  # across duplicate drafts and leaves the release invisible.
+  # Retained so electron-builder generates update metadata and knows where the
+  # app is distributed from. It no longer does the uploading: the workflow
+  # builds with `--publish never` and creates the release itself, after the
+  # notarization tripwire. electron-builder's publisher ran once per artifact
+  # and the copies raced to create the release, splitting assets across two.
   releaseType: release
 npmRebuild: false

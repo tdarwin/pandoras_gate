@@ -48,12 +48,15 @@ jobs:
             echo "No signing secrets — building unsigned (install with --no-quarantine)."
           fi
 
-      - name: Build and publish release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Builds but publishes nothing: the release is created further down, only
+      # after the notarization tripwire has passed. `--publish always` used to
+      # upload here, which put a broken build in front of users before the
+      # tripwire could fail the run, and let electron-builder's per-artifact
+      # publishers race each other to create the release (see below).
+      - name: Build
         run: |
           npx electron-vite build
-          npx electron-builder --config electron-builder.yml --mac --publish always
+          npx electron-builder --config electron-builder.yml --mac --publish never
 
       # Tripwire: when signing is configured, a release that somehow built
       # unsigned or un-notarized (expired cert, mistyped secret, notary
@@ -71,16 +74,86 @@ jobs:
           spctl -a -t exec -vv "$APP" 2>&1 | tee /tmp/spctl.out
           grep -q "Notarized Developer ID" /tmp/spctl.out
 
-      - name: Update Homebrew cask
+      # Nothing is published until the tripwire above has passed, so a build
+      # that failed signing or notarization never becomes a visible release.
+      #
+      # Uploading explicitly also settles an electron-builder bug: it runs one
+      # GitHub publisher per artifact, concurrently, and with no release for the
+      # tag each one independently concludes "release doesn't exist" and creates
+      # its own. The tag ends up with two releases and the assets split between
+      # them, and /releases/download/<tag>/ resolves to only one. v0.4.1 lost
+      # that coin flip — the DMG became unreachable and the Homebrew cask 404'd.
+      #
+      # Re-runnable: an existing release is uploaded into rather than recreated.
+      - name: Publish the GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
           DMG="dist/Pandoras-Gate-${VERSION}-arm64.dmg"
+
+          # The DMG is the release; anything else is optional update metadata
+          # that only electron-updater consumes.
+          if [ ! -f "$DMG" ]; then
+            echo "Expected $DMG, found:"
+            ls -1 dist || true
+            exit 1
+          fi
+
+          ASSETS=("$DMG")
+          for extra in "${DMG}.blockmap" dist/latest-mac.yml; do
+            if [ -f "$extra" ]; then
+              ASSETS+=("$extra")
+            fi
+          done
+          echo "Publishing ${#ASSETS[@]} asset(s): ${ASSETS[*]}"
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME exists — uploading into it."
+            gh release upload "$GITHUB_REF_NAME" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$VERSION" \
+              --generate-notes \
+              "${ASSETS[@]}"
+          fi
+
+      # The cask lives in tdarwin/homebrew-tap, not here, because Homebrew only
+      # resolves the `brew install tdarwin/tap/pandoras-gate` shorthand against
+      # repos named homebrew-*. Reaching another repo needs a PAT — GITHUB_TOKEN
+      # is scoped to this one. Forks without the secret skip the cask update
+      # rather than failing the release; gated on env, since the secrets context
+      # is not allowed in `if` conditionals.
+      - name: Check for tap credentials
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "TAP_UPDATE=1" >> "$GITHUB_ENV"
+          else
+            echo "No HOMEBREW_TAP_TOKEN — skipping the Homebrew cask update."
+          fi
+
+      - name: Check out the Homebrew tap
+        if: env.TAP_UPDATE == '1'
+        uses: actions/checkout@v7
+        with:
+          repository: tdarwin/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update Homebrew cask
+        if: env.TAP_UPDATE == '1'
+        working-directory: homebrew-tap
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG="../dist/Pandoras-Gate-${VERSION}-arm64.dmg"
           SHA=$(shasum -a 256 "$DMG" | cut -d' ' -f1)
 
-          git fetch origin main
-          git checkout main
           mkdir -p Casks
           cat > Casks/pandoras-gate.rb <<CASK
           cask "pandoras-gate" do
@@ -109,4 +182,4 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Casks/pandoras-gate.rb
           git commit -m "cask: pandoras-gate ${VERSION}" || echo "cask unchanged"
-          git push origin main
+          git push

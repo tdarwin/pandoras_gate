@@ -326,12 +326,32 @@ Releases are cut by `.github/workflows/release.yml` on any `v*` tag:
 1. `npm run test` and `npm run typecheck`
 2. Signing is configured **if** the `MAC_CSC_*` / `APPLE_*` secrets exist — forks build
    unsigned automatically, no changes needed
-3. `electron-builder --mac --publish always` builds the DMG and creates the GitHub release
+3. `electron-builder --mac --publish never` builds and signs the DMG, publishing nothing
 4. When signing was configured, a tripwire step verifies `codesign`, `stapler validate`,
    and a "Notarized Developer ID" verdict from `spctl` — a release that quietly built
    unsigned fails the workflow instead of shipping
-5. `Casks/pandoras-gate.rb` is regenerated with the new version and checksum and pushed to
-   `main`, so the Homebrew tap updates itself
+5. Only then is the GitHub release created and the DMG uploaded
+6. `Casks/pandoras-gate.rb` is regenerated with the new version and checksum and pushed to
+   [tdarwin/homebrew-tap](https://github.com/tdarwin/homebrew-tap), so the Homebrew tap
+   updates itself
+
+The build/verify/publish split matters twice over. It keeps a build that failed signing or
+notarization from ever becoming a visible release — `--publish always` used to upload
+before the tripwire ran, so a bad build reached users and only then failed the workflow.
+And it sidesteps an electron-builder bug: its GitHub publisher runs once per artifact, and
+with no release for the tag each copy creates its own, splitting assets across two releases
+where the tag's download URL resolves to only one. That is what broke the v0.4.1 DMG.
+
+The publish step is re-runnable — an existing release is uploaded into rather than
+recreated — so a failed run can be retried from the Actions tab without cleanup.
+
+The cask lives in a separate repo because Homebrew only resolves the
+`brew install --cask tdarwin/tap/pandoras-gate` shorthand — the single command users
+actually run — against repos named `homebrew-*`. Pushing there needs a fine-grained PAT
+with **Contents: read and write** on `tdarwin/homebrew-tap`, stored on this repo as the
+`HOMEBREW_TAP_TOKEN` secret; the ambient `GITHUB_TOKEN` can't reach another repository.
+Without that secret the release still completes and only the cask update is skipped, so
+forks cutting tags don't break.
 
 To cut a release: bump `version` in `package.json`, commit, then tag and push.
 
