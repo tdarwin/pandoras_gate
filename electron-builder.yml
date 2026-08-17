@@ -41,7 +41,9 @@ publish:
   provider: github
   owner: tdarwin
   repo: pandoras_gate
-  # Publish directly to the tag's release — the draft default splits assets
-  # across duplicate drafts and leaves the release invisible.
+  # Publish directly to the tag's release rather than the draft default, which
+  # leaves the release invisible. This alone does NOT stop assets splitting
+  # across duplicate releases — that's a publisher race fixed by creating the
+  # release up front in release.yml.
   releaseType: release
 npmRebuild: false

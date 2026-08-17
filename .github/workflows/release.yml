@@ -48,6 +48,31 @@ jobs:
             echo "No signing secrets — building unsigned (install with --no-quarantine)."
           fi
 
+      # electron-builder runs one GitHub publisher per artifact (DMG and
+      # blockmap), concurrently. With no release for the tag, each publisher
+      # independently concludes "release doesn't exist" and creates one, so the
+      # tag ends up with two releases and the assets split between them. Which
+      # one /releases/download/<tag>/ resolves to is a coin flip. v0.4.1 lost
+      # it: the DMG landed on the unreachable release and the Homebrew cask
+      # 404'd. v0.2.0 and v0.4.0 raced the same way and happened to win.
+      #
+      # Creating the release first leaves the publishers nothing to race over —
+      # both find it and upload into it. Note this runs before the build, so a
+      # build that fails afterward leaves an empty release behind to clean up.
+      - name: Create the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists — reusing it."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "${GITHUB_REF_NAME#v}" \
+              --generate-notes
+          fi
+
       - name: Build and publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
