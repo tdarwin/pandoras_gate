@@ -330,7 +330,8 @@ Releases are cut by `.github/workflows/release.yml` on any `v*` tag:
 4. When signing was configured, a tripwire step verifies `codesign`, `stapler validate`,
    and a "Notarized Developer ID" verdict from `spctl` — a release that quietly built
    unsigned fails the workflow instead of shipping
-5. Only then is the GitHub release created and the DMG uploaded
+5. Only then is the GitHub release created and the DMG uploaded, with its notes taken from
+   the matching [CHANGELOG.md](CHANGELOG.md) section
 6. `Casks/pandoras-gate.rb` is regenerated with the new version and checksum and pushed to
    [tdarwin/homebrew-tap](https://github.com/tdarwin/homebrew-tap), so the Homebrew tap
    updates itself
@@ -353,11 +354,28 @@ with **Contents: read and write** on `tdarwin/homebrew-tap`, stored on this repo
 Without that secret the release still completes and only the cask update is skipped, so
 forks cutting tags don't break.
 
-To cut a release: bump `version` in `package.json`, commit, then tag and push.
+### Cutting a release
+
+1. Move the `## [Unreleased]` items in [CHANGELOG.md](CHANGELOG.md) under a new
+   `## [X.Y.Z] — YYYY-MM-DD` heading, and add the compare link at the foot of the file.
+   Entries are what users read in the GitHub release, so write them for a novelist: what
+   changed for them, not what changed in the diff.
+2. `npm version X.Y.Z --no-git-tag-version` — updates `package.json` and the lockfile.
+3. Commit both, merge to `main`.
+4. Tag and push:
 
 ```bash
 git tag v0.5.0 && git push origin v0.5.0
 ```
+
+Check the notes before tagging — this prints exactly what the release will say:
+
+```bash
+node scripts/changelog-section.mjs 0.5.0
+```
+
+If a version has no changelog entry the workflow falls back to GitHub's generated notes
+rather than failing, so a forgotten entry costs you good release notes, not the release.
 
 macOS packaging config lives in `electron-builder.yml`. The Windows NSIS target is
 configured there and buildable locally, but CI doesn't produce it yet.
