@@ -10,6 +10,7 @@ import { context as otelContext } from '@opentelemetry/api'
 import { openRouterProvider } from './openrouter'
 import { localProvider } from './local'
 import { chatToolDefinitions, executeTool, TOOL_SYSTEM_NOTE, type ToolContext } from './tools'
+import { DeltaCoalescer } from './coalesce'
 import { tracedChatStream } from './genai-otel'
 import { logInfo, logError } from '../log'
 import { withSpan, flushTelemetry } from '../telemetry'
@@ -118,8 +119,19 @@ export function startChat(
   const controller = new AbortController()
   active.set(requestId, controller)
 
-  const send = (event: StreamEvent): void => {
+  const rawSend = (event: StreamEvent): void => {
     if (!sender.isDestroyed()) sender.send('chat:event', { requestId, event })
+  }
+  // One renderer update per ~frame instead of per token — a long transcript
+  // re-renders on every chat:event.
+  const coalescer = new DeltaCoalescer((text) => rawSend({ type: 'delta', text }))
+  const send = (event: StreamEvent): void => {
+    if (event.type === 'delta') {
+      coalescer.push(event.text)
+      return
+    }
+    coalescer.flush()
+    rawSend(event)
   }
 
   const conversationId = chatContext?.conversationId ?? requestId
@@ -268,6 +280,7 @@ export function startChat(
         logError('chat', 'generation failed', err)
         send({ type: 'error', message: err instanceof Error ? err.message : String(err) })
       } finally {
+        coalescer.flush()
         active.delete(requestId)
       }
     }

@@ -1,8 +1,50 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { useChatStore, type ContextReport } from '../stores/chat'
+import { useChatStore, type ChatEntry, type ContextReport } from '../stores/chat'
 import ModelsManager from './ModelsManager'
+
+// Module constant: a fresh array literal per render would defeat the memo below.
+const REMARK_PLUGINS = [remarkGfm]
+
+/**
+ * One transcript entry. Memoized so a streaming delta re-parses ONLY the
+ * growing bubble — react-markdown builds a fresh unified pipeline per render,
+ * which at one delta per token used to re-parse the entire transcript.
+ */
+const MessageBubble = memo(function MessageBubble({
+  entry,
+  streamingCursor
+}: {
+  entry: ChatEntry
+  streamingCursor: boolean
+}): React.JSX.Element {
+  if (entry.uiKind === 'tool') {
+    return (
+      <div className="flex items-center gap-2 text-xs text-indigo-400">
+        <span className="rounded-full border border-indigo-800/60 bg-indigo-950/40 px-2 py-0.5">
+          🛠 {entry.content}
+        </span>
+      </div>
+    )
+  }
+  if (entry.role === 'user') {
+    return (
+      <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-indigo-600/80 px-3 py-2 text-sm text-white">
+        {entry.content}
+      </div>
+    )
+  }
+  return (
+    <div className="prose-chat max-w-none text-sm leading-relaxed text-ink">
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{entry.content}</ReactMarkdown>
+      {streamingCursor && (
+        <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-indigo-400 align-text-bottom" />
+      )}
+    </div>
+  )
+})
 
 function ContextInspector({ report }: { report: ContextReport }): React.JSX.Element {
   const [open, setOpen] = useState(false)
@@ -103,6 +145,8 @@ function startDrag(
 }
 
 export default function ChatPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
+  // Selector subscription: without it the panel re-renders on every store
+  // change, including per-delta fields it doesn't display.
   const {
     models,
     selectedModelId,
@@ -112,13 +156,25 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
     usage,
     report,
     toolStatus,
-    error,
-    init,
-    selectModel,
-    send,
-    cancel,
-    clear
-  } = useChatStore()
+    error
+  } = useChatStore(
+    useShallow((s) => ({
+      models: s.models,
+      selectedModelId: s.selectedModelId,
+      apiKeyConfigured: s.apiKeyConfigured,
+      messages: s.messages,
+      streaming: s.streaming,
+      usage: s.usage,
+      report: s.report,
+      toolStatus: s.toolStatus,
+      error: s.error
+    }))
+  )
+  const init = useChatStore((s) => s.init)
+  const selectModel = useChatStore((s) => s.selectModel)
+  const send = useChatStore((s) => s.send)
+  const cancel = useChatStore((s) => s.cancel)
+  const clear = useChatStore((s) => s.clear)
 
   const [draft, setDraft] = useState('')
   const [showModels, setShowModels] = useState(false)
@@ -157,9 +213,12 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
 
   useEffect(() => init(), [init])
 
+  // Follow the stream. Keyed on count + tail length, not array identity —
+  // the store copies the array per delta batch.
+  const lastLength = messages.at(-1)?.content.length ?? 0
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [messages])
+  }, [messages.length, lastLength])
 
   const submit = (): void => {
     if (!draft.trim() || streaming) return
@@ -251,24 +310,12 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
             )}
             {messages.map((m, i) => (
               <div key={i} className={`mb-3 ${m.role === 'user' ? 'flex justify-end' : ''}`}>
-                {m.uiKind === 'tool' ? (
-                  <div className="flex items-center gap-2 text-xs text-indigo-400">
-                    <span className="rounded-full border border-indigo-800/60 bg-indigo-950/40 px-2 py-0.5">
-                      🛠 {m.content}
-                    </span>
-                  </div>
-                ) : m.role === 'user' ? (
-                  <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-indigo-600/80 px-3 py-2 text-sm text-white">
-                    {m.content}
-                  </div>
-                ) : (
-                  <div className="prose-chat max-w-none text-sm leading-relaxed text-ink">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                    {streaming && i === messages.length - 1 && (
-                      <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-indigo-400 align-text-bottom" />
-                    )}
-                  </div>
-                )}
+                <MessageBubble
+                  entry={m}
+                  streamingCursor={
+                    streaming && i === messages.length - 1 && m.role === 'assistant' && !m.uiKind
+                  }
+                />
               </div>
             ))}
             {toolStatus && (

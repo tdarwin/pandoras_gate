@@ -105,7 +105,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 content: last.content + event.text
               }
             }
-            return { messages, toolStatus: null }
+            // Clear the live indicator only when one is showing.
+            return s.toolStatus !== null ? { messages, toolStatus: null } : { messages }
           })
           break
         }
