@@ -11,6 +11,7 @@ import AboutModal from '../components/AboutModal'
 import iconUrl from '../assets/icon.png'
 import type { IpcEventPayload } from '@shared/ipc'
 import { closeNovelSafely, prepareToLeaveNovel } from './novelActions'
+import { useDraftStore } from '../stores/draft'
 
 /** Opens a novel folder (dialog when no dir given), settling the open one first. */
 async function openNovelFromMenu(dir?: string): Promise<void> {
@@ -83,6 +84,19 @@ export default function App(): React.JSX.Element {
           if (platform) ui.signalCopyFor(platform)
           break
       }
+    })
+  }, [])
+
+  // Save-before-close handshake: main is about to close the window or quit.
+  // Always ack, even with nothing to save — main waits (bounded) for it.
+  useEffect(() => {
+    return window.pandora.on('app:flushRequest', () => {
+      void (async () => {
+        const draft = useDraftStore.getState()
+        if (draft.drafting) await draft.stop()
+        await useProjectStore.getState().snapshotActiveChapter()
+        await window.pandora.invoke('app:flushed', {})
+      })()
     })
   }, [])
 

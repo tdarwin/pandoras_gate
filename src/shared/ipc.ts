@@ -96,6 +96,10 @@ export const ipcContract = {
     request: z.object({ novelDir: z.string(), title: z.string().min(1) }),
     response: NovelStateSchema
   },
+  'app:flushed': {
+    request: z.object({}),
+    response: z.object({ ok: z.literal(true) })
+  },
   'chapter:rename': {
     request: z.object({ novelDir: z.string(), file: z.string(), newTitle: z.string().min(1) }),
     response: z.object({ novel: NovelStateSchema, file: z.string() })
@@ -598,6 +602,8 @@ export const ipcEvents = {
     instructions: z.string()
   }),
   /** Native application-menu commands the renderer carries out. */
+  /** Main asks the renderer to save everything before a close/quit. */
+  'app:flushRequest': z.object({}),
   'menu:action': z.object({
     action: z.enum([
       'about',
