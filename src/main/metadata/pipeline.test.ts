@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createNovel, createChapter, writeChapter } from '../project/service'
@@ -340,6 +340,86 @@ describe('review resolutions', () => {
   it('sha256 is stable', () => {
     expect(sha256('abc')).toBe(sha256('abc'))
     expect(sha256('abc')).not.toBe(sha256('abd'))
+  })
+})
+
+describe('proposal bases', () => {
+  const CHAR_PATH = 'metadata/characters/kael-voss.md'
+  const PRE_EDIT = '---\nname: Kael Voss\n---\nOld body.\n'
+  const MID_RUN_EDIT = '---\nname: Kael Voss\n---\nMy new body, typed mid-run.\n'
+  const MODEL_REWRITE = '---\nname: Kael Voss\n---\nModel body.\n'
+
+  it('captures codex bases BEFORE the model call, so a mid-run edit conflicts instead of reverting', async () => {
+    await writeChapter(novelDir, CHAR_PATH, PRE_EDIT)
+    provider.queue(
+      proposalJson([{ path: CHAR_PATH, action: 'update', newContent: MODEL_REWRITE, rationale: 'x' }])
+    )
+    // The author edits the doc while the (slow) generation runs.
+    const orig = provider.chatStream.bind(provider)
+    provider.chatStream = async function* (req, signal) {
+      await writeChapter(novelDir, CHAR_PATH, MID_RUN_EDIT)
+      yield* orig(req, signal)
+    }
+    await run()
+
+    const pending = await listProposals(novelDir)
+    const stored = pending[0]!.items.find((i) => i.path === CHAR_PATH)!
+    // The base is what the model SAW, not the enqueue-time disk content.
+    expect(stored.baseContent).toBe(PRE_EDIT)
+    // And the mid-run edit surfaces as a conflict instead of being silently
+    // reverted by a wholesale accept.
+    const review = await proposalsForReview(novelDir)
+    expect(review[0]!.items.find((i) => i.path === CHAR_PATH)!.conflict).toBe(true)
+  })
+
+  it('reads 0.5.0-era proposals (baseHash) instead of dropping them', async () => {
+    const synopsis = '---\nlogline: current\n---\nCurrent synopsis.\n'
+    await writeChapter(novelDir, 'metadata/synopsis.md', synopsis)
+    await writeChapter(novelDir, 'metadata/glossary.md', '---\nentries: []\n---\n')
+    const legacy = {
+      id: 'legacy-1',
+      chapterFile: CHAPTER,
+      chapterTitle: 'The Iron Gate',
+      createdAt: Date.now(),
+      items: [
+        {
+          path: 'metadata/synopsis.md',
+          action: 'update',
+          newContent: '---\nlogline: new\n---\nUpdated synopsis.\n',
+          rationale: 'r',
+          // Matches the doc on disk: the doc IS the base.
+          baseHash: sha256(synopsis)
+        },
+        {
+          path: 'metadata/glossary.md',
+          action: 'update',
+          newContent: '---\nentries:\n  - term: qi\n    definition: life force\n---\n',
+          rationale: 'r',
+          // Stale hash: the base is unrecoverable.
+          baseHash: sha256('a version that no longer exists')
+        }
+      ]
+    }
+    await mkdir(join(novelDir, '.pandora/proposals'), { recursive: true })
+    await writeFile(
+      join(novelDir, '.pandora/proposals/legacy-1.json'),
+      JSON.stringify(legacy),
+      'utf8'
+    )
+
+    const list = await listProposals(novelDir)
+    expect(list).toHaveLength(1)
+    const review = await proposalsForReview(novelDir)
+    const items = review[0]!.items
+    // Hash matched → cleanly acceptable; stale → preserved as needs-review.
+    expect(items.find((i) => i.path === 'metadata/synopsis.md')!.conflict).toBe(false)
+    expect(items.find((i) => i.path === 'metadata/glossary.md')!.conflict).toBe(true)
+    // The migration persisted the new shape.
+    const rewritten = JSON.parse(
+      await readFile(join(novelDir, '.pandora/proposals/legacy-1.json'), 'utf8')
+    )
+    expect(rewritten.items[0].baseContent).toBe(synopsis)
+    expect(rewritten.items[0].baseHash).toBeUndefined()
   })
 })
 

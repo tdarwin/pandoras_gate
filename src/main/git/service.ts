@@ -335,6 +335,10 @@ export async function restoreFile(
 ): Promise<string | null> {
   const content = await fileAtCommit(dir, oid, filepath)
   if (content === null) throw new Error(`${filepath} does not exist in that snapshot`)
+  // The pre-restore state may exist only as a quiet save on disk — commit it
+  // before overwriting (no-op when the tree is clean), so nothing a restore
+  // replaces is ever unrecoverable.
+  await commitAll(dir, `before restore: ${label}`, [filepath])
   await fs.promises.writeFile(`${dir}/${filepath}`, content, 'utf8')
   return commitAll(dir, `restore: ${label} (from ${oid.slice(0, 7)})`, [filepath])
 }

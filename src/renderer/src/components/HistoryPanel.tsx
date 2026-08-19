@@ -35,6 +35,7 @@ export default function HistoryPanel({ onClose }: { onClose: () => void }): Reac
   const novel = useProjectStore((s) => s.novel)!
   const activeFile = useProjectStore((s) => s.activeFile)
   const reloadActiveChapter = useProjectStore((s) => s.reloadActiveChapter)
+  const snapshotActiveChapter = useProjectStore((s) => s.snapshotActiveChapter)
   const setError = useProjectStore((s) => s.setError)
 
   const [commits, setCommits] = useState<Commit[]>([])
@@ -81,6 +82,10 @@ export default function HistoryPanel({ onClose }: { onClose: () => void }): Reac
       setError('The AI is drafting into this chapter — stop the draft first.')
       return
     }
+    // The buffer may hold prose that exists nowhere else (quiet saves never
+    // commit). Snapshot it BEFORE the restore rewrites the file, so any
+    // restore can itself be undone from History.
+    await snapshotActiveChapter()
     const result = await window.pandora.invoke('history:restore', {
       novelDir: novel.dir,
       oid,

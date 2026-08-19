@@ -181,6 +181,9 @@ export default function Workspace(): React.JSX.Element {
 
   const markRevised = async (): Promise<void> => {
     if (!activeFile) return
+    // Main rewrites the file from DISK — unsaved typing must reach it first,
+    // or the reload below would discard it.
+    await snapshotActiveChapter()
     const result = await window.pandora.invoke('chapter:setStatus', {
       novelDir: novel.dir,
       file: activeFile,

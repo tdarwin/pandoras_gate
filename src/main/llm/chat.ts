@@ -189,6 +189,18 @@ export function startChat(
         return executeTool(toolCtx!, name, argsJson)
       }
 
+      const emit = (channel: string, payload: unknown): void => {
+        if (!sender.isDestroyed()) sender.send(channel, payload)
+      }
+      // Tools that queued a generation already told the author "runs as soon
+      // as this reply finishes" — a reply that then FAILS must not silently
+      // break that promise. Only an explicit cancel drops the queue.
+      const runDeferredAfterFailure = async (): Promise<void> => {
+        if (deferredRuns.length === 0 || controller.signal.aborted) return
+        emit('pipeline:run', { phase: 'started', label: deferredRuns[0]!.label })
+        await runDeferredJobs(deferredRuns, emit)
+      }
+
       let toolRounds = 0
       try {
         for (;;) {
@@ -236,6 +248,7 @@ export function startChat(
                 break
               case 'error':
                 send(event)
+                await runDeferredAfterFailure()
                 return
               case 'done':
                 finished = event.finishReason
@@ -252,9 +265,6 @@ export function startChat(
 
           if (pendingCalls.length === 0 || !toolCtx || toolRounds >= MAX_TOOL_ROUNDS) {
             span.setAttribute('chat.tool_rounds', toolRounds)
-            const emit = (channel: string, payload: unknown): void => {
-              if (!sender.isDestroyed()) sender.send(channel, payload)
-            }
             if (deferredRuns.length > 0) {
               // Announced before `done` — see runDeferredJobs.
               emit('pipeline:run', { phase: 'started', label: deferredRuns[0]!.label })
@@ -279,6 +289,7 @@ export function startChat(
       } catch (err) {
         logError('chat', 'generation failed', err)
         send({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+        await runDeferredAfterFailure()
       } finally {
         coalescer.flush()
         active.delete(requestId)

@@ -27,7 +27,8 @@ Write for a novelist, not for a reviewer of the diff.
   accept, so the pre-accept version is always in History.
 - **History → "Restore this version" actually restores.** It used to re-save the current
   text over the restored version; same for "Mark as revised," which reverted the chapter's
-  status on disk.
+  status on disk. Both now also save what you had first — anything a restore replaces gets
+  its own history entry, so a restore can itself be undone.
 - **AI drafts stay in their chapter.** You can now browse other chapters, the Codex, or
   stop by another novel while a draft streams — the prose lands in the chapter the draft
   was started for, marked in the sidebar, with a Show/Stop bar wherever you are. It used
@@ -44,6 +45,9 @@ Write for a novelist, not for a reviewer of the diff.
   and the toolbar shows progress the moment the reply ends.
 - **Long chats no longer freeze while the AI responds.** Streaming re-rendered the whole
   conversation on every word; now only the growing reply updates.
+- **Pending suggestions survive updating the app.** Suggestions queued by 0.5.0 are
+  carried across the upgrade instead of silently vanishing from the badge; ones whose
+  document changed in the meantime arrive marked "Needs review."
 - **The History panel opens fast on long-lived novels.** It used to re-walk the novel's
   entire snapshot history — thousands of commits after months of writing — on every open
   and every chapter switch.

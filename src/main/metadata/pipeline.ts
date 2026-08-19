@@ -1,14 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { z } from 'zod'
 import { readFile, writeFile, mkdir, readdir, rm } from 'node:fs/promises'
-import { join, normalize, basename } from 'node:path'
+import { join, normalize, basename, relative } from 'node:path'
 import { applyPatch, structuredPatch } from 'diff'
 import { parse as parseYaml } from 'yaml'
 import type { LLMProvider } from '../../shared/llm/types'
 import {
   ModelProposalOutput,
   PendingProposal,
-  PROPOSAL_JSON_SCHEMA,
-  type PendingProposalItem
+  PendingProposalItem,
+  PROPOSAL_JSON_SCHEMA
 } from '../../shared/schemas/proposal'
 import { parseFrontmatter } from '../../shared/frontmatter'
 import { readNovelManifest, readChapter, listMetadata } from '../project/service'
@@ -63,6 +64,36 @@ function proposalsDir(novelDir: string): string {
   return join(novelDir, '.pandora', 'proposals')
 }
 
+/**
+ * 0.5.0 stored `baseHash` (sha256 of the base) instead of `baseContent`.
+ * Pending proposals are user data — migrated deliberately, never dropped:
+ * when the target doc still matches the hash the doc IS the base and the
+ * item stays cleanly acceptable; otherwise the base is unrecoverable and
+ * `null` renders the item as "Needs review" instead of overwriting blind.
+ */
+const LegacyPendingProposal = PendingProposal.extend({
+  items: z.array(
+    PendingProposalItem.omit({ baseContent: true }).extend({ baseHash: z.string() })
+  )
+})
+
+async function migrateLegacyProposal(
+  novelDir: string,
+  legacy: z.infer<typeof LegacyPendingProposal>
+): Promise<PendingProposal> {
+  const items: PendingProposalItem[] = []
+  for (const { baseHash, ...item } of legacy.items) {
+    const current = await safeRead(join(novelDir, item.path))
+    items.push({
+      ...item,
+      baseContent: current !== null && baseHash !== '' && sha256(current) === baseHash ? current : null
+    })
+  }
+  const migrated: PendingProposal = { ...legacy, items }
+  await writeProposal(novelDir, migrated)
+  return migrated
+}
+
 export async function listProposals(novelDir: string): Promise<PendingProposal[]> {
   try {
     const files = (await readdir(proposalsDir(novelDir))).filter((f) => f.endsWith('.json'))
@@ -70,9 +101,17 @@ export async function listProposals(novelDir: string): Promise<PendingProposal[]
     for (const f of files) {
       try {
         const raw = await readFile(join(proposalsDir(novelDir), f), 'utf8')
-        out.push(PendingProposal.parse(JSON.parse(raw)))
+        const json: unknown = JSON.parse(raw)
+        const parsed = PendingProposal.safeParse(json)
+        if (parsed.success) {
+          out.push(parsed.data)
+          continue
+        }
+        const legacy = LegacyPendingProposal.safeParse(json)
+        if (legacy.success) out.push(await migrateLegacyProposal(novelDir, legacy.data))
+        // Anything else is corrupt: skip it rather than blocking the queue.
       } catch {
-        // Corrupt proposal file: skip it rather than blocking the queue.
+        // Unreadable/unparseable file: skip.
       }
     }
     return out.sort((a, b) => a.createdAt - b.createdAt)
@@ -183,6 +222,33 @@ async function safeRead(path: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+/**
+ * Every doc a proposal may target, read BEFORE the model call. Proposal items
+ * must store the content the model actually saw as their base — reading it at
+ * enqueue time bakes edits made DURING a slow generation into the base, and a
+ * rebase against that base silently reverts them (no conflict fires, because
+ * base === current). The docs are small; a full read is cheap.
+ */
+async function codexBaseline(novelDir: string): Promise<Map<string, string>> {
+  const baseline = new Map<string, string>()
+  for (const root of ['metadata', 'outlines']) {
+    let entries: import('node:fs').Dirent[] = []
+    try {
+      entries = await readdir(join(novelDir, root), { withFileTypes: true, recursive: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      const rel = join(relative(novelDir, entry.parentPath), entry.name).replaceAll('\\', '/')
+      if (!isAllowedProposalPath(rel)) continue
+      const content = await safeRead(join(novelDir, rel))
+      if (content !== null) baseline.set(rel, content)
+    }
+  }
+  return baseline
 }
 
 const SYSTEM_PROMPT = `You are the Codex maintainer for a novel-writing studio (the Codex is the novel's canon reference: character profiles, world/system rules, summaries, synopsis, glossary, and timeline). After the author saves a chapter, you update the Codex so both the author and future AI assistance stay oriented.
@@ -399,6 +465,9 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
   const chapterTitle = manifest.chapters.find((c) => c.file === chapterFile)?.title ?? chapterFile
 
   ctx.onStatus?.(`Reading “${chapterTitle}” and the Codex…`)
+  // Doc contents as the model will see them — the base every proposal from
+  // this run is judged against.
+  const baseline = await codexBaseline(novelDir)
   const userPrompt = await buildUserPrompt(
     novelDir,
     chapterFile,
@@ -457,7 +526,7 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
       action: current === null ? 'create' : 'update',
       newContent: p.newContent,
       rationale: p.rationale,
-      baseContent: current
+      baseContent: baseline.get(p.path) ?? null
     })
   }
 
@@ -746,6 +815,7 @@ async function runOutlineGenerationInner(req: OutlineRequest): Promise<RunResult
       ? (manifest.chapters.find((c) => c.file === req.chapterFile)?.title ?? 'chapter')
       : 'the novel'
 
+  const baseline = await codexBaseline(novelDir)
   const userPrompt = await buildOutlinePrompt(req)
   req.onStatus?.(`Asking the model to outline ${chapterTitle}…`)
 
@@ -793,7 +863,7 @@ async function runOutlineGenerationInner(req: OutlineRequest): Promise<RunResult
       action: current === null ? 'create' : 'update',
       newContent: p.newContent,
       rationale: p.rationale,
-      baseContent: current
+      baseContent: baseline.get(p.path) ?? null
     })
   }
 

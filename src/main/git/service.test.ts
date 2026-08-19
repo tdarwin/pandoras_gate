@@ -98,6 +98,22 @@ describe('git service', () => {
     expect(await fileAtCommit(dir, log[1]!.oid, 'a.md')).toBe('changed')
   })
 
+  it('restore commits uncommitted changes before rewriting the file', async () => {
+    await writeFile(join(dir, 'a.md'), 'v1')
+    const first = await commitAll(dir, 'v1', ['a.md'])
+    await writeFile(join(dir, 'a.md'), 'v2')
+    await commitAll(dir, 'v2', ['a.md'])
+    // A quiet save that never reached a commit.
+    await writeFile(join(dir, 'a.md'), 'v2 plus unsaved typing')
+
+    await restoreFile(dir, first!, 'a.md', 'a.md')
+    expect(await readFile(join(dir, 'a.md'), 'utf8')).toBe('v1')
+    const log = await history(dir, 'a.md')
+    const preRestore = log.find((c) => c.message.includes('before restore'))
+    expect(preRestore).toBeDefined()
+    expect(await fileAtCommit(dir, preRestore!.oid, 'a.md')).toBe('v2 plus unsaved typing')
+  })
+
   it('ensureRepo is idempotent', async () => {
     await ensureRepo(dir)
     await ensureRepo(dir)
