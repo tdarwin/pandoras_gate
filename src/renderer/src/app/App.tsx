@@ -10,11 +10,11 @@ import PreferencesModal from '../components/PreferencesModal'
 import AboutModal from '../components/AboutModal'
 import iconUrl from '../assets/icon.png'
 import type { IpcEventPayload } from '@shared/ipc'
+import { closeNovelSafely, prepareToLeaveNovel } from './novelActions'
 
-/** Opens a novel folder (dialog when no dir given), snapshotting first. */
+/** Opens a novel folder (dialog when no dir given), settling the open one first. */
 async function openNovelFromMenu(dir?: string): Promise<void> {
-  const project = useProjectStore.getState()
-  await project.snapshotActiveChapter()
+  await prepareToLeaveNovel()
   let target = dir
   if (!target) {
     const picked = await window.pandora.invoke('dialog:chooseDirectory', {
@@ -60,9 +60,8 @@ export default function App(): React.JSX.Element {
           ui.setShowPrefs(true)
           break
         case 'new-novel':
-          void project.snapshotActiveChapter().then(() => {
+          void closeNovelSafely().then(() => {
             ui.setWelcomeIntent('create')
-            project.closeNovel()
           })
           break
         case 'open-novel':
@@ -72,7 +71,7 @@ export default function App(): React.JSX.Element {
           if (dir) void openNovelFromMenu(dir)
           break
         case 'close-novel':
-          void project.snapshotActiveChapter().then(() => project.closeNovel())
+          void closeNovelSafely()
           break
         case 'new-chapter':
           ui.signalNewChapter()

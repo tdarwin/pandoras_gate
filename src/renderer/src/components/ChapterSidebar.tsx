@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useProjectStore } from '../stores/project'
+import { useDraftStore } from '../stores/draft'
+import { closeNovelSafely } from '../app/novelActions'
 import { useUiStore } from '../stores/ui'
 import CodexBrowser from './CodexBrowser'
 
@@ -89,7 +91,8 @@ export default function ChapterSidebar(): React.JSX.Element {
   const reorderChapters = useProjectStore((s) => s.reorderChapters)
   const archiveChapter = useProjectStore((s) => s.archiveChapter)
   const deleteChapter = useProjectStore((s) => s.deleteChapter)
-  const closeNovel = useProjectStore((s) => s.closeNovel)
+  const drafting = useDraftStore((s) => s.drafting)
+  const draftFile = useDraftStore((s) => s.draftFile)
 
   const [adding, setAdding] = useState(false)
   const [newTitle, setNewTitle] = useState('')
@@ -148,7 +151,7 @@ export default function ChapterSidebar(): React.JSX.Element {
           <div className="truncate text-sm font-medium text-ink">{novel.manifest.title}</div>
         </div>
         <button
-          onClick={closeNovel}
+          onClick={() => void closeNovelSafely()}
           title="Close novel"
           className="rounded p-1 text-ink-faint hover:bg-raised hover:text-ink-muted"
         >
@@ -254,17 +257,24 @@ export default function ChapterSidebar(): React.JSX.Element {
                       <span className="mr-1.5 text-xs text-ink-faint">{i + 1}.</span>
                       {ch.title}
                     </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setMenuFor(menuFor === ch.file ? null : ch.file)
-                        setConfirmDelete(null)
-                      }}
-                      title="Chapter actions"
-                      className="hidden shrink-0 rounded px-1 text-ink-faint hover:text-ink group-hover:block"
-                    >
-                      ⋯
-                    </button>
+                    {drafting && draftFile === ch.file ? (
+                      <span
+                        title="The AI is drafting this chapter"
+                        className="ml-1 inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-indigo-400"
+                      />
+                    ) : (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setMenuFor(menuFor === ch.file ? null : ch.file)
+                          setConfirmDelete(null)
+                        }}
+                        title="Chapter actions"
+                        className="hidden shrink-0 rounded px-1 text-ink-faint hover:text-ink group-hover:block"
+                      >
+                        ⋯
+                      </button>
+                    )}
                   </div>
                 )}
 
