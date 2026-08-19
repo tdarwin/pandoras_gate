@@ -114,15 +114,20 @@ export default function ChapterSidebar(): React.JSX.Element {
     setAdding(true)
   }, [newChapterSignal])
 
+  // Clear the input state BEFORE the slow IPC awaits: Enter and the input's
+  // unmount-blur both land here, and clearing first makes the second call a
+  // no-op instead of creating (or renaming) twice.
   const submitNew = async (): Promise<void> => {
-    if (newTitle.trim()) await createChapter(newTitle.trim())
+    const title = newTitle.trim()
     setNewTitle('')
     setAdding(false)
+    if (title) await createChapter(title)
   }
 
   const submitRename = async (file: string): Promise<void> => {
-    if (renameValue.trim()) await renameChapter(file, renameValue.trim())
+    const value = renameValue.trim()
     setRenaming(null)
+    if (value && renaming === file) await renameChapter(file, value)
   }
 
   const completeDrop = async (): Promise<void> => {
