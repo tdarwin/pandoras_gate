@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -113,5 +113,88 @@ describe('git service', () => {
     await commitAll(dir, 'first')
     const log = await history(dir, 'private/secret.json')
     expect(log).toHaveLength(0)
+  })
+})
+
+describe('history index', () => {
+  it('matches git.log semantics across create, edit, and delete', async () => {
+    await mkdir(join(dir, 'chapters'), { recursive: true })
+    await mkdir(join(dir, 'metadata/characters'), { recursive: true })
+    await writeFile(join(dir, 'chapters/001-one.md'), 'one v1')
+    await writeFile(join(dir, 'novel.yaml'), 'title: t\n')
+    await commitAll(dir, 'root')
+    await writeFile(join(dir, 'chapters/002-two.md'), 'two v1')
+    await commitAll(dir, 'create two', ['chapters/002-two.md'])
+    await writeFile(join(dir, 'metadata/characters/mira.md'), 'mira')
+    await commitAll(dir, 'codex', ['metadata/characters/mira.md'])
+    await writeFile(join(dir, 'chapters/001-one.md'), 'one v2')
+    await commitAll(dir, 'edit one', ['chapters/001-one.md'])
+    await rm(join(dir, 'chapters/002-two.md'))
+    await commitAll(dir, 'delete two')
+
+    expect((await history(dir, 'chapters/001-one.md')).map((c) => c.message)).toEqual([
+      'edit one',
+      'root'
+    ])
+    // The creating AND the deleting commit are both listed, like `git log -- file`.
+    expect((await history(dir, 'chapters/002-two.md')).map((c) => c.message)).toEqual([
+      'delete two',
+      'create two'
+    ])
+    expect((await history(dir, 'metadata/characters/mira.md')).map((c) => c.message)).toEqual([
+      'codex'
+    ])
+    expect(await history(dir)).toHaveLength(5)
+  })
+
+  it('catches up after a commit made outside commitAll', async () => {
+    const { default: git } = await import('isomorphic-git')
+    const fs = await import('node:fs')
+    await writeFile(join(dir, 'a.md'), 'v1')
+    await commitAll(dir, 'v1', ['a.md'])
+    // Prime the index, then commit behind its back.
+    await history(dir, 'a.md')
+    await writeFile(join(dir, 'a.md'), 'v2')
+    await git.add({ fs: fs.default, dir, filepath: 'a.md' })
+    await git.commit({
+      fs: fs.default,
+      dir,
+      message: 'out of band',
+      author: { name: 'x', email: 'x@localhost' }
+    })
+    expect((await history(dir, 'a.md')).map((c) => c.message)).toEqual(['out of band', 'v1'])
+  })
+
+  it('rebuilds from a corrupt index file in a fresh process', async () => {
+    await writeFile(join(dir, 'a.md'), 'v1')
+    await commitAll(dir, 'v1', ['a.md'])
+    await writeFile(join(dir, 'a.md'), 'v2')
+    await commitAll(dir, 'v2', ['a.md'])
+    await writeFile(join(dir, '.git/pandora/history-index.json'), 'not json{{{')
+    // A fresh module instance has no in-memory copy — it must survive the
+    // corrupt file and rebuild by walking the graph.
+    vi.resetModules()
+    const fresh = await import('./service')
+    expect((await fresh.history(dir, 'a.md')).map((c) => c.message)).toEqual(['v2', 'v1'])
+  })
+
+  it('keeps the persisted index at HEAD after each commit', async () => {
+    await writeFile(join(dir, 'a.md'), 'v1')
+    await commitAll(dir, 'v1', ['a.md'])
+    await writeFile(join(dir, 'a.md'), 'v2')
+    await commitAll(dir, 'v2', ['a.md'])
+    const { default: git } = await import('isomorphic-git')
+    const fs = await import('node:fs')
+    const head = await git.resolveRef({ fs: fs.default, dir, ref: 'HEAD' })
+    const raw = JSON.parse(await readFile(join(dir, '.git/pandora/history-index.json'), 'utf8'))
+    expect(raw.head).toBe(head)
+    expect(raw.commits).toHaveLength(2)
+    expect(raw.commits[0].files).toContain('a.md')
+  })
+
+  it('returns an empty history for a repo with no commits', async () => {
+    await ensureRepo(dir)
+    expect(await history(dir)).toEqual([])
+    expect(await history(dir, 'a.md')).toEqual([])
   })
 })

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useProjectStore } from '../stores/project'
 
 interface Commit {
@@ -40,13 +40,18 @@ export default function HistoryPanel({ onClose }: { onClose: () => void }): Reac
   const [diff, setDiff] = useState<DiffState | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Guards against a slow list for the previous chapter landing after the
+  // user already switched files.
+  const requestSeq = useRef(0)
   const refresh = useCallback(async (): Promise<void> => {
     if (!activeFile) return
+    const seq = ++requestSeq.current
     setLoading(true)
     const result = await window.pandora.invoke('history:list', {
       novelDir: novel.dir,
       file: activeFile
     })
+    if (seq !== requestSeq.current) return
     setLoading(false)
     if (result.ok) setCommits(result.data.commits)
     else setError(result.error.message)
