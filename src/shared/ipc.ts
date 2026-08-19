@@ -475,10 +475,13 @@ export const ipcContract = {
             z.object({
               path: z.string(),
               action: z.enum(['create', 'update']),
+              /** Proposal content REBASED onto the current file where possible. */
               newContent: z.string(),
               rationale: z.string(),
-              baseHash: z.string(),
               currentContent: z.string(),
+              /** sha256 of currentContent — echo back when accepting edited content. */
+              currentHash: z.string(),
+              /** True when the change no longer lines up with the current file. */
               conflict: z.boolean()
             })
           )
@@ -492,7 +495,12 @@ export const ipcContract = {
       proposalId: z.string(),
       path: z.string(),
       resolution: z.enum(['accept', 'reject']),
-      editedContent: z.string().optional()
+      editedContent: z.string().optional(),
+      /**
+       * Required with editedContent: sha256 of the currentContent the author
+       * reviewed against. Refused when the file moved on underneath.
+       */
+      expectedCurrentHash: z.string().optional()
     }),
     response: z.object({ remaining: z.number() })
   },

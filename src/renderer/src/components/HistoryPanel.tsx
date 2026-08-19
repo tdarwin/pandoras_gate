@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useProjectStore } from '../stores/project'
+import { useDraftStore } from '../stores/draft'
 
 interface Commit {
   oid: string
@@ -75,6 +76,11 @@ export default function HistoryPanel({ onClose }: { onClose: () => void }): Reac
 
   const restore = async (oid: string): Promise<void> => {
     if (!activeFile) return
+    const draft = useDraftStore.getState()
+    if (draft.drafting && draft.draftFile === activeFile) {
+      setError('The AI is drafting into this chapter — stop the draft first.')
+      return
+    }
     const result = await window.pandora.invoke('history:restore', {
       novelDir: novel.dir,
       oid,

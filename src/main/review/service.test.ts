@@ -106,6 +106,43 @@ describe('line-edit reviews', () => {
   })
 })
 
+describe('line-edit review bases', () => {
+  it("stores the chapter as read at ITS turn as the item's base", async () => {
+    // Two chapters; the author keeps typing into chapter 1 while chapter 2's
+    // generation runs. Chapter 1's base must be the pre-typing text.
+    await createChapter(novelDir, 'The Trial')
+    const CH2 = 'chapters/002-the-trial.md'
+    const BODY2 = 'The trial began at dawn with the elders assembled.'
+    await writeChapter(novelDir, CH2, `---\ntitle: The Trial\nstatus: draft\n---\n${BODY2}\n`)
+
+    provider.queue(BODY.replace('threw', 'through'))
+    provider.queue(BODY2.replace('began', 'commenced'))
+    // Simulate typing DURING the pass: mutate chapter 1 when chapter 2's
+    // generation starts (i.e. after chapter 1 was read and generated).
+    const orig = provider.chatStream.bind(provider)
+    let call = 0
+    provider.chatStream = (req, signal) => {
+      call += 1
+      if (call === 2) {
+        void writeChapter(
+          novelDir,
+          CHAPTER,
+          `---\ntitle: The Iron Gate\nstatus: draft\n---\n${BODY} New words typed meanwhile.\n`
+        )
+      }
+      return orig(req, signal)
+    }
+
+    const result = await run({ scope: 'novel' })
+    expect(result.status).toBe('ran')
+    const pending = await listProposals(novelDir)
+    const item1 = pending[0]!.items.find((i) => i.path === CHAPTER)!
+    // The base is the run-start read, NOT the enqueue-time disk content.
+    expect(item1.baseContent).toContain(BODY)
+    expect(item1.baseContent).not.toContain('New words typed meanwhile.')
+  })
+})
+
 describe('report reviews', () => {
   it('queues a fact-check report that joins the Codex when accepted', async () => {
     await mkdir(join(novelDir, 'metadata/characters'), { recursive: true })

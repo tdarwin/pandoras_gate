@@ -12,6 +12,7 @@ import {
   listProposals,
   isAllowedProposalPath,
   validateProposalContent,
+  rebaseProposal,
   sha256
 } from './pipeline'
 import { history } from '../git/service'
@@ -260,15 +261,35 @@ describe('review resolutions', () => {
   it('accept with edited content writes the edit', async () => {
     provider.queue(proposalJson([SUMMARY_ITEM]))
     const { proposalId } = await run()
+    const review = await proposalsForReview(novelDir)
     const edited = SUMMARY_ITEM.newContent.replace('finds a cultivation manual', 'steals a manual')
     await resolveProposalItem({
       novelDir,
       proposalId: proposalId!,
       path: SUMMARY_ITEM.path,
       resolution: 'accept',
-      editedContent: edited
+      editedContent: edited,
+      expectedCurrentHash: review[0]!.items[0]!.currentHash
     })
     expect(await readFile(join(novelDir, SUMMARY_ITEM.path), 'utf8')).toBe(edited)
+  })
+
+  it('accept with edited content refuses when the file moved on underneath', async () => {
+    provider.queue(proposalJson([SUMMARY_ITEM]))
+    const { proposalId } = await run()
+    const review = await proposalsForReview(novelDir)
+    // The file changes AFTER the author started editing the suggestion.
+    await writeChapter(novelDir, SUMMARY_ITEM.path, '---\ntitle: X\n---\nSomeone else wrote this.\n')
+    await expect(
+      resolveProposalItem({
+        novelDir,
+        proposalId: proposalId!,
+        path: SUMMARY_ITEM.path,
+        resolution: 'accept',
+        editedContent: SUMMARY_ITEM.newContent,
+        expectedCurrentHash: review[0]!.items[0]!.currentHash
+      })
+    ).rejects.toThrow(/changed while you were reviewing/)
   })
 
   it('reject remembers the rejection and suppresses identical re-proposals', async () => {
@@ -288,27 +309,114 @@ describe('review resolutions', () => {
     expect(result.status).toBe('no-changes')
   })
 
-  it('flags conflicts when the target doc changed after proposal generation', async () => {
+  it('flags a conflict when the passage a proposal rewrites was itself rewritten', async () => {
     const synopsisUpdate = {
       path: 'metadata/synopsis.md',
-      action: 'update',
+      action: 'create',
       newContent: '---\nlogline: New logline\n---\nUpdated synopsis.\n',
       rationale: 'Chapter changes the arc'
     }
     provider.queue(proposalJson([synopsisUpdate]))
     await run()
 
-    // Author edits the synopsis before reviewing.
+    // Author writes their own synopsis before reviewing — the create's path
+    // is claimed, nothing to rebase onto.
     await writeChapter(novelDir, 'metadata/synopsis.md', '---\nlogline: mine\n---\nMy own words.\n')
 
     const review = await proposalsForReview(novelDir)
     expect(review[0]!.items[0]!.conflict).toBe(true)
     expect(review[0]!.items[0]!.currentContent).toContain('My own words.')
+    // And a bare accept is refused, readably.
+    await expect(
+      resolveProposalItem({
+        novelDir,
+        proposalId: review[0]!.id,
+        path: 'metadata/synopsis.md',
+        resolution: 'accept'
+      })
+    ).rejects.toThrow(/changed since the suggestion was made/)
   })
 
   it('sha256 is stable', () => {
     expect(sha256('abc')).toBe(sha256('abc'))
     expect(sha256('abc')).not.toBe(sha256('abd'))
+  })
+})
+
+describe('rebaseProposal', () => {
+  const BASE = [
+    '---',
+    'title: The Iron Gate',
+    '---',
+    'Kael crept through the ruins.',
+    '',
+    'The gate loomed ahead.',
+    '',
+    'He touched the cold iron.',
+    ''
+  ].join('\n')
+  // The proposal rewrites the middle paragraph.
+  const PROPOSED = BASE.replace('The gate loomed ahead.', 'The gate loomed, vast and black.')
+
+  it('applies cleanly when the file is unchanged', () => {
+    expect(rebaseProposal(BASE, PROPOSED, BASE)).toEqual({ content: PROPOSED })
+  })
+
+  it('keeps prose the author wrote in ANOTHER paragraph since the run', () => {
+    const current = BASE.replace(
+      'He touched the cold iron.',
+      'He touched the cold iron. It burned.'
+    )
+    const result = rebaseProposal(BASE, PROPOSED, current)
+    expect(result).toHaveProperty('content')
+    const content = (result as { content: string }).content
+    expect(content).toContain('The gate loomed, vast and black.')
+    expect(content).toContain('It burned.')
+  })
+
+  it('two sibling proposals against one base both survive sequential accepts', () => {
+    const second = BASE.replace('Kael crept through the ruins.', 'Kael slipped through the ruins.')
+    const afterFirst = (rebaseProposal(BASE, PROPOSED, BASE) as { content: string }).content
+    const result = rebaseProposal(BASE, second, afterFirst)
+    const content = (result as { content: string }).content
+    expect(content).toContain('Kael slipped through the ruins.')
+    expect(content).toContain('The gate loomed, vast and black.')
+  })
+
+  it('conflicts when the edited paragraph itself changed', () => {
+    const current = BASE.replace('The gate loomed ahead.', 'The gate was gone entirely.')
+    expect(rebaseProposal(BASE, PROPOSED, current)).toHaveProperty('conflict')
+  })
+
+  it('does not re-anchor a short repeated paragraph somewhere else', () => {
+    const base = ['"No."', '', 'She waited.', '', '"No."', '', 'He left.', ''].join('\n')
+    // Rewrite the SECOND "No." (unique via its neighbours).
+    const proposed = ['"No."', '', 'She waited.', '', '"Never."', '', 'He left.', ''].join('\n')
+    // The author deleted that whole exchange; an identical "No." remains above.
+    const current = ['"No."', '', 'She waited.', '', 'Rain fell.', ''].join('\n')
+    expect(rebaseProposal(base, proposed, current)).toHaveProperty('conflict')
+  })
+
+  it('re-appends an end-of-file addition to the CURRENT end', () => {
+    const appended = BASE.replace(/\s+$/, '') + '\n\nA bell rang out.\n'
+    const current = BASE.replace(/\s+$/, '') + '\n\nKael kept writing meanwhile.\n'
+    const result = rebaseProposal(BASE, appended, current)
+    const content = (result as { content: string }).content
+    expect(content.endsWith('Kael kept writing meanwhile.\n\nA bell rang out.\n')).toBe(true)
+  })
+
+  it('creates apply only while the path is unclaimed', () => {
+    expect(rebaseProposal(null, 'new doc\n', null)).toEqual({ content: 'new doc\n' })
+    expect(rebaseProposal(null, 'new doc\n', 'someone else\n')).toHaveProperty('conflict')
+    expect(rebaseProposal(null, 'new doc\n', 'new doc\n')).toEqual({ content: 'new doc\n' })
+  })
+
+  it('treats an already-applied change as clean', () => {
+    expect(rebaseProposal(BASE, PROPOSED, PROPOSED)).toEqual({ content: PROPOSED })
+  })
+
+  it('conflicts when the file was deleted', () => {
+    expect(rebaseProposal(BASE, PROPOSED, null)).toHaveProperty('conflict')
   })
 })
 

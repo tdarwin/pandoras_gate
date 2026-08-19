@@ -446,7 +446,10 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
               {
                 path: target,
                 newContent,
-                rationale: args.rationale ?? 'Targeted section edit from chat'
+                rationale: args.rationale ?? 'Targeted section edit from chat',
+                // The exact content the splice was computed against — accepts
+                // rebase onto whatever the file says by then.
+                base: raw
               }
             ],
             (p) => p === target
@@ -486,7 +489,8 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
               {
                 path: args.chapterFile,
                 newContent: frontmatterPrefix + joined,
-                rationale: args.rationale ?? 'Content appended from chat'
+                rationale: args.rationale ?? 'Content appended from chat',
+                base: raw
               }
             ],
             (p) => p === args.chapterFile

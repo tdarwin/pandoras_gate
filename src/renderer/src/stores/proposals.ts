@@ -2,14 +2,18 @@ import { create } from 'zustand'
 import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
 import { useProjectStore } from './project'
 import { useChatStore } from './chat'
+import { useDraftStore } from './draft'
 
 export interface ReviewItem {
   path: string
   action: 'create' | 'update'
+  /** Proposal content rebased onto the current file (when it still applies). */
   newContent: string
   rationale: string
-  baseHash: string
   currentContent: string
+  /** sha256 of currentContent — passed back when accepting edited content. */
+  currentHash: string
+  /** The change no longer lines up with the current file; Accept is disabled. */
   conflict: boolean
 }
 
@@ -31,6 +35,8 @@ export interface InlineReview {
   path: string
   /** Current on-disk file content (raw, incl. frontmatter). */
   originalRaw: string
+  /** sha256 of originalRaw, echoed to main so a moved file is refused. */
+  currentHash: string
   /** Proposed file content (raw, incl. frontmatter). */
   proposedRaw: string
   /** Live body markdown — starts as the proposal's body, tracks edits/rejects. */
@@ -56,7 +62,7 @@ interface ProposalsStore {
 
   init: () => void
   pendingCount: () => number
-  enterReview: (proposalId: string, path: string) => void
+  enterReview: (proposalId: string, path: string) => Promise<void>
   updateReviewBody: (body: string) => void
   setReviewFmChoice: (choice: 'proposed' | 'current') => void
   applyReview: () => Promise<void>
@@ -71,12 +77,21 @@ interface ProposalsStore {
     scope: 'chapter' | 'novel',
     guidance?: string
   ) => Promise<void>
+  /** Resolves one item; false when main refused (conflict, stale review). */
   resolve: (
     proposalId: string,
     path: string,
     resolution: 'accept' | 'reject',
-    editedContent?: string
-  ) => Promise<void>
+    editedContent?: string,
+    expectedCurrentHash?: string
+  ) => Promise<boolean>
+}
+
+/** Accepting into the chapter an AI draft is streaming into would race the
+ *  draft's writer — the author stops the draft first. */
+function draftBlocks(path: string): boolean {
+  const draft = useDraftStore.getState()
+  return draft.drafting && draft.draftFile === path
 }
 
 let subscribed = false
@@ -127,7 +142,15 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     })
   },
 
-  enterReview: (proposalId, path) => {
+  enterReview: async (proposalId, path) => {
+    if (draftBlocks(path)) {
+      set({ error: 'The AI is drafting into this chapter — stop the draft first.' })
+      return
+    }
+    // Flush the buffer and re-read so the review diffs against what is
+    // actually on disk, not a stale refresh.
+    await useProjectStore.getState().saveActiveChapter()
+    await get().refresh()
     const proposal = get().proposals.find((p) => p.id === proposalId)
     const item = proposal?.items.find((i) => i.path === path)
     if (!proposal || !item) return
@@ -136,6 +159,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
         proposalId,
         path,
         originalRaw: item.currentContent,
+        currentHash: item.currentHash,
         proposedRaw: item.newContent,
         bodyBuffer: parseFrontmatter(item.newContent).body,
         fmChoice: 'proposed',
@@ -160,7 +184,14 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
         ? parseFrontmatter(review.originalRaw).data
         : parseFrontmatter(review.proposedRaw).data
     const content = serializeFrontmatter({ data, body: review.bodyBuffer })
-    await get().resolve(review.proposalId, review.path, 'accept', content)
+    const ok = await get().resolve(
+      review.proposalId,
+      review.path,
+      'accept',
+      content,
+      review.currentHash
+    )
+    if (!ok) return
     set({ review: null })
     const project = useProjectStore.getState()
     if (/^(chapters|metadata|outlines)\//.test(review.path)) {
@@ -309,16 +340,23 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     }
   },
 
-  resolve: async (proposalId, path, resolution, editedContent) => {
+  resolve: async (proposalId, path, resolution, editedContent, expectedCurrentHash) => {
     const project = useProjectStore.getState()
     const novel = project.novel
-    if (!novel) return
+    if (!novel) return false
+    if (resolution === 'accept' && draftBlocks(path)) {
+      set({ error: 'The AI is drafting into this chapter — stop the draft first.' })
+      return false
+    }
+    // Unsaved typing must reach disk before main rebases against the file.
+    if (resolution === 'accept') await project.saveActiveChapter()
     const result = await window.pandora.invoke('proposals:resolve', {
       novelDir: novel.dir,
       proposalId,
       path,
       resolution,
-      ...(editedContent !== undefined ? { editedContent } : {})
+      ...(editedContent !== undefined ? { editedContent } : {}),
+      ...(expectedCurrentHash !== undefined ? { expectedCurrentHash } : {})
     })
     if (result.ok) {
       // Accepting an edit to the open document must refresh the editor buffer.
@@ -327,8 +365,10 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
         if (read.ok) project.setSavedContent(read.data.content)
       }
       await get().refresh()
-    } else {
-      set({ error: result.error.message })
+      return true
     }
+    set({ error: result.error.message })
+    await get().refresh()
+    return false
   }
 }))

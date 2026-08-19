@@ -199,7 +199,7 @@ async function runLineEditReview(req: ReviewRequest): Promise<RunResult> {
     ? `\n## Author's notes for this pass\n\n${req.guidance.trim()}`
     : ''
 
-  const proposals: { path: string; newContent: string; rationale: string }[] = []
+  const proposals: { path: string; newContent: string; rationale: string; base: string }[] = []
   const skipped: string[] = []
 
   for (const [i, entry] of targets.entries()) {
@@ -238,7 +238,10 @@ async function runLineEditReview(req: ReviewRequest): Promise<RunResult> {
       newContent: `${frontmatterPrefix}${revised}\n`,
       rationale: req.guidance?.trim()
         ? `${label} — ${req.guidance.trim().slice(0, 160)}`
-        : `${label} of “${entry.title}”`
+        : `${label} of “${entry.title}”`,
+      // The chapter as read at THIS chapter's turn in the pass — for a
+      // novel-wide review, later chapters' generations happen after this.
+      base: raw
     })
   }
 
