@@ -1,5 +1,6 @@
 import type { Llama, LlamaModel } from 'node-llama-cpp'
 import type { WorkerRequest, WorkerResponse } from '../shared/llm/workerProtocol'
+import { SerialQueue } from './queue'
 
 /**
  * LLM inference worker — runs as an Electron utilityProcess so model loading
@@ -52,14 +53,10 @@ function getLlamaInstance(): Promise<Llama> {
 
 async function ensureModel(modelPath: string): Promise<LlamaModel> {
   if (model && loadedPath === modelPath) return model
-  // One resident model at a time: unload before switching — but NEVER while a
-  // generation still holds the old model ("Object is disposed" crashes).
+  // One resident model at a time. Disposal is safe here: chat and load both
+  // run through `generationQueue`, so when this executes no other generation
+  // can hold the old model.
   if (model) {
-    if (activeChats.size > 0) {
-      throw new Error(
-        'Another generation is still running with the current model. Stop it (or let it finish) before switching models.'
-      )
-    }
     try {
       await model.dispose()
     } catch {
@@ -131,9 +128,10 @@ async function handleLoad(modelPath: string, contextSize?: number): Promise<void
   }
 }
 
-async function handleChat(req: Extract<WorkerRequest, { type: 'chat' }>): Promise<void> {
-  const controller = new AbortController()
-  activeChats.set(req.requestId, controller)
+async function handleChat(
+  req: Extract<WorkerRequest, { type: 'chat' }>,
+  controller: AbortController
+): Promise<void> {
   try {
     const m = await ensureModel(req.modelPath)
     const inst = await getLlamaInstance()
@@ -317,22 +315,51 @@ async function handleGgufInfo(id: number, modelPath: string): Promise<void> {
   }
 }
 
+// Generations and model loads run strictly one at a time — see queue.ts.
+const generationQueue = new SerialQueue()
+
 port.on('message', (e: { data: WorkerRequest }) => {
   const msg = e.data
   switch (msg.type) {
     case 'load':
-      void handleLoad(msg.modelPath, msg.contextSize)
+      generationQueue.push(() => handleLoad(msg.modelPath, msg.contextSize))
       break
     case 'unload':
-      if (model) {
-        void model.dispose()
-        model = null
-        loadedPath = null
+      generationQueue.push(async () => {
+        if (model) {
+          await model.dispose().catch(() => undefined)
+          model = null
+          loadedPath = null
+          resolvedContext = null
+        }
+      })
+      break
+    case 'chat': {
+      // Registered before the job starts so cancel works while queued.
+      const controller = new AbortController()
+      activeChats.set(msg.requestId, controller)
+      if (generationQueue.busy) {
+        send({
+          type: 'event',
+          requestId: msg.requestId,
+          event: { type: 'status', text: 'Waiting for the current generation to finish…' }
+        })
       }
+      generationQueue.push(
+        () => handleChat(msg, controller),
+        () => {
+          if (!controller.signal.aborted) return false
+          send({
+            type: 'event',
+            requestId: msg.requestId,
+            event: { type: 'done', finishReason: 'cancelled' }
+          })
+          activeChats.delete(msg.requestId)
+          return true
+        }
+      )
       break
-    case 'chat':
-      void handleChat(msg)
-      break
+    }
     case 'cancel': {
       activeChats.get(msg.requestId)?.abort()
       // Unwind any tool handler awaiting main — otherwise the prompt cannot
@@ -354,9 +381,14 @@ port.on('message', (e: { data: WorkerRequest }) => {
       break
     }
     case 'countTokens': {
-      const count = model
-        ? model.tokenize(msg.text).length
-        : Math.ceil((msg.text.length / 4) * 1.1)
+      // tokenize can throw mid-dispose during a queued model switch; an
+      // estimate beats killing the worker from the message handler.
+      let count: number
+      try {
+        count = model ? model.tokenize(msg.text).length : Math.ceil((msg.text.length / 4) * 1.1)
+      } catch {
+        count = Math.ceil((msg.text.length / 4) * 1.1)
+      }
       send({ type: 'tokenCount', id: msg.id, count })
       break
     }

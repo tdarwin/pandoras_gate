@@ -71,6 +71,8 @@ export type StreamEvent =
   | { type: 'usage'; promptTokens: number; completionTokens: number }
   | { type: 'toolCall'; id: string; name: string; arguments: string }
   | { type: 'toolStatus'; text: string }
+  /** Transient progress line (queue waits, phase changes) — shown live, never kept in the transcript. */
+  | { type: 'status'; text: string }
   | { type: 'done'; finishReason: string }
   | { type: 'error'; message: string }
 

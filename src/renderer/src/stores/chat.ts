@@ -124,6 +124,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             return { messages, toolStatus: event.text }
           })
           break
+        case 'status':
+          // Transient progress (e.g. queued behind another generation) —
+          // live indicator only, no transcript chip.
+          set({ toolStatus: event.text })
+          break
         case 'usage':
           set({ usage: { promptTokens: event.promptTokens, completionTokens: event.completionTokens } })
           break

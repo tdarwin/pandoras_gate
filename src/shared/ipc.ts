@@ -49,6 +49,7 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
     arguments: z.string()
   }),
   z.object({ type: z.literal('toolStatus'), text: z.string() }),
+  z.object({ type: z.literal('status'), text: z.string() }),
   z.object({ type: z.literal('done'), finishReason: z.string() }),
   z.object({ type: z.literal('error'), message: z.string() })
 ])
