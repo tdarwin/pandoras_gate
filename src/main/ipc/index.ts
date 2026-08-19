@@ -151,9 +151,9 @@ export function registerIpcHandlers(): void {
   })
 
   handle('chapter:rename', async (req) => {
-    const state = await project.renameChapter(req.novelDir, req.file, req.newTitle)
+    const result = await project.renameChapter(req.novelDir, req.file, req.newTitle)
     gitService.scheduleAutocommit(req.novelDir, `chapter renamed: ${req.newTitle}`, ['novel.yaml'])
-    return state
+    return result
   })
 
   handle('chapter:reorder', async (req) => {

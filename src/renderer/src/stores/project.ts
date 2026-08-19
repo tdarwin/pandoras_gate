@@ -22,6 +22,12 @@ interface ProjectStore {
   /** Snapshots the open buffer, then clears the workspace. */
   closeNovel: () => Promise<void>
   openChapter: (file: string) => Promise<void>
+  /**
+   * Re-read the ACTIVE file after main rewrote it (restore, status change).
+   * Unlike openChapter this never snapshots first — snapshotting would write
+   * the stale buffer straight over main's change.
+   */
+  reloadActiveChapter: () => Promise<void>
   setContent: (content: string) => void
   /** Quiet write to disk (crash safety) — no history entry. */
   saveActiveChapter: () => Promise<void>
@@ -80,6 +86,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
   },
 
+  reloadActiveChapter: async () => {
+    const { novel, activeFile } = get()
+    if (!novel || !activeFile) return
+    const result = await window.pandora.invoke('chapter:read', { novelDir: novel.dir, file: activeFile })
+    if (result.ok) set({ content: result.data.content, dirty: false })
+    else set({ lastError: result.error.message })
+  },
+
   setContent: (content) => set({ content, dirty: true }),
 
   saveActiveChapter: async () => {
@@ -131,10 +145,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       newTitle
     })
     if (result.ok) {
-      set({ novel: result.data })
-      if (activeFile === file) {
-        const renamed = result.data.manifest.chapters.find((c) => c.title === newTitle)
-        if (renamed && renamed.file !== file) set({ activeFile: renamed.file })
+      set({ novel: result.data.novel })
+      // Re-point by the RETURNED path — matching on title used to grab the
+      // first chapter with that title and overwrite it on the next save.
+      if (activeFile === file && result.data.file !== file) {
+        set({ activeFile: result.data.file })
       }
     } else {
       set({ lastError: result.error.message })

@@ -98,7 +98,7 @@ export const ipcContract = {
   },
   'chapter:rename': {
     request: z.object({ novelDir: z.string(), file: z.string(), newTitle: z.string().min(1) }),
-    response: NovelStateSchema
+    response: z.object({ novel: NovelStateSchema, file: z.string() })
   },
   'chapter:reorder': {
     request: z.object({ novelDir: z.string(), orderedFiles: z.array(z.string()) }),

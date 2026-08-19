@@ -34,7 +34,7 @@ function timeAgo(ts: number): string {
 export default function HistoryPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
   const novel = useProjectStore((s) => s.novel)!
   const activeFile = useProjectStore((s) => s.activeFile)
-  const openChapter = useProjectStore((s) => s.openChapter)
+  const reloadActiveChapter = useProjectStore((s) => s.reloadActiveChapter)
   const setError = useProjectStore((s) => s.setError)
 
   const [commits, setCommits] = useState<Commit[]>([])
@@ -87,7 +87,9 @@ export default function HistoryPanel({ onClose }: { onClose: () => void }): Reac
       file: activeFile
     })
     if (result.ok) {
-      await openChapter(activeFile)
+      // Re-read WITHOUT snapshotting: openChapter's pre-switch snapshot used
+      // to write the stale buffer straight over the restored content.
+      await reloadActiveChapter()
       setDiff(null)
       await refresh()
     } else {

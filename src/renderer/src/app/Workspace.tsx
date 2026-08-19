@@ -38,6 +38,7 @@ export default function Workspace(): React.JSX.Element {
   const snapshotOnBlur = usePrefsStore((s) => s.snapshotOnBlur)
   const snapshotIntervalMinutes = usePrefsStore((s) => s.snapshotIntervalMinutes)
   const openChapter = useProjectStore((s) => s.openChapter)
+  const reloadActiveChapter = useProjectStore((s) => s.reloadActiveChapter)
   const setError = useProjectStore((s) => s.setError)
   const [showHistory, setShowHistory] = useState(false)
   const [showChat, setShowChat] = useState(true)
@@ -187,7 +188,9 @@ export default function Workspace(): React.JSX.Element {
     })
     if (result.ok) {
       applyNovelState(result.data)
-      await openChapter(activeFile)
+      // Reload rather than openChapter: the snapshot-first path would commit
+      // the buffer's OLD frontmatter back over the status main just wrote.
+      await reloadActiveChapter()
     } else {
       setError(result.error.message)
     }
