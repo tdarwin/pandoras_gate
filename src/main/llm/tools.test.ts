@@ -7,11 +7,13 @@ import { createNovel, createChapter } from '../project/service'
 import { listProposals } from '../metadata/pipeline'
 import { MockProvider } from './mock'
 import { chatToolDefinitions, executeTool, type ToolContext } from './tools'
+import type { DeferredRun } from './chat'
 
 let dir: string
 let novelDir: string
 let provider: MockProvider
 let sent: unknown[]
+let deferred: DeferredRun[]
 
 function fakeSender(): WebContents {
   return {
@@ -23,7 +25,21 @@ function fakeSender(): WebContents {
 }
 
 function ctx(activeFile: string | null): ToolContext {
-  return { novelDir, activeFile, provider, modelId: 'mock-model', sender: fakeSender() }
+  return {
+    novelDir,
+    activeFile,
+    provider,
+    modelId: 'mock-model',
+    sender: fakeSender(),
+    defer: (job) => deferred.push(job)
+  }
+}
+
+/** Runs everything the tools deferred, as the chat orchestrator would. */
+async function runDeferred(): Promise<string[]> {
+  const results: string[] = []
+  for (const job of deferred.splice(0)) results.push(await job.run(() => {}))
+  return results
 }
 
 beforeEach(async () => {
@@ -37,6 +53,7 @@ beforeEach(async () => {
   )
   provider = new MockProvider()
   sent = []
+  deferred = []
   vi.restoreAllMocks()
 })
 
@@ -228,7 +245,9 @@ describe('chapter tools', () => {
       'edit_chapter',
       JSON.stringify({ instructions: 'Set the scene at night, in the rain.' })
     )
-    expect(result).toContain('review queue')
+    expect(result).toContain('Queued')
+    expect(provider.requests).toHaveLength(0)
+    await runDeferred()
 
     const proposals = await listProposals(novelDir)
     expect(proposals).toHaveLength(1)
@@ -408,10 +427,15 @@ describe('executeTool', () => {
       })
     )
     const result = await executeTool(ctx('chapters/001-the-iron-gate.md'), 'update_codex', '{}')
-    expect(result).toContain('review queue')
+    // The tool defers the generation — nothing runs during the reply.
+    expect(result).toContain('Queued')
+    expect(provider.requests).toHaveLength(0)
+    expect(await listProposals(novelDir)).toHaveLength(0)
+    expect(deferred).toHaveLength(1)
+
+    const results = await runDeferred()
+    expect(results).toEqual(['1 suggestion'])
     expect(await listProposals(novelDir)).toHaveLength(1)
-    // Renderer was notified to refresh.
-    expect(sent.some((args) => (args as unknown[])[0] === 'proposals:changed')).toBe(true)
   })
 
   it('update_codex forces a run even when the chapter is unchanged', async () => {
@@ -427,11 +451,12 @@ describe('executeTool', () => {
     }
     provider.queue(JSON.stringify(summary))
     await executeTool(ctx('chapters/001-the-iron-gate.md'), 'update_codex', '{}')
+    await runDeferred()
     // Same chapter content — an explicit second request must still run.
     summary.proposals[0]!.newContent = summary.proposals[0]!.newContent.replace('v1', 'v2')
     provider.queue(JSON.stringify(summary))
-    const result = await executeTool(ctx('chapters/001-the-iron-gate.md'), 'update_codex', '{}')
-    expect(result).toContain('review queue')
+    await executeTool(ctx('chapters/001-the-iron-gate.md'), 'update_codex', '{}')
+    await runDeferred()
     expect(provider.requests).toHaveLength(2)
   })
 
@@ -459,7 +484,9 @@ describe('executeTool', () => {
       'generate_outline',
       JSON.stringify({ scope: 'novel', guidance: 'three acts' })
     )
-    expect(result).toContain('review queue')
+    expect(result).toContain('Queued')
+    expect(provider.requests).toHaveLength(0)
+    await runDeferred()
     const proposals = await listProposals(novelDir)
     expect(proposals[0]!.items[0]!.path).toBe('outlines/novel.md')
   })

@@ -37,6 +37,47 @@ export function registerProvider(provider: LLMProvider): void {
 
 const active = new Map<string, AbortController>()
 
+/**
+ * A generation a tool queued to run AFTER the chat reply finishes. Running it
+ * inline would open a second stream on the same provider while the chat still
+ * holds its full context — on local models that shrinks (or OOMs) the nested
+ * run's window. `run` resolves to a short author-facing result line.
+ */
+export interface DeferredRun {
+  label: string
+  run: (onStatus: (text: string) => void) => Promise<string>
+}
+
+/**
+ * Runs a reply's deferred generations sequentially and reports progress via
+ * renderer events. The caller announces `pipeline:run {phase:'started'}` for
+ * the batch BEFORE the chat's final `done`, so the proposals UI reads
+ * "running" before the chat reads "idle" — no gap for auto-Codex to sneak in.
+ */
+export async function runDeferredJobs(
+  jobs: DeferredRun[],
+  emit: (channel: 'pipeline:run' | 'pipeline:status' | 'proposals:changed', payload: unknown) => void
+): Promise<void> {
+  const results: string[] = []
+  let error: string | undefined
+  for (const job of jobs) {
+    emit('pipeline:status', { text: job.label })
+    try {
+      results.push(await job.run((text) => emit('pipeline:status', { text })))
+    } catch (err) {
+      logError('chat', `deferred run failed: ${job.label}`, err)
+      error ??= err instanceof Error ? err.message : String(err)
+    }
+  }
+  emit('pipeline:run', {
+    phase: 'finished',
+    label: jobs[0]?.label ?? '',
+    ...(results.length > 0 ? { result: results.join('; ') } : {}),
+    ...(error !== undefined ? { error } : {})
+  })
+  emit('proposals:changed', {})
+}
+
 export interface ChatContext {
   novelDir: string
   activeFile: string | null
@@ -94,6 +135,7 @@ export function startChat(
       'chat.tools_enabled': Boolean(chatContext?.toolUse)
     },
     async (span) => {
+      const deferredRuns: DeferredRun[] = []
       const toolCtx: ToolContext | null =
         chatContext?.toolUse && chatContext.novelDir
           ? {
@@ -102,7 +144,8 @@ export function startChat(
               provider,
               modelId: req.modelId,
               sender,
-              conversationId
+              conversationId,
+              defer: (job) => deferredRuns.push(job)
             }
           : null
       const tools = toolCtx ? chatToolDefinitions(toolCtx) : []
@@ -197,7 +240,17 @@ export function startChat(
 
           if (pendingCalls.length === 0 || !toolCtx || toolRounds >= MAX_TOOL_ROUNDS) {
             span.setAttribute('chat.tool_rounds', toolRounds)
+            const emit = (channel: string, payload: unknown): void => {
+              if (!sender.isDestroyed()) sender.send(channel, payload)
+            }
+            if (deferredRuns.length > 0) {
+              // Announced before `done` — see runDeferredJobs.
+              emit('pipeline:run', { phase: 'started', label: deferredRuns[0]!.label })
+            }
             send({ type: 'done', finishReason: finished ?? 'stop' })
+            if (deferredRuns.length > 0) {
+              await runDeferredJobs(deferredRuns, emit)
+            }
             return
           }
 

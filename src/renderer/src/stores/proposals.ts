@@ -42,7 +42,12 @@ export interface InlineReview {
 
 interface ProposalsStore {
   proposals: ReviewProposal[]
+  /** True while any pipeline run is in flight (manual or chat-deferred). */
   running: boolean
+  /** A manual run (Update Codex / Outline / Review buttons) is awaiting its invoke. */
+  manualRunning: boolean
+  /** Chat-deferred generation batches currently executing in main. */
+  agentRuns: number
   /** Live phase text while a pipeline run is in flight. */
   runningStatus: string | null
   lastRunStatus: string | null
@@ -79,6 +84,8 @@ let subscribed = false
 export const useProposalsStore = create<ProposalsStore>((set, get) => ({
   proposals: [],
   running: false,
+  manualRunning: false,
+  agentRuns: 0,
   runningStatus: null,
   lastRunStatus: null,
   error: null,
@@ -92,6 +99,31 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     window.pandora.on('pipeline:status', (raw) => {
       const { text } = raw as { text: string }
       set({ runningStatus: text })
+    })
+    // Chat-deferred generations (update_codex etc. run after the reply).
+    window.pandora.on('pipeline:run', (raw) => {
+      const payload = raw as { phase: 'started' | 'finished'; label: string; result?: string; error?: string }
+      if (payload.phase === 'started') {
+        set((s) => ({
+          agentRuns: s.agentRuns + 1,
+          running: true,
+          runningStatus: payload.label,
+          lastRunStatus: null
+        }))
+      } else {
+        set((s) => {
+          const agentRuns = Math.max(0, s.agentRuns - 1)
+          const running = agentRuns > 0 || s.manualRunning
+          return {
+            agentRuns,
+            running,
+            runningStatus: running ? s.runningStatus : null,
+            lastRunStatus: payload.result ?? s.lastRunStatus,
+            ...(payload.error !== undefined ? { error: payload.error } : {})
+          }
+        })
+        void get().refresh()
+      }
     })
   },
 
@@ -171,7 +203,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
 
     // Snapshot first so chapter edits and metadata changes stay separate commits.
     await project.snapshotActiveChapter()
-    set({ running: true, error: null, lastRunStatus: null })
+    set({ manualRunning: true, running: true, error: null, lastRunStatus: null })
     const result = await window.pandora.invoke('proposals:run', {
       novelDir: novel.dir,
       chapterFile: file,
@@ -179,8 +211,9 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       modelId: model.id
     })
     if (result.ok) {
-      set({
-        running: false,
+      set((s) => ({
+        manualRunning: false,
+        running: s.agentRuns > 0,
         runningStatus: null,
         lastRunStatus:
           result.data.status === 'ran'
@@ -188,10 +221,10 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
             : result.data.status === 'no-changes'
               ? 'Codex already up to date'
               : null
-      })
+      }))
       await get().refresh()
     } else {
-      set({ running: false, runningStatus: null, ...(opts?.silent ? {} : { error: result.error.message }) })
+      set((s) => ({ manualRunning: false, running: s.agentRuns > 0, runningStatus: null, ...(opts?.silent ? {} : { error: result.error.message }) }))
     }
   },
 
@@ -208,7 +241,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     if (scope === 'chapter' && !project.activeFile?.startsWith('chapters/')) return
 
     await project.snapshotActiveChapter()
-    set({ running: true, error: null, lastRunStatus: null })
+    set({ manualRunning: true, running: true, error: null, lastRunStatus: null })
     const result = await window.pandora.invoke('outlines:generate', {
       novelDir: novel.dir,
       scope,
@@ -218,15 +251,16 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       modelId: model.id
     })
     if (result.ok) {
-      set({
-        running: false,
+      set((s) => ({
+        manualRunning: false,
+        running: s.agentRuns > 0,
         runningStatus: null,
         lastRunStatus:
           result.data.status === 'ran' ? 'Outline ready for review' : 'No outline changes suggested'
-      })
+      }))
       await get().refresh()
     } else {
-      set({ running: false, runningStatus: null, error: result.error.message })
+      set((s) => ({ manualRunning: false, running: s.agentRuns > 0, runningStatus: null, error: result.error.message }))
     }
   },
 
@@ -246,7 +280,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     }
 
     await project.snapshotActiveChapter()
-    set({ running: true, error: null, lastRunStatus: null })
+    set({ manualRunning: true, running: true, error: null, lastRunStatus: null })
     const result = await window.pandora.invoke('review:run', {
       novelDir: novel.dir,
       scope,
@@ -258,8 +292,9 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     })
     if (result.ok) {
       const isReport = reviewType === 'developmental' || reviewType === 'fact-check'
-      set({
-        running: false,
+      set((s) => ({
+        manualRunning: false,
+        running: s.agentRuns > 0,
         runningStatus: null,
         lastRunStatus:
           result.data.status === 'ran'
@@ -267,10 +302,10 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
               ? 'Report ready for review'
               : `${result.data.itemCount} chapter${result.data.itemCount === 1 ? '' : 's'} with edits`
             : 'Nothing to change'
-      })
+      }))
       await get().refresh()
     } else {
-      set({ running: false, runningStatus: null, error: result.error.message })
+      set((s) => ({ manualRunning: false, running: s.agentRuns > 0, runningStatus: null, error: result.error.message }))
     }
   },
 

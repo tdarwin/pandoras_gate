@@ -67,6 +67,7 @@ export default function Workspace(): React.JSX.Element {
   const initDraft = useDraftStore((s) => s.init)
 
   const loadForNovel = useChatStore((s) => s.loadForNovel)
+  const chatStreaming = useChatStore((s) => s.streaming)
   const initProposals = useProposalsStore((s) => s.init)
   const initProject = useProjectStore((s) => s.init)
 
@@ -119,12 +120,14 @@ export default function Workspace(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [snapshotActiveChapter])
 
-  // Auto metadata run: a while after writing settles on a chapter.
+  // Auto metadata run: a while after writing settles on a chapter. Waits out
+  // a streaming chat too — its reply may itself defer a Codex run.
   useEffect(() => {
-    if (!autoCodex || dirty || drafting || !activeFile?.startsWith('chapters/')) return
+    if (!autoCodex || dirty || drafting || chatStreaming || !activeFile?.startsWith('chapters/'))
+      return
     const t = setTimeout(() => void runProposals({ silent: true }), AUTO_METADATA_DELAY_MS)
     return () => clearTimeout(t)
-  }, [autoCodex, dirty, drafting, activeFile, runProposals])
+  }, [autoCodex, dirty, drafting, chatStreaming, activeFile, runProposals])
 
   const activeChapter = novel.manifest.chapters.find((c) => c.file === activeFile)
   const activeLabel =

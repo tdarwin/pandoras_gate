@@ -498,6 +498,8 @@ export interface ChapterEditRequest {
   provider: LLMProvider
   modelId: string
   conversationId?: string
+  /** Live progress callback ("Asking the model…"). */
+  onStatus?: (text: string) => void
 }
 
 /**
@@ -527,6 +529,7 @@ export async function runChapterEdit(req: ChapterEditRequest): Promise<RunResult
         throw new Error('The chapter is empty — use drafting to write new prose instead.')
       }
 
+      req.onStatus?.(`Asking the model to revise “${entry.title}”…`)
       let revised = ''
       const controller = new AbortController()
       for await (const event of tracedChatStream(
@@ -599,6 +602,8 @@ export interface OutlineRequest {
   provider: LLMProvider
   modelId: string
   conversationId?: string
+  /** Live progress callback. */
+  onStatus?: (text: string) => void
 }
 
 async function buildOutlinePrompt(req: OutlineRequest): Promise<string> {
@@ -682,6 +687,7 @@ async function runOutlineGenerationInner(req: OutlineRequest): Promise<RunResult
       : 'the novel'
 
   const userPrompt = await buildOutlinePrompt(req)
+  req.onStatus?.(`Asking the model to outline ${chapterTitle}…`)
 
   let raw = ''
   const controller = new AbortController()

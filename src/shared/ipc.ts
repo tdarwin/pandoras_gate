@@ -575,6 +575,13 @@ export const ipcEvents = {
   'proposals:changed': z.object({}),
   /** Live phase text while a Codex/outline pipeline run is working. */
   'pipeline:status': z.object({ text: z.string() }),
+  /** A chat-deferred generation batch started/finished (proposals UI state). */
+  'pipeline:run': z.object({
+    phase: z.enum(['started', 'finished']),
+    label: z.string(),
+    result: z.string().optional(),
+    error: z.string().optional()
+  }),
   /** Manifest changed outside the renderer (e.g. agent created a chapter). */
   'novel:updated': NovelStateSchema,
   /** The agent asked for an AI draft; renderer starts it when chat is idle. */
