@@ -126,8 +126,27 @@ describe('TipTap editor instance', () => {
     const img = editor.view.dom.querySelector('img')!
     // Displayed through the privileged scheme (the sandboxed renderer cannot
     // read novel files), but the document and markdown keep the relative path.
-    expect(img.getAttribute('src')).toBe('pandora-asset://novel/assets/gate%2520art.png')
+    // Markdown srcs are URLs: `%20` means the file "gate art.png", so the
+    // display URL keeps the single encoding — never a double-encoded %2520,
+    // which the scheme handler's single decode would miss.
+    expect(img.getAttribute('src')).toBe('pandora-asset://novel/assets/gate%20art.png')
     expect(docToMarkdown(editor.state.doc)).toBe('![the gate](assets/gate%20art.png)\n')
+    editor.destroy()
+  })
+
+  it('a bare % in an image src still resolves to the literal file name', () => {
+    const editor = makeEditor('![chart](assets/growth-100%.png)\n')
+    const img = editor.view.dom.querySelector('img')!
+    // markdown-it normalizes the malformed escape to %25 at parse time, so
+    // the node holds the valid spelling; the display URL keeps it single-
+    // encoded and the scheme's decode yields the file "growth-100%.png".
+    expect(img.getAttribute('src')).toBe('pandora-asset://novel/assets/growth-100%25.png')
+    const normalized = '![chart](assets/growth-100%25.png)\n'
+    expect(docToMarkdown(editor.state.doc)).toBe(normalized)
+    // The normalized form holds on the next pass.
+    const editor2 = makeEditor(normalized)
+    expect(docToMarkdown(editor2.state.doc)).toBe(normalized)
+    editor2.destroy()
     editor.destroy()
   })
 

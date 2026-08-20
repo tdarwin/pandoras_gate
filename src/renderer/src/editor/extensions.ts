@@ -13,11 +13,28 @@ function isRelativeSrc(src: unknown): src is string {
 }
 
 /**
+ * Markdown image srcs are URLs, so percent-escapes in them are honored:
+ * a hand-authored `assets/my%20file.png` means the file "my file.png".
+ * Each segment is decoded before re-encoding — blindly re-encoding would
+ * yield `%2520`, and the scheme handler's single decode would then look
+ * for a literal "my%20file.png". A segment with a malformed escape (a
+ * literal `%` as in `100%.png`) is treated as a literal name.
+ */
+function encodeSrcSegment(segment: string): string {
+  try {
+    return encodeURIComponent(decodeURIComponent(segment))
+  } catch {
+    return encodeURIComponent(segment)
+  }
+}
+
+/**
  * The image node keeps the markdown-relative `src` (`assets/foo.png`) as its
  * source of truth; only the rendered <img> maps it onto the privileged
  * pandora-asset:// scheme, which is the sole way the sandboxed renderer can
  * display novel files. parseHTML reverses the mapping so copy/paste within
- * the editor never leaks scheme URLs into the markdown.
+ * the editor never leaks scheme URLs into the markdown — kept in encoded
+ * form, which is exactly the markdown-safe spelling of the relative path.
  */
 const NovelImage = Image.extend({
   parseHTML() {
@@ -27,9 +44,7 @@ const NovelImage = Image.extend({
         getAttrs: (el) => {
           const src = el.getAttribute('src') ?? ''
           return {
-            src: src.startsWith(ASSET_URL_PREFIX)
-              ? decodeURIComponent(src.slice(ASSET_URL_PREFIX.length))
-              : src,
+            src: src.startsWith(ASSET_URL_PREFIX) ? src.slice(ASSET_URL_PREFIX.length) : src,
             alt: el.getAttribute('alt'),
             title: el.getAttribute('title')
           }
@@ -40,7 +55,7 @@ const NovelImage = Image.extend({
   renderHTML({ HTMLAttributes }) {
     const src = HTMLAttributes['src']
     const mapped = isRelativeSrc(src)
-      ? { ...HTMLAttributes, src: ASSET_URL_PREFIX + src.split('/').map(encodeURIComponent).join('/') }
+      ? { ...HTMLAttributes, src: ASSET_URL_PREFIX + src.split('/').map(encodeSrcSegment).join('/') }
       : HTMLAttributes
     return ['img', mapped]
   }
