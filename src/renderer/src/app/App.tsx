@@ -9,7 +9,7 @@ import StatusBar from '../components/StatusBar'
 import PreferencesModal from '../components/PreferencesModal'
 import AboutModal from '../components/AboutModal'
 import iconUrl from '../assets/icon.png'
-import type { IpcEventPayload } from '@shared/ipc'
+import { onIpcEvent } from '../lib/events'
 import { closeNovelSafely, prepareToLeaveNovel } from './novelActions'
 import { useDraftStore } from '../stores/draft'
 
@@ -49,8 +49,7 @@ export default function App(): React.JSX.Element {
 
   // Native menu commands act on the stores directly.
   useEffect(() => {
-    return window.pandora.on('menu:action', (raw) => {
-      const { action, dir, platform } = raw as IpcEventPayload<'menu:action'>
+    return onIpcEvent('menu:action', ({ action, dir, platform }) => {
       const ui = useUiStore.getState()
       const project = useProjectStore.getState()
       switch (action) {
@@ -90,7 +89,7 @@ export default function App(): React.JSX.Element {
   // Save-before-close handshake: main is about to close the window or quit.
   // Always ack, even with nothing to save — main waits (bounded) for it.
   useEffect(() => {
-    return window.pandora.on('app:flushRequest', () => {
+    return onIpcEvent('app:flushRequest', () => {
       void (async () => {
         const draft = useDraftStore.getState()
         if (draft.drafting) await draft.stop()

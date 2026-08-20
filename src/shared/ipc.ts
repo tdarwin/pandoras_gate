@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { NovelStateSchema } from './schemas/project'
 import { CatalogEntryStatusSchema, HostedPickSchema, type ModelRoleMap } from './llm/catalog'
+import { SnapshotIntervalSchema, ContextTargetSchema, ThemePrefSchema } from './prefs'
 
 export const ChatMessageSchema = z.object({
   role: z.enum(['system', 'user', 'assistant', 'tool']),
@@ -34,6 +35,24 @@ export const ModelRolesSchema = z.object({
   developmental: z.string().nullable(),
   codex: z.string().nullable()
 }) satisfies z.ZodType<ModelRoleMap>
+
+/**
+ * The canonical prefs shape — what prefs:get and prefs:set both return.
+ * Interval/target stay plain numbers here: main coerces unknown stored values
+ * on read, and the write side is constrained by the prefs:set request schema.
+ */
+export const PrefsSchema = z.object({
+  autoCodex: z.boolean(),
+  snapshotOnBlur: z.boolean(),
+  snapshotIntervalMinutes: z.number(),
+  /** Story-context token target for AI chats/drafts; 0 = automatic. */
+  contextTargetTokens: z.number(),
+  theme: ThemePrefSchema,
+  /** Per-task model assignments; null = use the chat panel's model. */
+  modelRoles: ModelRolesSchema,
+  /** Opt-in to seeing models that write explicit content without refusing. */
+  showUnfilteredModels: z.boolean()
+})
 
 export const StreamEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('delta'), text: z.string() }),
@@ -234,42 +253,19 @@ export const ipcContract = {
   },
   'prefs:get': {
     request: z.undefined(),
-    response: z.object({
-      autoCodex: z.boolean(),
-      snapshotOnBlur: z.boolean(),
-      snapshotIntervalMinutes: z.number(),
-      /** Story-context token target for AI chats/drafts; 0 = automatic. */
-      contextTargetTokens: z.number(),
-      theme: z.enum(['dark', 'light', 'system']),
-      /** Per-task model assignments; null = use the chat panel's model. */
-      modelRoles: ModelRolesSchema,
-      /** Opt-in to seeing models that write explicit content without refusing. */
-      showUnfilteredModels: z.boolean()
-    })
+    response: PrefsSchema
   },
   'prefs:set': {
     request: z.object({
       autoCodex: z.boolean().optional(),
       snapshotOnBlur: z.boolean().optional(),
-      snapshotIntervalMinutes: z
-        .union([z.literal(0), z.literal(5), z.literal(10), z.literal(15), z.literal(20)])
-        .optional(),
-      contextTargetTokens: z
-        .union([z.literal(0), z.literal(8192), z.literal(16384), z.literal(32768)])
-        .optional(),
-      theme: z.enum(['dark', 'light', 'system']).optional(),
+      snapshotIntervalMinutes: SnapshotIntervalSchema.optional(),
+      contextTargetTokens: ContextTargetSchema.optional(),
+      theme: ThemePrefSchema.optional(),
       modelRoles: ModelRolesSchema.partial().optional(),
       showUnfilteredModels: z.boolean().optional()
     }),
-    response: z.object({
-      autoCodex: z.boolean(),
-      snapshotOnBlur: z.boolean(),
-      snapshotIntervalMinutes: z.number(),
-      contextTargetTokens: z.number(),
-      theme: z.enum(['dark', 'light', 'system']),
-      modelRoles: ModelRolesSchema,
-      showUnfilteredModels: z.boolean()
-    })
+    response: PrefsSchema
   },
   'sync:getConfig': {
     request: z.object({ novelDir: z.string() }),

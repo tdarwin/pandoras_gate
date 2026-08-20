@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { IpcEventPayload } from '@shared/ipc'
+import { onIpcEvent } from '../lib/events'
 import {
   USE_CASE_LABELS,
   MODEL_ROLES,
@@ -331,8 +331,7 @@ export default function ModelsManager({ onClose }: { onClose: () => void }): Rea
     void initPrefs()
     // Completion/failure notifications; live progress comes from the
     // downloads store.
-    const unsubscribe = window.pandora.on('model:downloadProgress', (raw) => {
-      const p = raw as IpcEventPayload<'model:downloadProgress'>
+    const unsubscribe = onIpcEvent('model:downloadProgress', (p) => {
       if (p.error && p.error !== 'cancelled') setError(p.error)
       if (p.done) {
         void refresh()

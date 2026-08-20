@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
+import { onIpcEvent } from '../lib/events'
 import { useProjectStore } from './project'
 import { useChatStore } from './chat'
 import { useDraftStore } from './draft'
@@ -110,14 +111,12 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     if (subscribed) return
     subscribed = true
     // The chat agent's tools create proposals out-of-band; refresh on notify.
-    window.pandora.on('proposals:changed', () => void get().refresh())
-    window.pandora.on('pipeline:status', (raw) => {
-      const { text } = raw as { text: string }
+    onIpcEvent('proposals:changed', () => void get().refresh())
+    onIpcEvent('pipeline:status', ({ text }) => {
       set({ runningStatus: text })
     })
     // Chat-deferred generations (update_codex etc. run after the reply).
-    window.pandora.on('pipeline:run', (raw) => {
-      const payload = raw as { phase: 'started' | 'finished'; label: string; result?: string; error?: string }
+    onIpcEvent('pipeline:run', (payload) => {
       if (payload.phase === 'started') {
         set((s) => ({
           agentRuns: s.agentRuns + 1,

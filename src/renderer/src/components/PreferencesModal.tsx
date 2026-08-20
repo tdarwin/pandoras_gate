@@ -1,8 +1,37 @@
 import { useEffect, useState } from 'react'
 import { MODEL_ROLES, recommend } from '@shared/llm/catalog'
+import {
+  SNAPSHOT_INTERVALS,
+  CONTEXT_TARGETS,
+  THEME_BASES,
+  type SnapshotInterval,
+  type ContextTarget,
+  type ThemeBase
+} from '@shared/prefs'
 import { usePrefsStore, type ModelRole } from '../stores/prefs'
 import { useProjectStore } from '../stores/project'
 import { useChatStore } from '../stores/chat'
+
+/* Labels keyed by the shared value sets: adding a value to @shared/prefs is a
+ * compile error here until the label exists — the UI cannot drift silently. */
+const THEME_LABELS: Record<ThemeBase, string> = {
+  dark: 'Dark',
+  light: 'Light',
+  system: 'System'
+}
+const SNAPSHOT_LABELS: Record<SnapshotInterval, string> = {
+  0: 'No interval',
+  5: 'Every 5 minutes',
+  10: 'Every 10 minutes',
+  15: 'Every 15 minutes',
+  20: 'Every 20 minutes'
+}
+const CONTEXT_LABELS: Record<ContextTarget, string> = {
+  0: 'Automatic',
+  8192: 'Compact (~8k tokens)',
+  16384: 'Roomy (~16k tokens)',
+  32768: 'Maximal (~32k tokens)'
+}
 
 function Toggle({
   checked,
@@ -159,12 +188,17 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
             </span>
             <select
               value={prefs.theme}
-              onChange={(e) => void prefs.update({ theme: e.target.value as 'dark' | 'light' | 'system' })}
+              onChange={(e) => {
+                const theme = THEME_BASES.find((t) => t === e.target.value)
+                if (theme) void prefs.update({ theme })
+              }}
               className="rounded-lg border border-line-strong bg-surface px-2 py-1.5 text-xs text-ink outline-none"
             >
-              <option value="dark">Dark</option>
-              <option value="light">Light</option>
-              <option value="system">System</option>
+              {THEME_BASES.map((t) => (
+                <option key={t} value={t}>
+                  {THEME_LABELS[t]}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -192,18 +226,17 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
             </span>
             <select
               value={prefs.snapshotIntervalMinutes}
-              onChange={(e) =>
-                void prefs.update({
-                  snapshotIntervalMinutes: Number(e.target.value) as 0 | 5 | 10 | 15 | 20
-                })
-              }
+              onChange={(e) => {
+                const minutes = SNAPSHOT_INTERVALS.find((v) => v === Number(e.target.value))
+                if (minutes !== undefined) void prefs.update({ snapshotIntervalMinutes: minutes })
+              }}
               className="mt-0.5 shrink-0 rounded-lg border border-line-strong bg-surface px-2 py-1.5 text-xs text-ink outline-none"
             >
-              <option value={0}>No interval</option>
-              <option value={5}>Every 5 minutes</option>
-              <option value={10}>Every 10 minutes</option>
-              <option value={15}>Every 15 minutes</option>
-              <option value={20}>Every 20 minutes</option>
+              {SNAPSHOT_INTERVALS.map((v) => (
+                <option key={v} value={v}>
+                  {SNAPSHOT_LABELS[v]}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -218,17 +251,17 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
             </span>
             <select
               value={prefs.contextTargetTokens}
-              onChange={(e) =>
-                void prefs.update({
-                  contextTargetTokens: Number(e.target.value) as 0 | 8192 | 16384 | 32768
-                })
-              }
+              onChange={(e) => {
+                const target = CONTEXT_TARGETS.find((v) => v === Number(e.target.value))
+                if (target !== undefined) void prefs.update({ contextTargetTokens: target })
+              }}
               className="mt-0.5 shrink-0 rounded-lg border border-line-strong bg-surface px-2 py-1.5 text-xs text-ink outline-none"
             >
-              <option value={0}>Automatic</option>
-              <option value={8192}>Compact (~8k tokens)</option>
-              <option value={16384}>Roomy (~16k tokens)</option>
-              <option value={32768}>Maximal (~32k tokens)</option>
+              {CONTEXT_TARGETS.map((v) => (
+                <option key={v} value={v}>
+                  {CONTEXT_LABELS[v]}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -284,28 +317,26 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
   )
 }
 
-const ROLE_ROWS: { key: ModelRole; label: string; hint: string }[] = [
-  {
-    key: 'drafting',
+/* Keyed by ModelRole so adding a role to MODEL_ROLES stops compiling until
+ * this section can render it — the exhaustiveness DEVELOPMENT.md promises. */
+const ROLE_ROWS: Record<ModelRole, { label: string; hint: string }> = {
+  drafting: {
     label: 'Drafting & outlining',
     hint: 'Writes chapter drafts and outlines — worth your biggest model.'
   },
-  {
-    key: 'copyEdit',
+  copyEdit: {
     label: 'Copy editing & proofreading',
     hint: 'Line-level fixes: grammar, typos, phrasing. A small, fast model does fine.'
   },
-  {
-    key: 'developmental',
+  developmental: {
     label: 'Developmental editing & fact-checking',
     hint: 'Structural feedback and continuity checks against the Codex — benefits from a larger model.'
   },
-  {
-    key: 'codex',
+  codex: {
     label: 'Codex updates',
     hint: 'Extracts summaries, character and world updates when you save a chapter.'
   }
-]
+}
 
 function ModelRolesSection(): React.JSX.Element {
   const prefs = usePrefsStore()
@@ -348,7 +379,8 @@ function ModelRolesSection(): React.JSX.Element {
         Use different models for different kinds of work — a big model where quality matters, a
         small one where speed does. “Chat model” means whatever is selected in the chat panel.
       </p>
-      {ROLE_ROWS.map(({ key, label, hint }) => {
+      {MODEL_ROLES.map((key) => {
+        const { label, hint } = ROLE_ROWS[key]
         const assigned = prefs.modelRoles[key]
         const missing = assigned !== null && !models.some((m) => m.id === assigned)
         const suggested = suggestions[key]

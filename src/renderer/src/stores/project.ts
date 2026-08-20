@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { NovelState } from '@shared/schemas/project'
+import { onIpcEvent } from '../lib/events'
 
 let subscribed = false
 
@@ -50,8 +51,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   init: () => {
     if (subscribed) return
     subscribed = true
-    window.pandora.on('novel:updated', (raw) => {
-      const novel = raw as NovelState
+    onIpcEvent('novel:updated', (novel) => {
       // Only adopt updates for the novel that's actually open.
       if (get().novel?.dir === novel.dir) set({ novel })
     })

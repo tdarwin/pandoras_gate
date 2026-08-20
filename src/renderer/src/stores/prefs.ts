@@ -1,11 +1,8 @@
 import { create } from 'zustand'
 import { MODEL_ROLES, type ModelRole, type ModelRoleMap } from '@shared/llm/catalog'
+import type { SnapshotInterval, ContextTarget, ThemePref } from '@shared/prefs'
 
-export type SnapshotInterval = 0 | 5 | 10 | 15 | 20
-/** 0 = automatic. */
-export type ContextTarget = 0 | 8192 | 16384 | 32768
-export type ThemePref = 'dark' | 'light' | 'system'
-
+export type { SnapshotInterval, ContextTarget, ThemePref }
 export type { ModelRole, ModelRoleMap }
 
 const NO_ROLES = Object.fromEntries(MODEL_ROLES.map((r) => [r, null])) as ModelRoleMap

@@ -216,9 +216,15 @@ it's where a new feature usually starts.
 
 - `ipcContract` holds request/response channels (renderer → main, via `invoke`).
 - `ipcEvents` holds fire-and-forget events (main → renderer, via `webContents.send`).
-- Both sides validate against these zod schemas. A malformed request is rejected with
-  `INVALID_REQUEST` before any handler runs; a handler that throws comes back as
-  `{ ok: false, error }` rather than an unhandled rejection.
+- Both directions validate against these zod schemas. A malformed request is rejected
+  with `INVALID_REQUEST` before any handler runs; a handler that throws comes back as
+  `{ ok: false, error }` rather than an unhandled rejection. Event payloads are
+  validated on receipt: subscribe with `onIpcEvent` from
+  `src/renderer/src/lib/events.ts` (never `window.pandora.on` directly), which parses
+  the payload against `ipcEvents` and drops mismatches with a console warning.
+- Preference value sets (snapshot intervals, context targets, theme) live once in
+  `src/shared/prefs.ts`; the store, the IPC schemas, and the Preferences UI all derive
+  from those arrays, so adding a value is a one-file change.
 
 Adding a channel:
 
