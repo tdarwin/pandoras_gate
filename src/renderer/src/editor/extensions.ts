@@ -2,6 +2,8 @@ import StarterKit from '@tiptap/starter-kit'
 import Image from '@tiptap/extension-image'
 import { TableKit } from '@tiptap/extension-table'
 import type { Extensions } from '@tiptap/core'
+import { StyledBlock } from './styled-block'
+import { FontMark } from './font-mark'
 
 /**
  * The document model shared by the editor component and the markdown bridge
@@ -18,6 +20,9 @@ export function baseExtensions(): Extensions {
     Image.configure({ inline: true }),
     // GFM pipe tables. Column resizing stays off — widths have no markdown
     // form and would be lost on every save.
-    TableKit
+    TableKit,
+    // The Pandora dialect: styled blocks (fenced divs) and font spans.
+    StyledBlock,
+    FontMark
   ]
 }

@@ -72,6 +72,13 @@
   --tc-del: #f87171;
   --tc-accept: #34d399;
   --tc-reject: #f87171;
+  /* Named tints for styled blocks ({bg=note} …): translucent so they sit on
+     any surface, and per-palette so they stay legible in both themes. */
+  --tint-note: rgba(129, 140, 248, 0.16);
+  --tint-success: rgba(52, 211, 153, 0.14);
+  --tint-warning: rgba(251, 191, 36, 0.14);
+  --tint-danger: rgba(248, 113, 113, 0.14);
+  --tint-neutral: rgba(161, 161, 170, 0.14);
 }
 
 :root[data-theme='light'] {
@@ -105,6 +112,11 @@
   --tc-del: #dc2626;
   --tc-accept: #059669;
   --tc-reject: #dc2626;
+  --tint-note: rgba(79, 70, 229, 0.1);
+  --tint-success: rgba(5, 150, 105, 0.12);
+  --tint-warning: rgba(217, 119, 6, 0.13);
+  --tint-danger: rgba(220, 38, 38, 0.1);
+  --tint-neutral: rgba(87, 83, 78, 0.1);
 }
 
 body {
@@ -300,6 +312,33 @@ body {
 }
 .prose-editor > :first-child {
   margin-top: 0;
+}
+
+/* Styled blocks (the Pandora dialect): tinted/aligned/font containers.
+   Alignment and hex backgrounds arrive as inline style from renderHTML;
+   named tints map onto the theme's --tint-* tokens here. */
+.prose-editor [data-styled-block] {
+  border-radius: 8px;
+  padding: 0.75em 1em;
+  margin: 0 0 1em;
+}
+.prose-editor [data-styled-block] > :last-child {
+  margin-bottom: 0;
+}
+.prose-editor [data-bg='note'] {
+  background: var(--tint-note);
+}
+.prose-editor [data-bg='success'] {
+  background: var(--tint-success);
+}
+.prose-editor [data-bg='warning'] {
+  background: var(--tint-warning);
+}
+.prose-editor [data-bg='danger'] {
+  background: var(--tint-danger);
+}
+.prose-editor [data-bg='neutral'] {
+  background: var(--tint-neutral);
 }
 
 /* Tracked-changes review: insertions highlighted, deletions as inline
