@@ -36,17 +36,35 @@ function hasAnyAttr(attrs: Record<string, unknown>): boolean {
   return Boolean(attrs['align'] ?? attrs['bg'] ?? attrs['font'] ?? attrs['extra'])
 }
 
-/** Set one attribute: update the surrounding block, or wrap to create one;
- * lift the block when its last attribute clears. */
+/**
+ * Set one attribute: update every styled block the selection touches, or
+ * wrap to create one; unwrap a block whose last attribute clears. Blocks are
+ * found by walking the selection range rather than isActive — isActive
+ * misses the wrapper under an AllSelection, and wrapping again would nest.
+ */
 function setAttr(key: 'align' | 'bg' | 'font', value: string | null) {
-  return ({ editor, chain }: CommandProps): boolean => {
-    if (editor.isActive('styledBlock')) {
-      const next = { ...editor.getAttributes('styledBlock'), [key]: value }
-      if (!hasAnyAttr(next)) return chain().lift('styledBlock').run()
-      return chain().updateAttributes('styledBlock', { [key]: value }).run()
+  return ({ state, tr, dispatch, commands }: CommandProps): boolean => {
+    const targets: { node: PMNode; pos: number }[] = []
+    const { from, to } = state.selection
+    state.doc.nodesBetween(from, to, (node, pos) => {
+      if (node.type.name !== 'styledBlock') return true
+      targets.push({ node, pos })
+      return false
+    })
+    if (targets.length === 0) {
+      if (value === null) return false
+      return commands.wrapIn('styledBlock', { [key]: value })
     }
-    if (value === null) return false
-    return chain().wrapIn('styledBlock', { [key]: value }).run()
+    if (dispatch) {
+      for (const { node, pos } of targets) {
+        const next = { ...node.attrs, [key]: value }
+        const mapped = tr.mapping.map(pos)
+        if (hasAnyAttr(next)) tr.setNodeMarkup(mapped, undefined, next)
+        else tr.replaceWith(mapped, mapped + node.nodeSize, node.content)
+      }
+      dispatch(tr)
+    }
+    return true
   }
 }
 

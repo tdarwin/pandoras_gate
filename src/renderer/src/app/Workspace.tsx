@@ -12,7 +12,7 @@ import ProposalsPanel, { WordDiff } from '../components/ProposalsPanel'
 import AiPromptModal from '../components/AiPromptModal'
 import ReviewModal from '../components/ReviewModal'
 import ChapterDetails from '../components/ChapterDetails'
-import MarkdownEditor, { type EditorHandle } from '../editor/MarkdownEditor'
+import MarkdownEditor, { type EditorHandle, type ImageImporter } from '../editor/MarkdownEditor'
 import EditorToolbar from '../editor/EditorToolbar'
 import PlainEditor from '../editor/PlainEditor'
 import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
@@ -48,6 +48,42 @@ export default function Workspace(): React.JSX.Element {
 
   const proposalsRunning = useProposalsStore((s) => s.running)
   const runningStatus = useProposalsStore((s) => s.runningStatus)
+
+  // Toolbar/paste/drop image imports: bytes land in <novel>/assets/ via main,
+  // the editor gets back the relative path for the markdown link.
+  const importImage = useMemo<ImageImporter>(() => {
+    const finish = (result: Awaited<ReturnType<typeof window.pandora.invoke<'assets:import'>>>):
+      | { rel: string }
+      | null => {
+      if (!result.ok) {
+        useProjectStore.getState().setError(result.error.message)
+        return null
+      }
+      return result.data.rel ? { rel: result.data.rel } : null
+    }
+    return {
+      fromDialog: async () =>
+        finish(
+          await window.pandora.invoke('assets:import', {
+            novelDir: novel.dir,
+            source: { kind: 'dialog' }
+          })
+        ),
+      fromFile: async (file) => {
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        let binary = ''
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+        }
+        return finish(
+          await window.pandora.invoke('assets:import', {
+            novelDir: novel.dir,
+            source: { kind: 'bytes', base64: btoa(binary), name: file.name }
+          })
+        )
+      }
+    }
+  }, [novel.dir])
   const lastRunStatus = useProposalsStore((s) => s.lastRunStatus)
   const review = useProposalsStore((s) => s.review)
   const updateReviewBody = useProposalsStore((s) => s.updateReviewBody)
@@ -277,6 +313,7 @@ export default function Workspace(): React.JSX.Element {
               value={review.bodyBuffer}
               onChange={updateReviewBody}
               reviewOriginal={original.body}
+              importImage={importImage}
             />
           </div>
         </div>
@@ -450,6 +487,7 @@ export default function Workspace(): React.JSX.Element {
                       editable={!draftingHere}
                       onSave={() => void snapshotActiveChapter()}
                       onReady={setEditorHandle}
+                      importImage={importImage}
                     />
                   </div>
                 </>

@@ -413,6 +413,23 @@ export function registerIpcHandlers(): void {
   // and an explicit list silently drops any pref added without editing it here.
   handle('prefs:set', (req) => writePrefs(definedOnly(req)))
 
+  handle('assets:import', async (req) => {
+    if (req.source.kind === 'bytes') {
+      const bytes = Buffer.from(req.source.base64, 'base64')
+      return { rel: (await project.importAsset(req.novelDir, req.source.name, bytes)).rel }
+    }
+    const result = await dialog.showOpenDialog({
+      title: 'Insert image',
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg'] }]
+    })
+    const source = result.canceled ? null : (result.filePaths[0] ?? null)
+    if (!source) return { rel: null }
+    const { readFile: readBytes } = await import('node:fs/promises')
+    const bytes = await readBytes(source)
+    return { rel: (await project.importAsset(req.novelDir, basename(source), bytes)).rel }
+  })
+
   handle('themes:list', async () => ({ themes: await themes.listThemes() }))
 
   handle('themes:resolve', (req) => themes.resolveTheme(req.id))

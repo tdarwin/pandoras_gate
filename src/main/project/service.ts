@@ -442,3 +442,43 @@ export async function deleteMetadataDoc(novelDir: string, file: string): Promise
   const { rm } = await import('node:fs/promises')
   await rm(resolveInside(novelDir, file), { force: true })
 }
+
+/* ------------------------------------------------------------------ */
+/* Images (assets/)                                                    */
+/* ------------------------------------------------------------------ */
+
+/** Must match the pandora-asset:// scheme's allowlist. */
+const ASSET_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg'])
+const MAX_ASSET_BYTES = 20 * 1024 * 1024
+
+/**
+ * Copies an image into `<novel>/assets/` and returns its novel-relative
+ * path for the markdown link. The bytes land as a file, never as base64 in
+ * the markdown — inlining would bloat chapters and kill diffs. `assets/` is
+ * created lazily (like `archive/`) so existing novels pick it up on first
+ * use.
+ */
+export async function importAsset(
+  novelDir: string,
+  name: string,
+  bytes: Uint8Array
+): Promise<{ rel: string }> {
+  if (bytes.byteLength === 0) throw new Error('That image is empty')
+  if (bytes.byteLength > MAX_ASSET_BYTES) {
+    throw new Error('Images are capped at 20 MB — resize this one first')
+  }
+  const ext = basename(name).includes('.') ? basename(name).split('.').pop()!.toLowerCase() : ''
+  if (!ASSET_EXTENSIONS.has(ext)) {
+    throw new Error(`Unsupported image type ".${ext}" — use png, jpg, gif, webp, avif, or svg`)
+  }
+  const base = slugify(basename(name).replace(/\.[^.]*$/, ''))
+  await mkdir(join(novelDir, 'assets'), { recursive: true })
+  let rel = `assets/${base}.${ext}`
+  let attempt = 2
+  while (await exists(join(novelDir, rel))) {
+    rel = `assets/${base}-${attempt}.${ext}`
+    attempt += 1
+  }
+  await writeFile(resolveInside(novelDir, rel), bytes)
+  return { rel }
+}

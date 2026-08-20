@@ -121,6 +121,49 @@ describe('TipTap editor instance', () => {
     editor.destroy()
   })
 
+  it('renders relative image srcs through the asset scheme, keeping markdown relative', () => {
+    const editor = makeEditor('![the gate](assets/gate%20art.png)\n')
+    const img = editor.view.dom.querySelector('img')!
+    // Displayed through the privileged scheme (the sandboxed renderer cannot
+    // read novel files), but the document and markdown keep the relative path.
+    expect(img.getAttribute('src')).toBe('pandora-asset://novel/assets/gate%2520art.png')
+    expect(docToMarkdown(editor.state.doc)).toBe('![the gate](assets/gate%20art.png)\n')
+    editor.destroy()
+  })
+
+  it('renders styled blocks as tinted/aligned containers', () => {
+    const editor = makeEditor('::: {align=center bg=note}\nBoxed.\n:::\n')
+    const div = editor.view.dom.querySelector('div[data-styled-block]')!
+    expect(div.getAttribute('data-bg')).toBe('note')
+    expect(div.getAttribute('data-align')).toBe('center')
+    expect(div.textContent).toContain('Boxed.')
+    editor.destroy()
+  })
+
+  it('setBlockAlign wraps, updates, and lifts as attributes clear', () => {
+    const editor = makeEditor('Some prose.\n')
+    editor.commands.selectAll()
+    editor.chain().focus().setBlockAlign('center').run()
+    expect(docToMarkdown(editor.state.doc)).toBe('::: {align=center}\nSome prose.\n:::\n')
+    editor.chain().focus().setBlockBg('note').run()
+    expect(docToMarkdown(editor.state.doc)).toBe('::: {align=center bg=note}\nSome prose.\n:::\n')
+    editor.chain().focus().setBlockAlign(null).run()
+    editor.chain().focus().setBlockBg(null).run()
+    // Last attribute cleared — the wrapper is gone entirely.
+    expect(docToMarkdown(editor.state.doc)).toBe('Some prose.\n')
+    editor.destroy()
+  })
+
+  it('setFontSpan marks the selection and serializes as a bracketed span', () => {
+    const editor = makeEditor('Choose a word.\n')
+    editor.commands.setTextSelection({ from: 1, to: 7 })
+    editor.chain().setFontSpan('Garamond').run()
+    expect(docToMarkdown(editor.state.doc)).toBe('[Choose]{font="Garamond"} a word.\n')
+    editor.chain().setTextSelection({ from: 1, to: 7 }).unsetFontSpan().run()
+    expect(docToMarkdown(editor.state.doc)).toBe('Choose a word.\n')
+    editor.destroy()
+  })
+
   it('survives pathological content the old editor crashed on', () => {
     // Frontmatter-looking text, hr at doc start, marks spanning wraps — all
     // as plain body content. Nothing here should throw at render time.

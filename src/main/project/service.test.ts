@@ -15,7 +15,8 @@ import {
   readNovelManifest,
   listMetadata,
   createMetadataDoc,
-  deleteMetadataDoc
+  deleteMetadataDoc,
+  importAsset
 } from './service'
 
 let dir: string
@@ -147,6 +148,30 @@ describe('path containment', () => {
     await writeFile(manifestPath, `${raw}series: ../../series.yaml\n`, 'utf8')
     const opened = await openNovel(novelDir)
     expect(opened.seriesTitle).toBeUndefined()
+  })
+})
+
+describe('importAsset', () => {
+  it('writes into assets/ (created lazily), de-duplicating names', async () => {
+    const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
+    const bytes = new Uint8Array([1, 2, 3])
+    expect((await importAsset(novelDir, 'Cover Art.PNG', bytes)).rel).toBe('assets/cover-art.png')
+    expect((await importAsset(novelDir, 'Cover Art.png', bytes)).rel).toBe('assets/cover-art-2.png')
+    expect(await readFile(join(novelDir, 'assets', 'cover-art.png'))).toEqual(Buffer.from(bytes))
+  })
+
+  it('rejects non-image extensions, empty data, and oversize files readably', async () => {
+    const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
+    await expect(importAsset(novelDir, 'script.js', new Uint8Array([1]))).rejects.toThrow(
+      /Unsupported image type/
+    )
+    await expect(importAsset(novelDir, 'noext', new Uint8Array([1]))).rejects.toThrow(
+      /Unsupported image type/
+    )
+    await expect(importAsset(novelDir, 'x.png', new Uint8Array(0))).rejects.toThrow(/empty/)
+    await expect(
+      importAsset(novelDir, 'x.png', new Uint8Array(21 * 1024 * 1024))
+    ).rejects.toThrow(/20 MB/)
   })
 })
 
