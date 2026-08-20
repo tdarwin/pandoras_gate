@@ -10,6 +10,7 @@ import PreferencesModal from '../components/PreferencesModal'
 import AboutModal from '../components/AboutModal'
 import iconUrl from '../assets/icon.png'
 import { onIpcEvent } from '../lib/events'
+import { useThemeApplication } from './useThemeApplication'
 import { closeNovelSafely, prepareToLeaveNovel } from './novelActions'
 import { useDraftStore } from '../stores/draft'
 
@@ -36,7 +37,6 @@ export default function App(): React.JSX.Element {
   const setError = useProjectStore((s) => s.setError)
   const initDownloads = useDownloadsStore((s) => s.init)
   const initPrefs = usePrefsStore((s) => s.init)
-  const theme = usePrefsStore((s) => s.theme)
   const showPrefs = useUiStore((s) => s.showPrefs)
   const showAbout = useUiStore((s) => s.showAbout)
   const setShowPrefs = useUiStore((s) => s.setShowPrefs)
@@ -46,6 +46,8 @@ export default function App(): React.JSX.Element {
     initDownloads()
     void initPrefs()
   }, [initDownloads, initPrefs])
+
+  useThemeApplication()
 
   // Native menu commands act on the stores directly.
   useEffect(() => {
@@ -107,21 +109,6 @@ export default function App(): React.JSX.Element {
       chapterOpen: novel !== null && (activeFile?.startsWith('chapters/') ?? false)
     })
   }, [novel, activeFile])
-
-  // Apply the theme to <html data-theme>; 'system' follows the OS setting.
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: light)')
-    const apply = (): void => {
-      document.documentElement.dataset['theme'] =
-        theme === 'system' ? (mq.matches ? 'light' : 'dark') : theme
-    }
-    apply()
-    if (theme === 'system') {
-      mq.addEventListener('change', apply)
-      return () => mq.removeEventListener('change', apply)
-    }
-    return undefined
-  }, [theme])
 
   return (
     <div className="flex h-screen flex-col">

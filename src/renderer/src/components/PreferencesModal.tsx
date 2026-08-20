@@ -1,16 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { MODEL_ROLES, recommend } from '@shared/llm/catalog'
 import {
   SNAPSHOT_INTERVALS,
   CONTEXT_TARGETS,
   THEME_BASES,
+  CUSTOM_THEME_RE,
   type SnapshotInterval,
   type ContextTarget,
-  type ThemeBase
+  type ThemeBase,
+  type ThemePref
 } from '@shared/prefs'
+import type { ThemeSummary } from '@shared/schemas/theme'
 import { usePrefsStore, type ModelRole } from '../stores/prefs'
 import { useProjectStore } from '../stores/project'
 import { useChatStore } from '../stores/chat'
+import { onIpcEvent } from '../lib/events'
 
 /* Labels keyed by the shared value sets: adding a value to @shared/prefs is a
  * compile error here until the label exists — the UI cannot drift silently. */
@@ -32,6 +36,24 @@ const CONTEXT_LABELS: Record<ContextTarget, string> = {
   16384: 'Roomy (~16k tokens)',
   32768: 'Maximal (~32k tokens)'
 }
+
+/* Common book faces for the font datalist — suggestions, not a constraint. */
+const FONT_SUGGESTIONS = [
+  'Iowan Old Style',
+  'Palatino',
+  'Georgia',
+  'Baskerville',
+  'Charter',
+  'Hoefler Text',
+  'Athelas',
+  'Times New Roman',
+  'Avenir Next',
+  'Helvetica Neue'
+]
+
+const EDITOR_FONT_SIZES = [13, 14, 15, 16, 17, 18, 20]
+const EDITOR_LINE_HEIGHTS = [1.5, 1.6, 1.75, 1.9, 2.1]
+const EDITOR_MEASURES = [36, 42, 46, 52, 60]
 
 function Toggle({
   checked,
@@ -159,6 +181,214 @@ function SyncSection(): React.JSX.Element {
   )
 }
 
+function AppearanceSection(): React.JSX.Element {
+  const prefs = usePrefsStore()
+  const [themes, setThemes] = useState<ThemeSummary[]>([])
+  const [status, setStatus] = useState<string | null>(null)
+  const [fontDraft, setFontDraft] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    const result = await window.pandora.invoke('themes:list', undefined)
+    if (result.ok) setThemes(result.data.themes)
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+    // Live: imports, hand edits, and deletions show up while the modal is open.
+    return onIpcEvent('themes:changed', () => void refresh())
+  }, [refresh])
+
+  const selectTheme = (value: string): void => {
+    const theme: ThemePref | undefined =
+      THEME_BASES.find((t) => t === value) ??
+      (CUSTOM_THEME_RE.test(value) ? (value as ThemePref) : undefined)
+    if (theme) void prefs.update({ theme })
+  }
+
+  const importTheme = async (): Promise<void> => {
+    setStatus(null)
+    const result = await window.pandora.invoke('themes:import', undefined)
+    if (!result.ok) {
+      setStatus(result.error.message)
+      return
+    }
+    if (result.data.id === null) return
+    await refresh()
+    await prefs.update({ theme: `custom:${result.data.id}` })
+    setStatus('Imported and applied.')
+  }
+
+  const saveAsCustom = async (): Promise<void> => {
+    setStatus(null)
+    const from: ThemePref =
+      prefs.theme === 'system'
+        ? window.matchMedia('(prefers-color-scheme: light)').matches
+          ? 'light'
+          : 'dark'
+        : prefs.theme
+    const result = await window.pandora.invoke('themes:duplicateCurrent', { from })
+    if (!result.ok) {
+      setStatus(result.error.message)
+      return
+    }
+    await refresh()
+    await prefs.update({ theme: `custom:${result.data.id}` })
+    setStatus('Saved — tweak it via “Open themes folder”; edits apply live.')
+  }
+
+  const commitFont = (raw: string): void => {
+    const family = raw.trim()
+    void prefs.update({ editorFontFamily: family === '' ? null : family })
+    setFontDraft(null)
+  }
+
+  // A selected custom theme whose folder vanished still needs a visible row.
+  const missingSelected =
+    prefs.theme.startsWith('custom:') &&
+    !themes.some((t) => `custom:${t.id}` === prefs.theme)
+
+  const selectClass =
+    'mt-0.5 shrink-0 rounded-lg border border-line-strong bg-surface px-2 py-1.5 text-xs text-ink outline-none'
+
+  return (
+    <div>
+      <div className="flex items-center justify-between py-2">
+        <span>
+          <span className="block text-sm text-ink">Theme</span>
+          <span className="block text-xs text-ink-faint">
+            System follows your OS setting. Custom themes live in the themes folder.
+          </span>
+        </span>
+        <select value={prefs.theme} onChange={(e) => selectTheme(e.target.value)} className={selectClass}>
+          {THEME_BASES.map((t) => (
+            <option key={t} value={t}>
+              {THEME_LABELS[t]}
+            </option>
+          ))}
+          {themes.length > 0 && <option disabled>──────────</option>}
+          {themes.map((t) => (
+            <option
+              key={t.id}
+              value={`custom:${t.id}`}
+              disabled={!t.valid}
+              title={t.problem ?? t.name}
+            >
+              {t.valid ? t.name : `${t.name} (broken: ${t.problem ?? 'invalid'})`}
+            </option>
+          ))}
+          {missingSelected && (
+            <option value={prefs.theme}>{prefs.theme.slice('custom:'.length)} (missing)</option>
+          )}
+        </select>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 py-1">
+        <button
+          onClick={() => void importTheme()}
+          className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink hover:bg-raised"
+        >
+          Import theme…
+        </button>
+        <button
+          onClick={() => void saveAsCustom()}
+          className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink hover:bg-raised"
+        >
+          Save current as custom theme
+        </button>
+        <button
+          onClick={() => void window.pandora.invoke('themes:openFolder', undefined)}
+          className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink hover:bg-raised"
+        >
+          Open themes folder
+        </button>
+        {status && <span className="min-w-0 truncate text-xs text-ink-faint">{status}</span>}
+      </div>
+
+      <div className="flex items-start justify-between gap-4 py-2">
+        <span>
+          <span className="block text-sm text-ink">Editor font</span>
+          <span className="block text-xs leading-relaxed text-ink-faint">
+            Any font installed on this Mac, by name. Empty = the theme&apos;s font.
+          </span>
+        </span>
+        <input
+          list="pandora-font-suggestions"
+          value={fontDraft ?? prefs.editorFontFamily ?? ''}
+          placeholder="Theme default"
+          onChange={(e) => setFontDraft(e.target.value)}
+          onBlur={(e) => commitFont(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitFont(e.currentTarget.value)
+          }}
+          className="mt-0.5 w-48 shrink-0 rounded-lg border border-line-strong bg-surface px-2 py-1.5 text-xs text-ink outline-none focus:border-indigo-500"
+        />
+        <datalist id="pandora-font-suggestions">
+          {FONT_SUGGESTIONS.map((f) => (
+            <option key={f} value={f} />
+          ))}
+        </datalist>
+      </div>
+
+      <div className="flex items-center justify-between gap-4 py-2">
+        <span className="block text-sm text-ink">Editor size &amp; spacing</span>
+        <span className="flex shrink-0 items-center gap-2">
+          <select
+            value={prefs.editorFontSize ?? ''}
+            onChange={(e) =>
+              void prefs.update({
+                editorFontSize: e.target.value === '' ? null : Number(e.target.value)
+              })
+            }
+            title="Font size"
+            className={selectClass}
+          >
+            <option value="">Size</option>
+            {EDITOR_FONT_SIZES.map((v) => (
+              <option key={v} value={v}>
+                {v}px
+              </option>
+            ))}
+          </select>
+          <select
+            value={prefs.editorLineHeight ?? ''}
+            onChange={(e) =>
+              void prefs.update({
+                editorLineHeight: e.target.value === '' ? null : Number(e.target.value)
+              })
+            }
+            title="Line height"
+            className={selectClass}
+          >
+            <option value="">Spacing</option>
+            {EDITOR_LINE_HEIGHTS.map((v) => (
+              <option key={v} value={v}>
+                ×{v}
+              </option>
+            ))}
+          </select>
+          <select
+            value={prefs.editorMeasure ?? ''}
+            onChange={(e) =>
+              void prefs.update({
+                editorMeasure: e.target.value === '' ? null : Number(e.target.value)
+              })
+            }
+            title="Line width"
+            className={selectClass}
+          >
+            <option value="">Width</option>
+            {EDITOR_MEASURES.map((v) => (
+              <option key={v} value={v}>
+                {v}rem
+              </option>
+            ))}
+          </select>
+        </span>
+      </div>
+    </div>
+  )
+}
+
 export default function PreferencesModal({ onClose }: { onClose: () => void }): React.JSX.Element {
   const prefs = usePrefsStore()
   const apiKeyConfigured = useChatStore((s) => s.apiKeyConfigured)
@@ -181,26 +411,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }): 
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           <h3 className="text-xs font-medium uppercase tracking-wide text-ink-faint">Appearance</h3>
-          <div className="flex items-center justify-between py-2">
-            <span>
-              <span className="block text-sm text-ink">Theme</span>
-              <span className="block text-xs text-ink-faint">System follows your OS setting.</span>
-            </span>
-            <select
-              value={prefs.theme}
-              onChange={(e) => {
-                const theme = THEME_BASES.find((t) => t === e.target.value)
-                if (theme) void prefs.update({ theme })
-              }}
-              className="rounded-lg border border-line-strong bg-surface px-2 py-1.5 text-xs text-ink outline-none"
-            >
-              {THEME_BASES.map((t) => (
-                <option key={t} value={t}>
-                  {THEME_LABELS[t]}
-                </option>
-              ))}
-            </select>
-          </div>
+          <AppearanceSection />
 
           <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-ink-faint">Writing</h3>
           <Toggle
