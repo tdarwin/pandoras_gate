@@ -269,7 +269,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }): React.J
   return (
     <aside
       style={{ width: panelWidth }}
-      className="relative flex shrink-0 flex-col border-l border-line bg-panel/60"
+      className="chat-surface relative flex shrink-0 flex-col border-l border-line bg-panel/60"
     >
       {/* Drag the panel's left edge to resize the whole chat pane. */}
       <div

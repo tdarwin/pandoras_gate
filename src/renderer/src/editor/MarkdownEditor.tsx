@@ -228,5 +228,11 @@ export default function MarkdownEditor({
     }
   }, [editor])
 
-  return <EditorContent editor={editor} className="h-full min-h-0 overflow-y-auto" />
+  // The wrapper (not the scroller) carries the theme background image, so
+  // the image stays put while the prose scrolls over it.
+  return (
+    <div className="editor-surface h-full min-h-0">
+      <EditorContent editor={editor} className="h-full min-h-0 overflow-y-auto" />
+    </div>
+  )
 }
