@@ -99,6 +99,44 @@ describe('TrackChanges', () => {
     editor.destroy()
   })
 
+  it('an attribute-only change shows as a formatting chunk, not a fake text diff', () => {
+    const editor = makeReviewEditor(
+      'An epigraph line.\n',
+      '::: {align=center}\nAn epigraph line.\n:::\n'
+    )
+    expect(pendingChangeCount(editor.state)).toBeGreaterThanOrEqual(1)
+    const dom = editor.view.dom
+    // The text is identical on both sides: outlined as a formatting change,
+    // with controls but WITHOUT a struck-through copy of the same words.
+    expect(dom.querySelectorAll('.tc-attr').length).toBeGreaterThanOrEqual(1)
+    expect(dom.querySelectorAll('.tc-del').length).toBe(0)
+    expect(dom.querySelectorAll('.tc-ctrl').length).toBeGreaterThanOrEqual(1)
+    // Rejecting restores the unwrapped original.
+    editor.commands.rejectAllChanges()
+    expect(docToMarkdown(editor.state.doc)).toBe('An epigraph line.\n')
+    editor.destroy()
+  })
+
+  it('review works on chapters using the dialect, and accepts keep it intact', () => {
+    const original = '::: {bg=note}\nSystem: level up.\n:::\n\nProse follows.\n'
+    const proposal = '::: {bg=note}\nSystem: level up twice.\n:::\n\nProse follows.\n'
+    const editor = makeReviewEditor(original, proposal)
+    expect(pendingChangeCount(editor.state)).toBe(1)
+    editor.commands.acceptAllChanges()
+    expect(docToMarkdown(editor.state.doc)).toBe(proposal)
+    editor.destroy()
+  })
+
+  it('an image swap highlights the new image and reject restores the old one', () => {
+    const original = 'Look:\n\n![map](assets/old-map.png)\n'
+    const proposal = 'Look:\n\n![map](assets/new-map.png)\n'
+    const editor = makeReviewEditor(original, proposal)
+    expect(pendingChangeCount(editor.state)).toBeGreaterThanOrEqual(1)
+    editor.commands.rejectAllChanges()
+    expect(docToMarkdown(editor.state.doc)).toBe(original)
+    editor.destroy()
+  })
+
   it('handles pure insertions and pure deletions across paragraphs', () => {
     const editor = makeReviewEditor(
       'First paragraph.\n\nThird paragraph.\n',

@@ -347,6 +347,13 @@ body {
   background: color-mix(in srgb, var(--tc-ins) 22%, transparent);
   border-radius: 2px;
 }
+/* Structural change with identical text (block attrs, wraps): outlined,
+   not highlighted-plus-struck — there is no text diff to show. */
+.prose-editor .tc-attr {
+  outline: 1px dashed color-mix(in srgb, var(--tc-ins) 70%, transparent);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
 .prose-editor .tc-del {
   color: var(--tc-del);
   text-decoration: line-through;
