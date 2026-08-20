@@ -14,6 +14,18 @@ Write for a novelist, not for a reviewer of the diff.
 
 ### Added
 
+- **Richer styling without leaving markdown.** The editor can now center or right-align
+  a block, highlight a passage with a tinted box (five theme-aware tints, or any color),
+  set a different font for a block or a run of text (a letter, a system message), and
+  insert images — from a file picker, paste, or drag-and-drop. Images are copied into
+  the novel's new `assets/` folder and linked as plain markdown; on disk everything is a
+  small documented dialect that stays readable in any editor and round-trips
+  byte-for-byte. Copying for RoyalRoad/Patreon maps what each platform can take
+  (RoyalRoad keeps alignment) and the toast tells you exactly what a paste can't carry.
+- **Tracked changes now see formatting.** An AI suggestion that only changes a block's
+  styling shows as a dashed "formatting change" you can accept or reject as one unit —
+  and an image swap is a visible, rejectable change instead of slipping through.
+
 - **Custom themes.** Preferences → Appearance can now import a color theme from VS Code,
   Sublime Text (`.sublime-color-scheme`), or legacy `.tmTheme` files — or you can write
   your own: a theme is a small YAML file in the new themes folder, and a two-line file

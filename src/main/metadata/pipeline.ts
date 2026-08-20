@@ -271,6 +271,8 @@ File conventions (all paths relative to the novel folder):
 - metadata/glossary.md — frontmatter: entries (list of {term, definition}). Body: optional notes.
 - metadata/timeline.yaml — YAML list of {id, when (in-world time label), chapter (chapter file path), summary, characters (list of slugs)}. Append this chapter's key events; keep existing entries.
 
+Chapters may contain presentation markup: ::: {…} fenced blocks (alignment, tints, fonts), [text]{font="…"} spans, and ![alt](assets/…) images. It is presentation, not story canon — never record it as fact, and never reproduce the markup inside Codex documents.
+
 Respond ONLY with the JSON object.`
 
 interface RunContext {

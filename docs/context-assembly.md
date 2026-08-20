@@ -53,6 +53,11 @@ Notes:
   a character by name to pull in their profile.
 - **Drafting** uses the same ladder but with a prose-only system prompt and outlines
   promoted to the top, plus a larger reply reservation.
+- **Presentation markup rides along.** Chapters may contain the Pandora dialect —
+  `::: {…}` styled blocks, `[text]{font="…"}` spans, `![alt](assets/…)` images (see the
+  README's "Richer styling" section). It stays in the text the model sees; the system
+  prompts say it is presentation, not canon, and the section-edit tool is instructed to
+  preserve it verbatim.
 
 ## Prompt caching and message layout
 
@@ -86,7 +91,9 @@ JSON reply — sections claim room in priority order and oversized docs are trun
 
 The revision generation gets only: the chapter's current text + your instructions. It
 deliberately excludes the wider Codex to keep the model focused on the text in front of
-it — mention specifics in your instructions if they matter.
+it — mention specifics in your instructions if they matter. Presentation markup in the
+chapter (styled blocks, font spans, image links) must survive edits unchanged; the tool
+descriptions carry that instruction.
 
 ## Token counting
 

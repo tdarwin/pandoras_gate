@@ -137,7 +137,7 @@ export function chatToolDefinitions(ctx: Pick<ToolContext, 'activeFile'>): ToolD
     {
       name: 'edit_chapter_section',
       description:
-        'Replace ONE specific passage in a chapter. "find" must be the EXACT text currently in the chapter (copy it verbatim — use find_in_chapter if unsure) and must match exactly one place; include a sentence of surrounding text if the passage could appear twice. "replacement" is your revised text for exactly that span (empty string deletes it — that is how you cut a section when moving it). chapterFile defaults to the open chapter. The author reviews the change as a small diff before anything is saved. Preferred over edit_chapter for all targeted changes.',
+        'Replace ONE specific passage in a chapter. "find" must be the EXACT text currently in the chapter (copy it verbatim — use find_in_chapter if unsure) and must match exactly one place; include a sentence of surrounding text if the passage could appear twice. "replacement" is your revised text for exactly that span (empty string deletes it — that is how you cut a section when moving it). chapterFile defaults to the open chapter. The author reviews the change as a small diff before anything is saved. Preferred over edit_chapter for all targeted changes. Chapters may contain presentation markup — ::: {…} fenced blocks and [text]{font="…"} spans; it is presentation, not story canon: preserve it verbatim when editing and never invent it.',
       parameters: {
         type: 'object',
         properties: {
@@ -153,7 +153,7 @@ export function chatToolDefinitions(ctx: Pick<ToolContext, 'activeFile'>): ToolD
     {
       name: 'append_to_chapter',
       description:
-        'Append content to the END of a chapter (works on empty chapters). Use together with edit_chapter_section to MOVE a passage between chapters: first edit_chapter_section on the source with an empty replacement (cut), then append_to_chapter on the destination with the same text (paste). Both changes go to the review queue. Do NOT create a new chapter for this — use an existing one from list_chapters.',
+        'Append content to the END of a chapter (works on empty chapters). Use together with edit_chapter_section to MOVE a passage between chapters: first edit_chapter_section on the source with an empty replacement (cut), then append_to_chapter on the destination with the same text (paste). Both changes go to the review queue. Do NOT create a new chapter for this — use an existing one from list_chapters. Preserve any ::: {…} / [text]{font="…"} presentation markup verbatim when moving passages.',
       parameters: {
         type: 'object',
         properties: {
@@ -438,7 +438,9 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
           }
 
           const title = manifest.chapters.find((c) => c.file === target)?.title ?? target
-          const newContent = frontmatterPrefix + body.replace(args.find, args.replacement)
+          // Function form: a string replacement expands $-patterns ($&, $`…),
+          // silently corrupting model-authored text that contains them.
+          const newContent = frontmatterPrefix + body.replace(args.find, () => args.replacement!)
           const { queued, rejected } = await enqueueProposalItems(
             ctx.novelDir,
             `Chapter edit: ${title}`,
