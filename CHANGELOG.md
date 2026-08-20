@@ -12,6 +12,8 @@ Write for a novelist, not for a reviewer of the diff.
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-08-20
+
 ### Fixed
 
 - **Your typing survives closing the app.** Quitting, closing the window (⌘W), or
@@ -178,7 +180,8 @@ First tagged release.
 - **One-paste publishing** to RoyalRoad and Patreon.
 - Chapter management, tunable interval snapshots, git sync, and preferences.
 
-[Unreleased]: https://github.com/tdarwin/pandoras_gate/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/tdarwin/pandoras_gate/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/tdarwin/pandoras_gate/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/tdarwin/pandoras_gate/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/tdarwin/pandoras_gate/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/tdarwin/pandoras_gate/compare/v0.4.0...v0.4.1

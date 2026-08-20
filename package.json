@@ -1,6 +1,6 @@
 {
   "name": "pandoras-gate",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Pandora's Gate — Writer's Studio: a desktop app for writing novels with local and remote AI assistance",
   "main": "out/main/index.js",
   "author": "Davin Taddeo",
