@@ -45,7 +45,7 @@ import { setSecret, hasSecret } from '../secrets'
 import { assembleContext, estimateTokens, resolveContextTarget } from '../context/assembler'
 import { toolOverheadTokens } from '../llm/tools'
 import { gatherStorySource } from '../context/gather'
-import { chapterHtml, chapterPlainText } from '../publish/profiles'
+import { chapterHtmlWithReport, chapterPlainText } from '../publish/profiles'
 import { parseFrontmatter } from '../../shared/frontmatter'
 import {
   runMetadataUpdate,
@@ -570,7 +570,7 @@ export function registerIpcHandlers(): void {
     const manifest = await project.readNovelManifest(req.novelDir)
     const entry = manifest.chapters.find((c) => c.file === req.file)
     const body = parseFrontmatter(await project.readChapter(req.novelDir, req.file)).body
-    const html = chapterHtml(body, req.platform, entry?.title)
+    const { html, dropped } = chapterHtmlWithReport(body, req.platform, entry?.title)
     const text = chapterPlainText(body, entry?.title)
     clipboard.write({ html, text })
     const words = text.split(/\s+/).filter((w) => /\w/.test(w)).length
@@ -578,7 +578,12 @@ export function registerIpcHandlers(): void {
       entry && (entry.status === 'draft' || entry.status === 'ai-draft')
         ? `chapter status is still “${entry.status}”`
         : undefined
-    return { copied: true as const, words, ...(warning ? { warning } : {}) }
+    return {
+      copied: true as const,
+      words,
+      ...(warning ? { warning } : {}),
+      ...(dropped.length > 0 ? { dropped } : {})
+    }
   })
 
   handle('context:assemble', async (req) => {

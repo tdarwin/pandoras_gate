@@ -195,13 +195,19 @@ export default function Workspace(): React.JSX.Element {
     })
     if (result.ok) {
       const label = platform === 'royalroad' ? 'RoyalRoad' : 'Patreon'
+      const notes = [
+        ...(result.data.warning ? [result.data.warning] : []),
+        ...(result.data.dropped?.length
+          ? [`${label} paste can't carry: ${result.data.dropped.join(', ')}`]
+          : [])
+      ]
       setCopyStatus(
-        `Copied for ${label} — paste into a new post${result.data.warning ? ` (${result.data.warning})` : ''}`
+        `Copied for ${label} — paste into a new post${notes.length ? ` (${notes.join('; ')})` : ''}`
       )
     } else {
       setCopyStatus(result.error.message)
     }
-    window.setTimeout(() => setCopyStatus(null), 6000)
+    window.setTimeout(() => setCopyStatus(null), 8000)
   }
 
   // File > Copy Chapter For — only requests made while mounted are honored,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { chapterHtml, chapterPlainText, stripLeadingTitle } from './profiles'
+import { chapterHtml, chapterHtmlWithReport, chapterPlainText, stripLeadingTitle } from './profiles'
 
 const CHAPTER = [
   '# The Iron Gate',
@@ -81,6 +81,67 @@ describe('stripLeadingTitle', () => {
     expect(chapterHtml('# The Iron Gate\n\nProse.', 'royalroad', 'The Iron Gate')).not.toContain(
       '<h1>'
     )
+  })
+})
+
+describe('pandora dialect degradation', () => {
+  const STYLED = [
+    '::: {align=center}',
+    'A centered epigraph.',
+    ':::',
+    '',
+    '::: {bg=note font="Iowan Old Style"}',
+    'System message.',
+    ':::',
+    '',
+    'A [special word]{font="Garamond"} inline.',
+    '',
+    '![the gate](assets/gate.png)',
+    ''
+  ].join('\n')
+
+  it('royalroad keeps alignment on the child paragraph, drops the rest with notices', () => {
+    const { html, dropped } = chapterHtmlWithReport(STYLED, 'royalroad')
+    expect(html).toContain('<p style="text-align: center">A centered epigraph.</p>')
+    // Containers never leak wrapper markup or fences.
+    expect(html).not.toContain(':::')
+    expect(html).not.toContain('<div')
+    expect(html).toContain('<p>System message.</p>')
+    expect(html).toContain('special word')
+    expect(html).not.toContain('Garamond')
+    expect(dropped).toContain('tinted backgrounds')
+    expect(dropped).toContain('block fonts')
+    expect(dropped).toContain('text fonts')
+    expect(dropped.some((d) => d.startsWith('images'))).toBe(true)
+    // Alignment made it through — it is not in the dropped list.
+    expect(dropped).not.toContain('text alignment')
+  })
+
+  it('patreon drops alignment too, with a notice', () => {
+    const { html, dropped } = chapterHtmlWithReport(STYLED, 'patreon')
+    expect(html).toContain('<p>A centered epigraph.</p>')
+    expect(html).not.toContain('text-align')
+    expect(dropped).toContain('text alignment')
+  })
+
+  it('images become a visible placeholder naming the file', () => {
+    const { html } = chapterHtmlWithReport('![the gate](assets/gate.png)\n', 'royalroad')
+    expect(html).toContain('[Image: the gate — attach assets/gate.png by hand]')
+    expect(html).not.toContain('<img')
+    expect(chapterPlainText('![the gate](assets/gate.png)\n')).toBe(
+      '[Image: the gate — attach assets/gate.png by hand]'
+    )
+  })
+
+  it('a chapter without the dialect reports nothing dropped', () => {
+    const { dropped } = chapterHtmlWithReport(CHAPTER, 'royalroad')
+    expect(dropped).toEqual([])
+  })
+
+  it('html:false still holds with the dialect rules installed', () => {
+    const html = chapterHtml('::: {bg=note}\na <script>x</script> tag\n:::\n', 'royalroad')
+    expect(html).not.toContain('<script>')
+    expect(html).toContain('&lt;script&gt;')
   })
 })
 

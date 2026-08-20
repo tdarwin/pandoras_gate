@@ -574,7 +574,9 @@ export const ipcContract = {
       copied: z.literal(true),
       words: z.number(),
       /** Soft caution, e.g. the chapter is still marked draft. */
-      warning: z.string().optional()
+      warning: z.string().optional(),
+      /** Dialect features this platform's paste can't carry. */
+      dropped: z.array(z.string()).optional()
     })
   },
   'context:assemble': {
