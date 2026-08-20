@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { isAllowedNavigation, isOpenableExternalUrl } from './navigation'
 import { registerAssetSchemePrivileges, registerAssetProtocol } from './assets/scheme'
-import { themesDir } from './themes/service'
+import { themesDir, watchThemes } from './themes/service'
 import appIcon from '../../resources/icon.png?asset'
 import { existsSync, renameSync } from 'node:fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -155,6 +155,12 @@ app.whenReady().then(() => {
   })
 
   registerAssetProtocol(themesDir())
+  // Hand-edited theme files apply live; the renderer re-resolves on change.
+  watchThemes(() => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('themes:changed', {})
+    }
+  })
   registerIpcHandlers()
   void refreshAppMenu()
   createWindow()

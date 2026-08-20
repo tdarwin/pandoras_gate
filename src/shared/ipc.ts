@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { NovelStateSchema } from './schemas/project'
 import { CatalogEntryStatusSchema, HostedPickSchema, type ModelRoleMap } from './llm/catalog'
 import { SnapshotIntervalSchema, ContextTargetSchema, ThemePrefSchema } from './prefs'
+import { ThemeSummarySchema, ResolvedThemeSchema } from './schemas/theme'
 
 export const ChatMessageSchema = z.object({
   role: z.enum(['system', 'user', 'assistant', 'tool']),
@@ -271,6 +272,28 @@ export const ipcContract = {
       showUnfilteredModels: z.boolean().optional()
     }),
     response: PrefsSchema
+  },
+  'themes:list': {
+    request: z.undefined(),
+    response: z.object({ themes: z.array(ThemeSummarySchema) })
+  },
+  'themes:resolve': {
+    request: z.object({ id: z.string() }),
+    response: ResolvedThemeSchema
+  },
+  /** File dialog in main; id is null when the user cancels. */
+  'themes:import': {
+    request: z.undefined(),
+    response: z.object({ id: z.string().nullable() })
+  },
+  /** From an effective base or a custom theme — never 'system'. */
+  'themes:duplicateCurrent': {
+    request: z.object({ from: ThemePrefSchema }),
+    response: z.object({ id: z.string() })
+  },
+  'themes:openFolder': {
+    request: z.undefined(),
+    response: z.object({ opened: z.literal(true) })
   },
   'sync:getConfig': {
     request: z.object({ novelDir: z.string() }),
@@ -586,6 +609,8 @@ export const ipcEvents = {
   }),
   /** Fired when the agent (or a pipeline run) created new proposals. */
   'proposals:changed': z.object({}),
+  /** A file in the themes folder changed on disk (hand edit, import). */
+  'themes:changed': z.object({}),
   /** Live phase text while a Codex/outline pipeline run is working. */
   'pipeline:status': z.object({ text: z.string() }),
   /** A chat-deferred generation batch started/finished (proposals UI state). */
