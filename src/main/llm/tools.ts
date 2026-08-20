@@ -2,6 +2,7 @@ import type { WebContents } from 'electron'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { LLMProvider, ToolDefinition } from '../../shared/llm/types'
+import type { DeferredRun } from './chat'
 import {
   runMetadataUpdate,
   runOutlineGeneration,
@@ -30,6 +31,12 @@ export interface ToolContext {
   sender: WebContents
   /** gen_ai.conversation.id shared by every span of this session. */
   conversationId?: string
+  /**
+   * Queues a generation to run after the chat reply finishes. Tools that need
+   * their own model call must NOT run it inline: on local models a nested
+   * stream competes with the chat's still-allocated context for memory.
+   */
+  defer: (job: DeferredRun) => void
 }
 
 export function chatToolDefinitions(ctx: Pick<ToolContext, 'activeFile'>): ToolDefinition[] {
@@ -293,21 +300,28 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
           if (!ctx.activeFile?.startsWith('chapters/')) {
             return 'Error: no chapter is open in the editor, so there is nothing to analyze.'
           }
-          await flushAutocommit(ctx.novelDir)
-          const result = await runMetadataUpdate({
-            novelDir: ctx.novelDir,
-            chapterFile: ctx.activeFile,
-            provider: ctx.provider,
-            modelId: ctx.modelId,
-            // An explicit request always runs, even if the chapter is unchanged.
-            force: true,
-            ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {})
+          // Pin the target now — the author may navigate before the run fires.
+          const chapterFile = ctx.activeFile
+          ctx.defer({
+            label: 'Updating the Codex…',
+            run: async (onStatus) => {
+              await flushAutocommit(ctx.novelDir)
+              const result = await runMetadataUpdate({
+                novelDir: ctx.novelDir,
+                chapterFile,
+                provider: ctx.provider,
+                modelId: ctx.modelId,
+                // An explicit request always runs, even if the chapter is unchanged.
+                force: true,
+                onStatus,
+                ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {})
+              })
+              return result.status === 'ran'
+                ? `${result.itemCount} suggestion${result.itemCount === 1 ? '' : 's'}`
+                : 'Codex already up to date'
+            }
           })
-          notifyProposalsChanged(ctx.sender)
-          if (result.status === 'ran') {
-            return `Done: ${result.itemCount} Codex suggestion(s) are now waiting in the review queue (the badge in the toolbar). Nothing is saved until the author accepts them.`
-          }
-          return 'The chapter was analyzed but produced no Codex changes worth suggesting.'
+          return 'Queued: the Codex analysis will run as soon as this reply finishes; its suggestions will appear in the review queue (the badge in the toolbar). Keep your reply to one short sentence.'
         }
         case 'list_chapters': {
           const manifest = await readNovelManifest(ctx.novelDir)
@@ -432,7 +446,10 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
               {
                 path: target,
                 newContent,
-                rationale: args.rationale ?? 'Targeted section edit from chat'
+                rationale: args.rationale ?? 'Targeted section edit from chat',
+                // The exact content the splice was computed against — accepts
+                // rebase onto whatever the file says by then.
+                base: raw
               }
             ],
             (p) => p === target
@@ -472,7 +489,8 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
               {
                 path: args.chapterFile,
                 newContent: frontmatterPrefix + joined,
-                rationale: args.rationale ?? 'Content appended from chat'
+                rationale: args.rationale ?? 'Content appended from chat',
+                base: raw
               }
             ],
             (p) => p === args.chapterFile
@@ -494,20 +512,27 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
           if (!ctx.activeFile?.startsWith('chapters/')) {
             return 'Error: no chapter is open in the editor.'
           }
-          await flushAutocommit(ctx.novelDir)
-          const result = await runChapterEdit({
-            novelDir: ctx.novelDir,
-            chapterFile: ctx.activeFile,
-            instructions: args.instructions,
-            provider: ctx.provider,
-            modelId: ctx.modelId,
-            ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {})
+          const chapterFile = ctx.activeFile
+          const instructions = args.instructions
+          ctx.defer({
+            label: 'Revising the chapter…',
+            run: async (onStatus) => {
+              await flushAutocommit(ctx.novelDir)
+              const result = await runChapterEdit({
+                novelDir: ctx.novelDir,
+                chapterFile,
+                instructions,
+                provider: ctx.provider,
+                modelId: ctx.modelId,
+                onStatus,
+                ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {})
+              })
+              return result.status === 'ran'
+                ? 'Chapter revision ready for review'
+                : 'The revision matched the current chapter'
+            }
           })
-          notifyProposalsChanged(ctx.sender)
-          if (result.status === 'ran') {
-            return 'Done: the revised chapter is in the review queue as a word-level diff (the suggestions badge). The chapter file is untouched until the author accepts it.'
-          }
-          return 'The revision came back identical to the current chapter — nothing to suggest.'
+          return 'Queued: the chapter revision will be generated as soon as this reply finishes and will appear in the review queue as a word-level diff. The chapter file is untouched until the author accepts it. Keep your reply to one short sentence.'
         }
         case 'generate_outline': {
           let args: { scope?: string; guidance?: string } = {}
@@ -520,21 +545,28 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
           if (scope === 'chapter' && !ctx.activeFile?.startsWith('chapters/')) {
             return 'Error: no chapter is open in the editor; open a chapter or use scope "novel".'
           }
-          await flushAutocommit(ctx.novelDir)
-          const result = await runOutlineGeneration({
-            novelDir: ctx.novelDir,
-            scope,
-            ...(scope === 'chapter' ? { chapterFile: ctx.activeFile! } : {}),
-            ...(args.guidance ? { guidance: args.guidance } : {}),
-            provider: ctx.provider,
-            modelId: ctx.modelId,
-            ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {})
+          const chapterFile = ctx.activeFile
+          const guidance = args.guidance
+          ctx.defer({
+            label: 'Generating an outline…',
+            run: async (onStatus) => {
+              await flushAutocommit(ctx.novelDir)
+              const result = await runOutlineGeneration({
+                novelDir: ctx.novelDir,
+                scope,
+                ...(scope === 'chapter' ? { chapterFile: chapterFile! } : {}),
+                ...(guidance ? { guidance } : {}),
+                provider: ctx.provider,
+                modelId: ctx.modelId,
+                onStatus,
+                ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {})
+              })
+              return result.status === 'ran'
+                ? 'Outline ready for review'
+                : 'No outline changes suggested'
+            }
           })
-          notifyProposalsChanged(ctx.sender)
-          if (result.status === 'ran') {
-            return `Done: the ${scope} outline suggestion is in the review queue for the author to accept, edit, or reject.`
-          }
-          return 'The outline was generated but matches what already exists — nothing new to suggest.'
+          return `Queued: the ${scope} outline will be generated as soon as this reply finishes and will appear in the review queue for the author to accept, edit, or reject. Keep your reply to one short sentence.`
         }
         default:
           return `Error: unknown tool "${name}".`
@@ -552,8 +584,8 @@ You have tools that act on the novel's Codex — its canon reference. When the a
 
 Choosing a tool:
 - One specific document (e.g. "create a profile for Mira", "write up the magic system we just discussed"): call list_codex_docs first to check what exists (and read_codex_doc if updating), then write_codex_doc with the COMPLETE new file content.
-- A broad sweep from the open chapter ("update the codex from this chapter"): update_codex.
-- Outlines: generate_outline, or write_codex_doc when the author dictated the outline content in chat.
+- A broad sweep from the open chapter ("update the codex from this chapter"): update_codex. The analysis runs right after your reply finishes — keep the reply to one short sentence and do not claim results.
+- Outlines: generate_outline (runs right after your reply — keep it short), or write_codex_doc when the author dictated the outline content in chat.
 
 You also have chapter tools:
 - list_chapters: the novel's structure (paths, statuses, which chapter is open).
@@ -563,7 +595,7 @@ You also have chapter tools:
 - append_to_chapter(chapterFile, content): add content to the end of an existing chapter (fine on empty ones).
 - To MOVE a passage between chapters: find_in_chapter to get the exact text → edit_chapter_section on the source with replacement "" (cut) → append_to_chapter on the destination with that text (paste). Two review items; NEVER create a new chapter for a move.
 - find_in_chapter(query, chapterFile?): locate passages and get their exact wording with context.
-- edit_chapter(instructions): full-chapter rewrite via a separate generation. Only for sweeping revisions (POV/tense/whole-tone changes) where section edits are impractical.
+- edit_chapter(instructions): full-chapter rewrite via a separate generation that runs right after your reply finishes. Only for sweeping revisions (POV/tense/whole-tone changes) where section edits are impractical. Keep the reply short and do not claim the revision is done.
 
 Discipline: call each tool at most once per distinct purpose, verify with list_chapters/list_codex_docs BEFORE creating anything, and never create a chapter or document that already exists. When a tool returns an Error, fix your arguments and retry once — do not switch to creating new things. After your tools succeed, STOP and reply to the author.
 

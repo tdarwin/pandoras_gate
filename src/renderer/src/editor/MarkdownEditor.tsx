@@ -47,6 +47,8 @@ interface MarkdownEditorProps {
   forceSync?: boolean
   /** ⌘S / Ctrl+S inside the editor. */
   onSave?: () => void
+  /** False locks out typing (pointer-events CSS alone doesn't stop the keyboard). */
+  editable?: boolean
   /** Style commands for the toolbar; null when the editor unmounts. */
   onReady?: (handle: EditorHandle | null) => void
   /**
@@ -70,6 +72,7 @@ export default function MarkdownEditor({
   value,
   onChange,
   forceSync = false,
+  editable = true,
   onSave,
   onReady,
   reviewOriginal
@@ -135,6 +138,11 @@ export default function MarkdownEditor({
     // Recreate (fresh undo history) only when switching documents.
     [docId]
   )
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return
+    editor.setEditable(editable)
+  }, [editor, editable])
 
   // Expose style commands to the toolbar.
   useEffect(() => {

@@ -1,17 +1,19 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { z } from 'zod'
 import { readFile, writeFile, mkdir, readdir, rm } from 'node:fs/promises'
-import { join, normalize, basename } from 'node:path'
+import { join, normalize, basename, relative } from 'node:path'
+import { applyPatch, structuredPatch } from 'diff'
 import { parse as parseYaml } from 'yaml'
 import type { LLMProvider } from '../../shared/llm/types'
 import {
   ModelProposalOutput,
   PendingProposal,
-  PROPOSAL_JSON_SCHEMA,
-  type PendingProposalItem
+  PendingProposalItem,
+  PROPOSAL_JSON_SCHEMA
 } from '../../shared/schemas/proposal'
 import { parseFrontmatter } from '../../shared/frontmatter'
 import { readNovelManifest, readChapter, listMetadata } from '../project/service'
-import { commitAll } from '../git/service'
+import { commitAll, flushAutocommit } from '../git/service'
 import { estimateTokens, elideMiddle, matchCharacters, truncateToTokens } from '../context/assembler'
 import { logInfo } from '../log'
 import { withSpan } from '../telemetry'
@@ -62,6 +64,36 @@ function proposalsDir(novelDir: string): string {
   return join(novelDir, '.pandora', 'proposals')
 }
 
+/**
+ * 0.5.0 stored `baseHash` (sha256 of the base) instead of `baseContent`.
+ * Pending proposals are user data — migrated deliberately, never dropped:
+ * when the target doc still matches the hash the doc IS the base and the
+ * item stays cleanly acceptable; otherwise the base is unrecoverable and
+ * `null` renders the item as "Needs review" instead of overwriting blind.
+ */
+const LegacyPendingProposal = PendingProposal.extend({
+  items: z.array(
+    PendingProposalItem.omit({ baseContent: true }).extend({ baseHash: z.string() })
+  )
+})
+
+async function migrateLegacyProposal(
+  novelDir: string,
+  legacy: z.infer<typeof LegacyPendingProposal>
+): Promise<PendingProposal> {
+  const items: PendingProposalItem[] = []
+  for (const { baseHash, ...item } of legacy.items) {
+    const current = await safeRead(join(novelDir, item.path))
+    items.push({
+      ...item,
+      baseContent: current !== null && baseHash !== '' && sha256(current) === baseHash ? current : null
+    })
+  }
+  const migrated: PendingProposal = { ...legacy, items }
+  await writeProposal(novelDir, migrated)
+  return migrated
+}
+
 export async function listProposals(novelDir: string): Promise<PendingProposal[]> {
   try {
     const files = (await readdir(proposalsDir(novelDir))).filter((f) => f.endsWith('.json'))
@@ -69,9 +101,17 @@ export async function listProposals(novelDir: string): Promise<PendingProposal[]
     for (const f of files) {
       try {
         const raw = await readFile(join(proposalsDir(novelDir), f), 'utf8')
-        out.push(PendingProposal.parse(JSON.parse(raw)))
+        const json: unknown = JSON.parse(raw)
+        const parsed = PendingProposal.safeParse(json)
+        if (parsed.success) {
+          out.push(parsed.data)
+          continue
+        }
+        const legacy = LegacyPendingProposal.safeParse(json)
+        if (legacy.success) out.push(await migrateLegacyProposal(novelDir, legacy.data))
+        // Anything else is corrupt: skip it rather than blocking the queue.
       } catch {
-        // Corrupt proposal file: skip it rather than blocking the queue.
+        // Unreadable/unparseable file: skip.
       }
     }
     return out.sort((a, b) => a.createdAt - b.createdAt)
@@ -126,6 +166,53 @@ export function validateProposalContent(path: string, content: string): string |
 }
 
 /* ------------------------------------------------------------------ */
+/* Rebasing proposals onto the current file                            */
+/* ------------------------------------------------------------------ */
+
+export type RebaseResult = { content: string } | { conflict: string }
+
+/**
+ * Every proposal stores a full document computed against `baseContent`.
+ * Accepting must NOT overwrite the file wholesale: the author may have kept
+ * writing since the run, and sibling proposals share one base (three
+ * edit_chapter_section calls in a reply each splice the same original). So
+ * the accepted content is the proposal's CHANGE re-applied to `current`.
+ *
+ * Patch tuning: prose is one line per paragraph, so context 3 spans a
+ * neighbouring paragraph plus its blank lines, and fuzzFactor 1 lets exactly
+ * one of those context lines have changed (the author edited the paragraph
+ * NEXT to the one being rewritten — the common, safe case). Mis-anchoring a
+ * short repeated paragraph ("No.") elsewhere needs three context mismatches,
+ * which fuzz 1 refuses — and jsdiff never fuzzes the deleted lines themselves
+ * or the line immediately after an insertion.
+ */
+export function rebaseProposal(
+  base: string | null,
+  newContent: string,
+  current: string | null
+): RebaseResult {
+  if (base === null) {
+    // A create: fine as long as nothing claimed the path since.
+    if (current === null || current === newContent) return { content: newContent }
+    return { conflict: 'a document already exists at this path now' }
+  }
+  if (current === null) return { conflict: 'the file was deleted' }
+  if (current === base || current === newContent) return { content: newContent }
+  // Pure end-of-file append (append_to_chapter, or any edit that only adds a
+  // tail): re-append to the CURRENT end instead of patching, so prose written
+  // since the run stays above the addition.
+  const baseTrimmed = base.replace(/\s+$/, '')
+  if (baseTrimmed.length > 0 && newContent.startsWith(baseTrimmed)) {
+    const tail = newContent.slice(baseTrimmed.length)
+    return { content: current.replace(/\s+$/, '') + tail }
+  }
+  const patch = structuredPatch('a', 'b', base, newContent, '', '', { context: 3 })
+  const applied = applyPatch(current, patch, { fuzzFactor: 1 })
+  if (applied === false) return { conflict: 'the paragraph it edits changed or moved' }
+  return { content: applied }
+}
+
+/* ------------------------------------------------------------------ */
 /* Prompt construction                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -135,6 +222,33 @@ async function safeRead(path: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+/**
+ * Every doc a proposal may target, read BEFORE the model call. Proposal items
+ * must store the content the model actually saw as their base — reading it at
+ * enqueue time bakes edits made DURING a slow generation into the base, and a
+ * rebase against that base silently reverts them (no conflict fires, because
+ * base === current). The docs are small; a full read is cheap.
+ */
+async function codexBaseline(novelDir: string): Promise<Map<string, string>> {
+  const baseline = new Map<string, string>()
+  for (const root of ['metadata', 'outlines']) {
+    let entries: import('node:fs').Dirent[] = []
+    try {
+      entries = await readdir(join(novelDir, root), { withFileTypes: true, recursive: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      const rel = join(relative(novelDir, entry.parentPath), entry.name).replaceAll('\\', '/')
+      if (!isAllowedProposalPath(rel)) continue
+      const content = await safeRead(join(novelDir, rel))
+      if (content !== null) baseline.set(rel, content)
+    }
+  }
+  return baseline
 }
 
 const SYSTEM_PROMPT = `You are the Codex maintainer for a novel-writing studio (the Codex is the novel's canon reference: character profiles, world/system rules, summaries, synopsis, glossary, and timeline). After the author saves a chapter, you update the Codex so both the author and future AI assistance stay oriented.
@@ -351,6 +465,9 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
   const chapterTitle = manifest.chapters.find((c) => c.file === chapterFile)?.title ?? chapterFile
 
   ctx.onStatus?.(`Reading “${chapterTitle}” and the Codex…`)
+  // Doc contents as the model will see them — the base every proposal from
+  // this run is judged against.
+  const baseline = await codexBaseline(novelDir)
   const userPrompt = await buildUserPrompt(
     novelDir,
     chapterFile,
@@ -409,7 +526,7 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
       action: current === null ? 'create' : 'update',
       newContent: p.newContent,
       rationale: p.rationale,
-      baseHash: current === null ? '' : sha256(current)
+      baseContent: baseline.get(p.path) ?? null
     })
   }
 
@@ -443,7 +560,17 @@ async function runMetadataUpdateInner(ctx: RunContext): Promise<RunResult> {
 export async function enqueueProposalItems(
   novelDir: string,
   sourceTitle: string,
-  proposals: { path: string; newContent: string; rationale: string }[],
+  proposals: {
+    path: string
+    newContent: string
+    rationale: string
+    /**
+     * The content the proposal was computed against. Pass it whenever a model
+     * call (or anything slow) separated the read from this enqueue; defaults
+     * to the file as it is on disk right now.
+     */
+    base?: string
+  }[],
   pathFilter: (path: string) => boolean = isAllowedProposalPath
 ): Promise<{ queued: number; rejected: string[] }> {
   const items: PendingProposalItem[] = []
@@ -468,7 +595,7 @@ export async function enqueueProposalItems(
       action: current === null ? 'create' : 'update',
       newContent: p.newContent,
       rationale: p.rationale,
-      baseHash: current === null ? '' : sha256(current)
+      baseContent: p.base ?? current
     })
   }
   if (items.length > 0) {
@@ -498,6 +625,8 @@ export interface ChapterEditRequest {
   provider: LLMProvider
   modelId: string
   conversationId?: string
+  /** Live progress callback ("Asking the model…"). */
+  onStatus?: (text: string) => void
 }
 
 /**
@@ -527,6 +656,7 @@ export async function runChapterEdit(req: ChapterEditRequest): Promise<RunResult
         throw new Error('The chapter is empty — use drafting to write new prose instead.')
       }
 
+      req.onStatus?.(`Asking the model to revise “${entry.title}”…`)
       let revised = ''
       const controller = new AbortController()
       for await (const event of tracedChatStream(
@@ -560,7 +690,9 @@ export async function runChapterEdit(req: ChapterEditRequest): Promise<RunResult
           {
             path: req.chapterFile,
             newContent,
-            rationale: req.instructions.trim().slice(0, 200)
+            rationale: req.instructions.trim().slice(0, 200),
+            // The chapter as read before the (slow) revision generation.
+            base: raw
           }
         ],
         (p) => p === req.chapterFile
@@ -599,6 +731,8 @@ export interface OutlineRequest {
   provider: LLMProvider
   modelId: string
   conversationId?: string
+  /** Live progress callback. */
+  onStatus?: (text: string) => void
 }
 
 async function buildOutlinePrompt(req: OutlineRequest): Promise<string> {
@@ -681,7 +815,9 @@ async function runOutlineGenerationInner(req: OutlineRequest): Promise<RunResult
       ? (manifest.chapters.find((c) => c.file === req.chapterFile)?.title ?? 'chapter')
       : 'the novel'
 
+  const baseline = await codexBaseline(novelDir)
   const userPrompt = await buildOutlinePrompt(req)
+  req.onStatus?.(`Asking the model to outline ${chapterTitle}…`)
 
   let raw = ''
   const controller = new AbortController()
@@ -727,7 +863,7 @@ async function runOutlineGenerationInner(req: OutlineRequest): Promise<RunResult
       action: current === null ? 'create' : 'update',
       newContent: p.newContent,
       rationale: p.rationale,
-      baseHash: current === null ? '' : sha256(current)
+      baseContent: baseline.get(p.path) ?? null
     })
   }
 
@@ -755,6 +891,11 @@ export interface ResolveRequest {
   resolution: 'accept' | 'reject'
   /** When the author edited the proposed content before accepting. */
   editedContent?: string
+  /**
+   * Required with editedContent: sha256 of the currentContent the author
+   * reviewed against. Rejected if the file moved on underneath the review.
+   */
+  expectedCurrentHash?: string
 }
 
 export async function resolveProposalItem(req: ResolveRequest): Promise<{ remaining: number }> {
@@ -765,10 +906,37 @@ export async function resolveProposalItem(req: ResolveRequest): Promise<{ remain
   if (!item) throw new Error('Proposal item no longer exists')
 
   if (req.resolution === 'accept') {
-    const content = req.editedContent ?? item.newContent
+    const full = join(req.novelDir, item.path)
+    // Prose typed since the run may exist only as a quiet save on disk —
+    // give it a history entry BEFORE anything overwrites it. No-op when the
+    // file is already committed.
+    await flushAutocommit(req.novelDir)
+    await commitAll(req.novelDir, `before accepting suggestion: ${proposal.chapterTitle}`, [
+      item.path
+    ])
+    const current = await safeRead(full)
+    let content: string
+    if (req.editedContent !== undefined) {
+      if (req.expectedCurrentHash === undefined) {
+        throw new Error('expectedCurrentHash is required when accepting edited content')
+      }
+      if (sha256(current ?? '') !== req.expectedCurrentHash) {
+        throw new Error(
+          'This file changed while you were reviewing — reopen the suggestion to see the latest text.'
+        )
+      }
+      content = req.editedContent
+    } else {
+      const rebased = rebaseProposal(item.baseContent, item.newContent, current)
+      if ('conflict' in rebased) {
+        throw new Error(
+          `This file changed since the suggestion was made — ${rebased.conflict}. Open it with “Review in editor” to apply it by hand, or reject it.`
+        )
+      }
+      content = rebased.content
+    }
     const problem = validateProposalContent(item.path, content)
     if (problem) throw new Error(problem)
-    const full = join(req.novelDir, item.path)
     await mkdir(join(full, '..'), { recursive: true })
     await writeFile(full, content, 'utf8')
     const label = item.path.startsWith('outlines/')
@@ -798,20 +966,43 @@ export async function resolveProposalItem(req: ResolveRequest): Promise<{ remain
   return { remaining: proposal.items.length }
 }
 
-/** Review payload: items enriched with current content + conflict flags. */
-export async function proposalsForReview(novelDir: string): Promise<
-  (Omit<PendingProposal, 'items'> & {
-    items: (PendingProposalItem & { currentContent: string; conflict: boolean })[]
-  })[]
-> {
+/** One proposal item as the review UI sees it: rebased onto the current file. */
+export interface ReviewProposalItem {
+  path: string
+  action: 'create' | 'update'
+  /** The proposal REBASED onto the current file, when the change still applies. */
+  newContent: string
+  rationale: string
+  currentContent: string
+  /** sha256 of currentContent — echoed back when accepting edited content. */
+  currentHash: string
+  /** True when the change no longer lines up with the current file. */
+  conflict: boolean
+}
+
+export async function proposalsForReview(
+  novelDir: string
+): Promise<(Omit<PendingProposal, 'items'> & { items: ReviewProposalItem[] })[]> {
   const proposals = await listProposals(novelDir)
   const out = []
   for (const p of proposals) {
-    const items = []
+    const items: ReviewProposalItem[] = []
     for (const item of p.items) {
-      const current = (await safeRead(join(novelDir, item.path))) ?? ''
-      const conflict = item.baseHash !== '' && sha256(current) !== item.baseHash
-      items.push({ ...item, currentContent: current, conflict })
+      const current = await safeRead(join(novelDir, item.path))
+      const rebased = rebaseProposal(item.baseContent, item.newContent, current)
+      const applies =
+        'content' in rebased && validateProposalContent(item.path, rebased.content) === null
+      const currentContent = current ?? ''
+      items.push({
+        path: item.path,
+        // A create whose path got claimed since renders as a diff, not a blob.
+        action: current === null ? 'create' : 'update',
+        newContent: applies && 'content' in rebased ? rebased.content : item.newContent,
+        rationale: item.rationale,
+        currentContent,
+        currentHash: sha256(currentContent),
+        conflict: !applies
+      })
     }
     out.push({ ...p, items })
   }

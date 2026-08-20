@@ -49,6 +49,7 @@ export const StreamEventSchema = z.discriminatedUnion('type', [
     arguments: z.string()
   }),
   z.object({ type: z.literal('toolStatus'), text: z.string() }),
+  z.object({ type: z.literal('status'), text: z.string() }),
   z.object({ type: z.literal('done'), finishReason: z.string() }),
   z.object({ type: z.literal('error'), message: z.string() })
 ])
@@ -95,9 +96,13 @@ export const ipcContract = {
     request: z.object({ novelDir: z.string(), title: z.string().min(1) }),
     response: NovelStateSchema
   },
+  'app:flushed': {
+    request: z.object({}),
+    response: z.object({ ok: z.literal(true) })
+  },
   'chapter:rename': {
     request: z.object({ novelDir: z.string(), file: z.string(), newTitle: z.string().min(1) }),
-    response: NovelStateSchema
+    response: z.object({ novel: NovelStateSchema, file: z.string() })
   },
   'chapter:reorder': {
     request: z.object({ novelDir: z.string(), orderedFiles: z.array(z.string()) }),
@@ -474,10 +479,13 @@ export const ipcContract = {
             z.object({
               path: z.string(),
               action: z.enum(['create', 'update']),
+              /** Proposal content REBASED onto the current file where possible. */
               newContent: z.string(),
               rationale: z.string(),
-              baseHash: z.string(),
               currentContent: z.string(),
+              /** sha256 of currentContent — echo back when accepting edited content. */
+              currentHash: z.string(),
+              /** True when the change no longer lines up with the current file. */
               conflict: z.boolean()
             })
           )
@@ -491,7 +499,12 @@ export const ipcContract = {
       proposalId: z.string(),
       path: z.string(),
       resolution: z.enum(['accept', 'reject']),
-      editedContent: z.string().optional()
+      editedContent: z.string().optional(),
+      /**
+       * Required with editedContent: sha256 of the currentContent the author
+       * reviewed against. Refused when the file moved on underneath.
+       */
+      expectedCurrentHash: z.string().optional()
     }),
     response: z.object({ remaining: z.number() })
   },
@@ -574,6 +587,13 @@ export const ipcEvents = {
   'proposals:changed': z.object({}),
   /** Live phase text while a Codex/outline pipeline run is working. */
   'pipeline:status': z.object({ text: z.string() }),
+  /** A chat-deferred generation batch started/finished (proposals UI state). */
+  'pipeline:run': z.object({
+    phase: z.enum(['started', 'finished']),
+    label: z.string(),
+    result: z.string().optional(),
+    error: z.string().optional()
+  }),
   /** Manifest changed outside the renderer (e.g. agent created a chapter). */
   'novel:updated': NovelStateSchema,
   /** The agent asked for an AI draft; renderer starts it when chat is idle. */
@@ -582,6 +602,8 @@ export const ipcEvents = {
     instructions: z.string()
   }),
   /** Native application-menu commands the renderer carries out. */
+  /** Main asks the renderer to save everything before a close/quit. */
+  'app:flushRequest': z.object({}),
   'menu:action': z.object({
     action: z.enum([
       'about',

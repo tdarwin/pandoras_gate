@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useProjectStore } from '../stores/project'
+import { useDraftStore } from '../stores/draft'
 
 interface Commit {
   oid: string
@@ -33,20 +34,26 @@ function timeAgo(ts: number): string {
 export default function HistoryPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
   const novel = useProjectStore((s) => s.novel)!
   const activeFile = useProjectStore((s) => s.activeFile)
-  const openChapter = useProjectStore((s) => s.openChapter)
+  const reloadActiveChapter = useProjectStore((s) => s.reloadActiveChapter)
+  const snapshotActiveChapter = useProjectStore((s) => s.snapshotActiveChapter)
   const setError = useProjectStore((s) => s.setError)
 
   const [commits, setCommits] = useState<Commit[]>([])
   const [diff, setDiff] = useState<DiffState | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Guards against a slow list for the previous chapter landing after the
+  // user already switched files.
+  const requestSeq = useRef(0)
   const refresh = useCallback(async (): Promise<void> => {
     if (!activeFile) return
+    const seq = ++requestSeq.current
     setLoading(true)
     const result = await window.pandora.invoke('history:list', {
       novelDir: novel.dir,
       file: activeFile
     })
+    if (seq !== requestSeq.current) return
     setLoading(false)
     if (result.ok) setCommits(result.data.commits)
     else setError(result.error.message)
@@ -70,13 +77,24 @@ export default function HistoryPanel({ onClose }: { onClose: () => void }): Reac
 
   const restore = async (oid: string): Promise<void> => {
     if (!activeFile) return
+    const draft = useDraftStore.getState()
+    if (draft.drafting && draft.draftFile === activeFile) {
+      setError('The AI is drafting into this chapter — stop the draft first.')
+      return
+    }
+    // The buffer may hold prose that exists nowhere else (quiet saves never
+    // commit). Snapshot it BEFORE the restore rewrites the file, so any
+    // restore can itself be undone from History.
+    await snapshotActiveChapter()
     const result = await window.pandora.invoke('history:restore', {
       novelDir: novel.dir,
       oid,
       file: activeFile
     })
     if (result.ok) {
-      await openChapter(activeFile)
+      // Re-read WITHOUT snapshotting: openChapter's pre-switch snapshot used
+      // to write the stale buffer straight over the restored content.
+      await reloadActiveChapter()
       setDiff(null)
       await refresh()
     } else {

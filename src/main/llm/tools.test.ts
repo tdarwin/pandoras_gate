@@ -1,17 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { WebContents } from 'electron'
 import { createNovel, createChapter } from '../project/service'
-import { listProposals } from '../metadata/pipeline'
+import { listProposals, resolveProposalItem } from '../metadata/pipeline'
+import { history, fileAtCommit } from '../git/service'
 import { MockProvider } from './mock'
 import { chatToolDefinitions, executeTool, type ToolContext } from './tools'
+import type { DeferredRun } from './chat'
 
 let dir: string
 let novelDir: string
 let provider: MockProvider
 let sent: unknown[]
+let deferred: DeferredRun[]
 
 function fakeSender(): WebContents {
   return {
@@ -23,7 +26,21 @@ function fakeSender(): WebContents {
 }
 
 function ctx(activeFile: string | null): ToolContext {
-  return { novelDir, activeFile, provider, modelId: 'mock-model', sender: fakeSender() }
+  return {
+    novelDir,
+    activeFile,
+    provider,
+    modelId: 'mock-model',
+    sender: fakeSender(),
+    defer: (job) => deferred.push(job)
+  }
+}
+
+/** Runs everything the tools deferred, as the chat orchestrator would. */
+async function runDeferred(): Promise<string[]> {
+  const results: string[] = []
+  for (const job of deferred.splice(0)) results.push(await job.run(() => {}))
+  return results
 }
 
 beforeEach(async () => {
@@ -37,6 +54,7 @@ beforeEach(async () => {
   )
   provider = new MockProvider()
   sent = []
+  deferred = []
   vi.restoreAllMocks()
 })
 
@@ -228,7 +246,9 @@ describe('chapter tools', () => {
       'edit_chapter',
       JSON.stringify({ instructions: 'Set the scene at night, in the rain.' })
     )
-    expect(result).toContain('review queue')
+    expect(result).toContain('Queued')
+    expect(provider.requests).toHaveLength(0)
+    await runDeferred()
 
     const proposals = await listProposals(novelDir)
     expect(proposals).toHaveLength(1)
@@ -308,6 +328,72 @@ describe('find_in_chapter / edit_chapter_section', () => {
     expect(item.newContent).toContain('Kael crept through the ruins.')
     expect(item.newContent).toContain('title: The Iron Gate')
     expect(item.newContent).not.toContain('arms folded against the wind')
+  })
+
+  it('sequential section edits against one base BOTH survive accepting', async () => {
+    // The prompt tells the model to "repeat for multiple spots" — every call
+    // reads the same untouched file, so both proposals share one base.
+    await executeTool(
+      ctx(CHAPTER),
+      'edit_chapter_section',
+      JSON.stringify({
+        find: 'The elder waited at the gate, arms folded against the wind.',
+        replacement: 'The elder waited at the gate, hood drawn low against the storm.'
+      })
+    )
+    await executeTool(
+      ctx(CHAPTER),
+      'edit_chapter_section',
+      JSON.stringify({
+        find: 'Rain began to fall as Kael spoke his first words.',
+        replacement: 'Thunder rolled as Kael spoke his first words.'
+      })
+    )
+    const proposals = await listProposals(novelDir)
+    expect(proposals).toHaveLength(2)
+    for (const p of proposals) {
+      await resolveProposalItem({
+        novelDir,
+        proposalId: p.id,
+        path: CHAPTER,
+        resolution: 'accept'
+      })
+    }
+    const finalText = await readFile(join(novelDir, CHAPTER), 'utf8')
+    expect(finalText).toContain('hood drawn low against the storm')
+    expect(finalText).toContain('Thunder rolled as Kael spoke')
+    expect(finalText).toContain('Kael crept through the ruins.')
+  })
+
+  it('accepting commits the pre-accept file first, so quiet saves reach history', async () => {
+    await executeTool(
+      ctx(CHAPTER),
+      'edit_chapter_section',
+      JSON.stringify({
+        find: 'Rain began to fall as Kael spoke his first words.',
+        replacement: 'Thunder rolled as Kael spoke his first words.'
+      })
+    )
+    // A quiet save lands after the run — this text exists in no commit yet.
+    const typed = `---\ntitle: The Iron Gate\nstatus: draft\n---\n${BODY}\nKael added one more line.\n`
+    await writeFile(join(novelDir, CHAPTER), typed)
+
+    const proposals = await listProposals(novelDir)
+    await resolveProposalItem({
+      novelDir,
+      proposalId: proposals[0]!.id,
+      path: CHAPTER,
+      resolution: 'accept'
+    })
+    // The accepted file keeps the typed line AND applies the edit…
+    const finalText = await readFile(join(novelDir, CHAPTER), 'utf8')
+    expect(finalText).toContain('Kael added one more line.')
+    expect(finalText).toContain('Thunder rolled')
+    // …and the pre-accept version is recoverable from history.
+    const log = await history(novelDir, CHAPTER)
+    expect(log.some((c) => c.message.includes('before accepting suggestion'))).toBe(true)
+    const preAccept = log.find((c) => c.message.includes('before accepting suggestion'))!
+    expect(await fileAtCommit(novelDir, preAccept.oid, CHAPTER)).toBe(typed)
   })
 
   it('rejects text that is not found, guiding toward exact quoting', async () => {
@@ -408,10 +494,15 @@ describe('executeTool', () => {
       })
     )
     const result = await executeTool(ctx('chapters/001-the-iron-gate.md'), 'update_codex', '{}')
-    expect(result).toContain('review queue')
+    // The tool defers the generation — nothing runs during the reply.
+    expect(result).toContain('Queued')
+    expect(provider.requests).toHaveLength(0)
+    expect(await listProposals(novelDir)).toHaveLength(0)
+    expect(deferred).toHaveLength(1)
+
+    const results = await runDeferred()
+    expect(results).toEqual(['1 suggestion'])
     expect(await listProposals(novelDir)).toHaveLength(1)
-    // Renderer was notified to refresh.
-    expect(sent.some((args) => (args as unknown[])[0] === 'proposals:changed')).toBe(true)
   })
 
   it('update_codex forces a run even when the chapter is unchanged', async () => {
@@ -427,11 +518,12 @@ describe('executeTool', () => {
     }
     provider.queue(JSON.stringify(summary))
     await executeTool(ctx('chapters/001-the-iron-gate.md'), 'update_codex', '{}')
+    await runDeferred()
     // Same chapter content — an explicit second request must still run.
     summary.proposals[0]!.newContent = summary.proposals[0]!.newContent.replace('v1', 'v2')
     provider.queue(JSON.stringify(summary))
-    const result = await executeTool(ctx('chapters/001-the-iron-gate.md'), 'update_codex', '{}')
-    expect(result).toContain('review queue')
+    await executeTool(ctx('chapters/001-the-iron-gate.md'), 'update_codex', '{}')
+    await runDeferred()
     expect(provider.requests).toHaveLength(2)
   })
 
@@ -459,7 +551,9 @@ describe('executeTool', () => {
       'generate_outline',
       JSON.stringify({ scope: 'novel', guidance: 'three acts' })
     )
-    expect(result).toContain('review queue')
+    expect(result).toContain('Queued')
+    expect(provider.requests).toHaveLength(0)
+    await runDeferred()
     const proposals = await listProposals(novelDir)
     expect(proposals[0]!.items[0]!.path).toBe('outlines/novel.md')
   })

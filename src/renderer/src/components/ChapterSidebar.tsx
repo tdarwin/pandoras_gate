@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useProjectStore } from '../stores/project'
+import { useDraftStore } from '../stores/draft'
+import { closeNovelSafely } from '../app/novelActions'
 import { useUiStore } from '../stores/ui'
 import CodexBrowser from './CodexBrowser'
 
@@ -89,7 +91,8 @@ export default function ChapterSidebar(): React.JSX.Element {
   const reorderChapters = useProjectStore((s) => s.reorderChapters)
   const archiveChapter = useProjectStore((s) => s.archiveChapter)
   const deleteChapter = useProjectStore((s) => s.deleteChapter)
-  const closeNovel = useProjectStore((s) => s.closeNovel)
+  const drafting = useDraftStore((s) => s.drafting)
+  const draftFile = useDraftStore((s) => s.draftFile)
 
   const [adding, setAdding] = useState(false)
   const [newTitle, setNewTitle] = useState('')
@@ -111,15 +114,35 @@ export default function ChapterSidebar(): React.JSX.Element {
     setAdding(true)
   }, [newChapterSignal])
 
+  // Enter and the input's unmount-blur can both land here. Clearing state
+  // before the slow IPC await unmounts the input in the same event flush
+  // (which usually prevents the second event entirely), and the ref makes the
+  // dedupe unconditional — state reads in a closure would still see the old
+  // values, so they can't be the guard.
+  const submitting = useRef(false)
   const submitNew = async (): Promise<void> => {
-    if (newTitle.trim()) await createChapter(newTitle.trim())
-    setNewTitle('')
-    setAdding(false)
+    if (submitting.current) return
+    submitting.current = true
+    try {
+      const title = newTitle.trim()
+      setNewTitle('')
+      setAdding(false)
+      if (title) await createChapter(title)
+    } finally {
+      submitting.current = false
+    }
   }
 
   const submitRename = async (file: string): Promise<void> => {
-    if (renameValue.trim()) await renameChapter(file, renameValue.trim())
-    setRenaming(null)
+    if (submitting.current) return
+    submitting.current = true
+    try {
+      const value = renameValue.trim()
+      setRenaming(null)
+      if (value) await renameChapter(file, value)
+    } finally {
+      submitting.current = false
+    }
   }
 
   const completeDrop = async (): Promise<void> => {
@@ -148,7 +171,7 @@ export default function ChapterSidebar(): React.JSX.Element {
           <div className="truncate text-sm font-medium text-ink">{novel.manifest.title}</div>
         </div>
         <button
-          onClick={closeNovel}
+          onClick={() => void closeNovelSafely()}
           title="Close novel"
           className="rounded p-1 text-ink-faint hover:bg-raised hover:text-ink-muted"
         >
@@ -254,17 +277,24 @@ export default function ChapterSidebar(): React.JSX.Element {
                       <span className="mr-1.5 text-xs text-ink-faint">{i + 1}.</span>
                       {ch.title}
                     </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setMenuFor(menuFor === ch.file ? null : ch.file)
-                        setConfirmDelete(null)
-                      }}
-                      title="Chapter actions"
-                      className="hidden shrink-0 rounded px-1 text-ink-faint hover:text-ink group-hover:block"
-                    >
-                      ⋯
-                    </button>
+                    {drafting && draftFile === ch.file ? (
+                      <span
+                        title="The AI is drafting this chapter"
+                        className="ml-1 inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-indigo-400"
+                      />
+                    ) : (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setMenuFor(menuFor === ch.file ? null : ch.file)
+                          setConfirmDelete(null)
+                        }}
+                        title="Chapter actions"
+                        className="hidden shrink-0 rounded px-1 text-ink-faint hover:text-ink group-hover:block"
+                      >
+                        ⋯
+                      </button>
+                    )}
                   </div>
                 )}
 

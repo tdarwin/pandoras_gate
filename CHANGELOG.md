@@ -12,6 +12,46 @@ Write for a novelist, not for a reviewer of the diff.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Your typing survives closing the app.** Quitting, closing the window (⌘W), or
+  clicking the sidebar's ✕ within a few seconds of typing used to silently drop your last
+  words. The app now saves the open chapter — and takes a history snapshot — before any
+  of those complete.
+- **Accepting AI suggestions no longer overwrites what you wrote meanwhile.** A suggestion
+  is now re-applied to the chapter *as it is when you accept*, so prose you typed during a
+  slow run survives, and accepting several section edits from one chat reply keeps all of
+  them instead of only the last. When a suggestion no longer lines up with your text, it's
+  marked "Needs review — file changed" instead of quietly clobbering it, and "Accept all"
+  skips those and tells you how many. The app also snapshots the chapter right before an
+  accept, so the pre-accept version is always in History.
+- **History → "Restore this version" actually restores.** It used to re-save the current
+  text over the restored version; same for "Mark as revised," which reverted the chapter's
+  status on disk. Both now also save what you had first — anything a restore replaces gets
+  its own history entry, so a restore can itself be undone.
+- **AI drafts stay in their chapter.** You can now browse other chapters, the Codex, or
+  stop by another novel while a draft streams — the prose lands in the chapter the draft
+  was started for, marked in the sidebar, with a Show/Stop bar wherever you are. It used
+  to pour into whichever chapter you switched to.
+- **Renaming a chapter to a title another chapter already has** (an "Interlude", say) no
+  longer points the editor at the *other* chapter and overwrites it on the next save.
+- **Assigning different local models to different tasks works now.** Any AI task that
+  needed to switch local models used to fail with "Another generation is still running."
+  Requests now queue and run one at a time, with a "Waiting for the current generation…"
+  note while they do.
+- **Codex updates, chapter revisions, and outlines from chat run after the reply.** They
+  used to run *inside* it, fighting the chat for the same model's memory — on smaller
+  machines that meant truncated results or a crashed model. The chat now says "Queued",
+  and the toolbar shows progress the moment the reply ends.
+- **Long chats no longer freeze while the AI responds.** Streaming re-rendered the whole
+  conversation on every word; now only the growing reply updates.
+- **Pending suggestions survive updating the app.** Suggestions queued by 0.5.0 are
+  carried across the upgrade instead of silently vanishing from the badge; ones whose
+  document changed in the meantime arrive marked "Needs review."
+- **The History panel opens fast on long-lived novels.** It used to re-walk the novel's
+  entire snapshot history — thousands of commits after months of writing — on every open
+  and every chapter switch.
+
 ## [0.5.0] — 2026-08-17
 
 ### Added

@@ -4,15 +4,21 @@ import { useProjectStore } from './project'
 import { useChatStore } from './chat'
 
 /**
- * AI chapter drafting: streams model prose into the active chapter's editor
- * buffer. The buffer stays the source of truth — autosave persists it and the
- * main process brackets the draft with commits.
+ * AI chapter drafting. The draft store OWNS the streamed text (`draftContent`)
+ * and writes it to the draft's own chapter file — the editor buffer merely
+ * mirrors it while that chapter is open. This keeps navigation free during a
+ * draft: switching chapters can never splice AI prose into the wrong file.
  */
 
 interface DraftStore {
   drafting: boolean
   requestId: string | null
+  /** The chapter the draft streams into — fixed for the draft's lifetime. */
   draftFile: string | null
+  /** The full text of the draft chapter, including streamed prose so far. */
+  draftContent: string
+  /** Transient progress line (e.g. queued behind another generation). */
+  status: string | null
   error: string | null
 
   init: () => void
@@ -36,10 +42,59 @@ function whenChatIdle(fn: () => void): void {
   })
 }
 
+/* Throttled quiet persistence of the draft to ITS file (crash safety). */
+let writeTimer: number | null = null
+
+async function writeDraftToDisk(): Promise<void> {
+  const { draftFile, draftContent } = useDraftStore.getState()
+  const novel = useProjectStore.getState().novel
+  if (!novel || !draftFile) return
+  await window.pandora.invoke('chapter:write', {
+    novelDir: novel.dir,
+    file: draftFile,
+    content: draftContent
+  })
+}
+
+function scheduleDraftWrite(): void {
+  if (writeTimer !== null) return
+  writeTimer = window.setTimeout(() => {
+    writeTimer = null
+    void writeDraftToDisk()
+  }, 800)
+}
+
+function cancelDraftWrite(): void {
+  if (writeTimer !== null) {
+    window.clearTimeout(writeTimer)
+    writeTimer = null
+  }
+}
+
+/**
+ * Final bookkeeping against the DRAFT's file, wherever the author is now:
+ * flush the text, optionally commit it as the ai-draft milestone, and clear.
+ */
+async function finalizeDraft(commit: boolean): Promise<void> {
+  cancelDraftWrite()
+  const { draftFile, draftContent } = useDraftStore.getState()
+  const project = useProjectStore.getState()
+  const novel = project.novel
+  if (!novel || !draftFile) return
+  await writeDraftToDisk()
+  if (commit) {
+    await window.pandora.invoke('draft:finish', { novelDir: novel.dir, chapterFile: draftFile })
+  }
+  if (project.activeFile === draftFile) project.setSavedContent(draftContent)
+  useDraftStore.setState({ draftFile: null, draftContent: '' })
+}
+
 export const useDraftStore = create<DraftStore>((set, get) => ({
   drafting: false,
   requestId: null,
   draftFile: null,
+  draftContent: '',
+  status: null,
   error: null,
 
   init: () => {
@@ -62,29 +117,43 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
         if (p) void get().start(p.instructions || undefined, p.chapterFile)
       })
     })
+    // Returning to the draft chapter mid-draft: the store is the source of
+    // truth, so overwrite whatever (possibly ≤800 ms stale) disk read the
+    // chapter switch just loaded into the buffer.
+    useProjectStore.subscribe((state, prev) => {
+      const { drafting, draftFile, draftContent } = get()
+      if (!drafting || !draftFile) return
+      if (state.activeFile === draftFile && prev.activeFile !== draftFile) {
+        state.setSavedContent(draftContent)
+      }
+    })
     window.pandora.on('chat:event', (raw) => {
       const { requestId, event } = raw as IpcEventPayload<'chat:event'>
       if (requestId !== get().requestId) return
-      const project = useProjectStore.getState()
       switch (event.type) {
-        case 'delta':
-          project.appendContent(event.text)
-          break
-        case 'done': {
-          set({ drafting: false, requestId: null })
-          const { novel, activeFile } = project
-          void project.saveActiveChapter().then(() => {
-            if (novel && activeFile) {
-              void window.pandora.invoke('draft:finish', {
-                novelDir: novel.dir,
-                chapterFile: activeFile
-              })
-            }
-          })
+        case 'delta': {
+          const { draftFile, draftContent } = get()
+          if (!draftFile) return
+          const next = draftContent + event.text
+          set({ draftContent: next, status: null })
+          // Mirror into the editor only when the draft's chapter is open.
+          const project = useProjectStore.getState()
+          if (project.activeFile === draftFile) project.setSavedContent(next)
+          scheduleDraftWrite()
           break
         }
+        case 'status':
+          set({ status: event.text })
+          break
+        case 'done':
+          set({ drafting: false, requestId: null, status: null })
+          void finalizeDraft(true)
+          break
         case 'error':
-          set({ drafting: false, requestId: null, error: event.message })
+          set({ drafting: false, requestId: null, status: null, error: event.message })
+          // Keep the partial prose on disk; the milestone commit can wait for
+          // the author's next explicit save.
+          void finalizeDraft(false)
           break
         case 'usage':
           break
@@ -116,7 +185,7 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
     await project.snapshotActiveChapter()
 
     const requestId = crypto.randomUUID()
-    set({ drafting: true, requestId, draftFile: activeFile, error: null })
+    set({ drafting: true, requestId, draftFile: activeFile, draftContent: '', error: null })
 
     const result = await window.pandora.invoke('draft:start', {
       requestId,
@@ -129,11 +198,12 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
       conversationId: chat.conversationId
     })
     if (result.ok) {
-      // Buffer now reflects the on-disk file (frontmatter has ai-draft status).
+      // Draft text starts from the on-disk file (frontmatter has ai-draft status).
+      set({ draftContent: result.data.content })
       project.applyNovelState(result.data.novel)
       project.setSavedContent(result.data.content)
     } else {
-      set({ drafting: false, requestId: null, error: result.error.message })
+      set({ drafting: false, requestId: null, draftFile: null, error: result.error.message })
     }
   },
 
@@ -141,12 +211,7 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
     const { requestId } = get()
     if (!requestId) return
     await window.pandora.invoke('chat:cancel', { requestId })
-    set({ drafting: false, requestId: null })
-    const project = useProjectStore.getState()
-    const { novel, activeFile } = project
-    await project.saveActiveChapter()
-    if (novel && activeFile) {
-      await window.pandora.invoke('draft:finish', { novelDir: novel.dir, chapterFile: activeFile })
-    }
+    set({ drafting: false, requestId: null, status: null })
+    await finalizeDraft(true)
   }
 }))

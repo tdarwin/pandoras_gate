@@ -172,27 +172,36 @@ export async function renameChapter(
   novelDir: string,
   file: string,
   newTitle: string
-): Promise<NovelState> {
+): Promise<{ novel: NovelState; file: string }> {
   const manifest = await readNovelManifest(novelDir)
   const entry = manifest.chapters.find((c) => c.file === file)
   if (!entry) throw new Error(`Chapter not in manifest: ${file}`)
 
   // Keep the numeric prefix, refresh the slug.
   const prefix = basename(file).slice(0, 3)
-  const newFile = `chapters/${prefix}-${slugify(newTitle)}.md`
+  let newFile = `chapters/${prefix}-${slugify(newTitle)}.md`
 
   const raw = await readFile(join(novelDir, file), 'utf8')
   const doc = parseFrontmatter(raw)
   doc.data['title'] = newTitle
   await writeFile(join(novelDir, file), serializeFrontmatter(doc), 'utf8')
 
-  if (newFile !== file && !(await exists(join(novelDir, newFile)))) {
+  if (newFile !== file) {
+    // Titles repeat in fiction ("Interlude") — never silently keep the old
+    // slug or land on another chapter's file. Pick a free name instead.
+    let attempt = 2
+    while (await exists(join(novelDir, newFile))) {
+      newFile = `chapters/${prefix}-${slugify(newTitle)}-${attempt}.md`
+      attempt += 1
+    }
     await rename(join(novelDir, file), join(novelDir, newFile))
     entry.file = newFile
   }
   entry.title = newTitle
   await writeNovelManifest(novelDir, manifest)
-  return { dir: novelDir, manifest }
+  // The new path is returned explicitly: resolving it client-side by title
+  // used to retarget the open buffer at ANOTHER chapter with the same title.
+  return { novel: { dir: novelDir, manifest }, file: entry.file }
 }
 
 /** Reorders chapters to match the given file list (must be a permutation). */

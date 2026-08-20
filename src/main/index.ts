@@ -6,7 +6,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
 import { refreshAppMenu } from './menu'
 import { legacyUserDataDir, migrateLegacyStatePaths } from './store'
-import { flushAllAutocommits } from './git/service'
+import { flushAllAutocommits, awaitIdle } from './git/service'
+import { requestRendererFlush, requestAllRendererFlushes } from './flush'
 import { initTelemetry, shutdownTelemetry } from './telemetry'
 import { logInfo, logWarn, logError } from './log'
 import { backfillModelMetadata } from './llm/local'
@@ -43,6 +44,8 @@ function migrateLegacyUserData(): void {
   }
 }
 
+let quitFlushed = false
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1440,
@@ -65,6 +68,23 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  // ⌘W (role: close) tears the renderer down with up to 5 s of typing only
+  // in its buffer — ask it to save first, then close for real. During quit
+  // the flush already ran, and preventing THIS close would cancel the whole
+  // quit on macOS, leaving a headless app in the dock.
+  let closeFlushed = false
+  mainWindow.on('close', (event) => {
+    if (quitFlushed || closeFlushed) return
+    event.preventDefault()
+    void (async () => {
+      await requestRendererFlush(mainWindow)
+      await flushAllAutocommits()
+      await awaitIdle()
+      closeFlushed = true
+      if (!mainWindow.isDestroyed()) mainWindow.close()
+    })()
   })
 
   // A crashed renderer must recover visibly instead of leaving a blank window.
@@ -143,11 +163,15 @@ app.on('window-all-closed', () => {
   }
 })
 
-let quitFlushed = false
 app.on('before-quit', (event) => {
   if (quitFlushed) return
   event.preventDefault()
-  void Promise.allSettled([flushAllAutocommits(), shutdownTelemetry()]).finally(() => {
+  void (async () => {
+    // Renderer buffers first — the git flush below can only commit what the
+    // renderer has written to disk.
+    await requestAllRendererFlushes()
+    await Promise.allSettled([flushAllAutocommits().then(() => awaitIdle()), shutdownTelemetry()])
+  })().finally(() => {
     quitFlushed = true
     app.quit()
   })

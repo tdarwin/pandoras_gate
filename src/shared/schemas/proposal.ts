@@ -46,8 +46,12 @@ export const PendingProposalItem = z.object({
   action: z.enum(['create', 'update']),
   newContent: z.string(),
   rationale: z.string(),
-  /** sha256 of the doc content the proposal was generated against ('' for create). */
-  baseHash: z.string()
+  /**
+   * The full doc content the proposal was generated against (null for
+   * create). Kept verbatim so accepting can REBASE the change onto whatever
+   * the file says now instead of overwriting it wholesale.
+   */
+  baseContent: z.string().nullable()
 })
 export type PendingProposalItem = z.infer<typeof PendingProposalItem>
 

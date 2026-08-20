@@ -9,6 +9,7 @@ import {
 import { basename } from 'node:path'
 import * as project from '../project/service'
 import * as gitService from '../git/service'
+import { rendererFlushed } from '../flush'
 import { refreshAppMenu } from '../menu'
 import { readAppState, touchRecentNovel } from '../store'
 import { getProvider, startChat, cancelChat } from '../llm/chat'
@@ -96,6 +97,11 @@ function handle<C extends IpcChannel>(
 }
 
 export function registerIpcHandlers(): void {
+  handle('app:flushed', (_req, event) => {
+    rendererFlushed(event.sender.id)
+    return { ok: true as const }
+  })
+
   // The worker resolves context windows on both the warm-load and the chat
   // path, so recording is driven by the worker rather than by whichever caller
   // happened to trigger the load. The renderer is told as well, because it
@@ -151,9 +157,9 @@ export function registerIpcHandlers(): void {
   })
 
   handle('chapter:rename', async (req) => {
-    const state = await project.renameChapter(req.novelDir, req.file, req.newTitle)
+    const result = await project.renameChapter(req.novelDir, req.file, req.newTitle)
     gitService.scheduleAutocommit(req.novelDir, `chapter renamed: ${req.newTitle}`, ['novel.yaml'])
-    return state
+    return result
   })
 
   handle('chapter:reorder', async (req) => {

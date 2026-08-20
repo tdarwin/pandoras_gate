@@ -38,6 +38,7 @@ export default function Workspace(): React.JSX.Element {
   const snapshotOnBlur = usePrefsStore((s) => s.snapshotOnBlur)
   const snapshotIntervalMinutes = usePrefsStore((s) => s.snapshotIntervalMinutes)
   const openChapter = useProjectStore((s) => s.openChapter)
+  const reloadActiveChapter = useProjectStore((s) => s.reloadActiveChapter)
   const setError = useProjectStore((s) => s.setError)
   const [showHistory, setShowHistory] = useState(false)
   const [showChat, setShowChat] = useState(true)
@@ -61,12 +62,19 @@ export default function Workspace(): React.JSX.Element {
   const refreshProposals = useProposalsStore((s) => s.refresh)
 
   const drafting = useDraftStore((s) => s.drafting)
+  const draftFile = useDraftStore((s) => s.draftFile)
+  const draftStatus = useDraftStore((s) => s.status)
   const draftError = useDraftStore((s) => s.error)
   const startDraft = useDraftStore((s) => s.start)
   const stopDraft = useDraftStore((s) => s.stop)
   const initDraft = useDraftStore((s) => s.init)
 
   const loadForNovel = useChatStore((s) => s.loadForNovel)
+  const chatStreaming = useChatStore((s) => s.streaming)
+
+  // Whether the DRAFT's chapter is the one on screen — most editor chrome
+  // only locks for that case; drafting elsewhere leaves this chapter free.
+  const draftingHere = drafting && draftFile === activeFile
   const initProposals = useProposalsStore((s) => s.init)
   const initProject = useProjectStore((s) => s.init)
 
@@ -81,12 +89,13 @@ export default function Workspace(): React.JSX.Element {
 
   // Crash-safety writes: quiet disk write a few seconds after typing pauses.
   // These do NOT create history entries — snapshots happen on ⌘S, window
-  // blur, and chapter switches.
+  // blur, and chapter switches. (While the AI drafts, the draft store
+  // persists its own text — this buffer never goes dirty.)
   useEffect(() => {
     if (!dirty) return
-    const t = setTimeout(() => void saveActiveChapter(), drafting ? 800 : 5000)
+    const t = setTimeout(() => void saveActiveChapter(), 5000)
     return () => clearTimeout(t)
-  }, [content, dirty, drafting, saveActiveChapter])
+  }, [content, dirty, saveActiveChapter])
 
   // Snapshot when the window loses focus.
   useEffect(() => {
@@ -99,13 +108,13 @@ export default function Workspace(): React.JSX.Element {
   // Optional interval snapshots: no-ops (no commit) when nothing changed.
   // Paused while the AI is drafting, which has its own commit bracketing.
   useEffect(() => {
-    if (snapshotIntervalMinutes <= 0 || drafting || !activeFile) return
+    if (snapshotIntervalMinutes <= 0 || draftingHere || !activeFile) return
     const t = setInterval(
       () => void snapshotActiveChapter(),
       snapshotIntervalMinutes * 60_000
     )
     return () => clearInterval(t)
-  }, [snapshotIntervalMinutes, drafting, activeFile, snapshotActiveChapter])
+  }, [snapshotIntervalMinutes, draftingHere, activeFile, snapshotActiveChapter])
 
   // ⌘S fallback when focus is outside the editor.
   useEffect(() => {
@@ -119,14 +128,19 @@ export default function Workspace(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [snapshotActiveChapter])
 
-  // Auto metadata run: a while after writing settles on a chapter.
+  // Auto metadata run: a while after writing settles on a chapter. Waits out
+  // a streaming chat too — its reply may itself defer a Codex run.
   useEffect(() => {
-    if (!autoCodex || dirty || drafting || !activeFile?.startsWith('chapters/')) return
+    if (!autoCodex || dirty || drafting || chatStreaming || !activeFile?.startsWith('chapters/'))
+      return
     const t = setTimeout(() => void runProposals({ silent: true }), AUTO_METADATA_DELAY_MS)
     return () => clearTimeout(t)
-  }, [autoCodex, dirty, drafting, activeFile, runProposals])
+  }, [autoCodex, dirty, drafting, chatStreaming, activeFile, runProposals])
 
   const activeChapter = novel.manifest.chapters.find((c) => c.file === activeFile)
+  const draftingChapterTitle = drafting
+    ? (novel.manifest.chapters.find((c) => c.file === draftFile)?.title ?? draftFile)
+    : null
   const activeLabel =
     activeChapter?.title ??
     activeFile
@@ -167,6 +181,9 @@ export default function Workspace(): React.JSX.Element {
 
   const markRevised = async (): Promise<void> => {
     if (!activeFile) return
+    // Main rewrites the file from DISK — unsaved typing must reach it first,
+    // or the reload below would discard it.
+    await snapshotActiveChapter()
     const result = await window.pandora.invoke('chapter:setStatus', {
       novelDir: novel.dir,
       file: activeFile,
@@ -174,7 +191,9 @@ export default function Workspace(): React.JSX.Element {
     })
     if (result.ok) {
       applyNovelState(result.data)
-      await openChapter(activeFile)
+      // Reload rather than openChapter: the snapshot-first path would commit
+      // the buffer's OLD frontmatter back over the status main just wrote.
+      await reloadActiveChapter()
     } else {
       setError(result.error.message)
     }
@@ -288,7 +307,7 @@ export default function Workspace(): React.JSX.Element {
                 <span className="max-w-72 truncate text-xs text-ink-faint" title={copyStatus ?? undefined}>
                   {copyStatus ?? (dirty ? 'Editing…' : 'Saved')}
                 </span>
-                {isChapter && !drafting && (
+                {isChapter && !draftingHere && (
                   <>
                     <button
                       onClick={() => setModal('draft')}
@@ -360,14 +379,27 @@ export default function Workspace(): React.JSX.Element {
               <div className="flex shrink-0 items-center justify-between border-b border-indigo-900 bg-indigo-950/50 px-4 py-1.5">
                 <span className="flex items-center gap-2 text-xs text-indigo-200">
                   <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-indigo-400" />
-                  AI is drafting this chapter…
+                  {draftStatus ??
+                    (draftingHere
+                      ? 'AI is drafting this chapter…'
+                      : `AI is drafting “${draftingChapterTitle}”…`)}
                 </span>
-                <button
-                  onClick={() => void stopDraft()}
-                  className="rounded border border-indigo-700 px-2 py-0.5 text-xs text-indigo-200 hover:bg-indigo-900"
-                >
-                  Stop
-                </button>
+                <span className="flex items-center gap-2">
+                  {!draftingHere && draftFile && (
+                    <button
+                      onClick={() => void openChapter(draftFile)}
+                      className="rounded border border-indigo-700 px-2 py-0.5 text-xs text-indigo-200 hover:bg-indigo-900"
+                    >
+                      Show
+                    </button>
+                  )}
+                  <button
+                    onClick={() => void stopDraft()}
+                    className="rounded border border-indigo-700 px-2 py-0.5 text-xs text-indigo-200 hover:bg-indigo-900"
+                  >
+                    Stop
+                  </button>
+                </span>
               </div>
             )}
             {!drafting && activeChapter?.status === 'ai-draft' && (
@@ -390,7 +422,7 @@ export default function Workspace(): React.JSX.Element {
             )}
 
             <div
-              className={`flex min-h-0 flex-1 flex-col overflow-hidden ${drafting ? 'pointer-events-none opacity-95' : ''}`}
+              className={`flex min-h-0 flex-1 flex-col overflow-hidden ${draftingHere ? 'pointer-events-none opacity-95' : ''}`}
             >
               {isYamlFile ? (
                 <PlainEditor
@@ -406,7 +438,7 @@ export default function Workspace(): React.JSX.Element {
                     lockedKeys={isChapter ? ['title', 'status'] : []}
                     onChange={(data) => setContent(serializeFrontmatter({ data, body: doc.body }))}
                   />
-                  <EditorToolbar handle={drafting ? null : editorHandle} />
+                  <EditorToolbar handle={draftingHere ? null : editorHandle} />
                   <div className="min-h-0 flex-1 overflow-hidden">
                     <MarkdownEditor
                       docId={activeFile}
@@ -414,7 +446,8 @@ export default function Workspace(): React.JSX.Element {
                       onChange={(body) =>
                         setContent(serializeFrontmatter({ data: doc.data, body }))
                       }
-                      forceSync={drafting}
+                      forceSync={draftingHere}
+                      editable={!draftingHere}
                       onSave={() => void snapshotActiveChapter()}
                       onReady={setEditorHandle}
                     />

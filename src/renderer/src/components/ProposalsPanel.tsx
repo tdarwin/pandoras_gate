@@ -42,7 +42,14 @@ function ItemCard({
 
   const act = async (resolution: 'accept' | 'reject', content?: string): Promise<void> => {
     setBusy(true)
-    await resolve(proposalId, item.path, resolution, content)
+    // Edited accepts carry the hash of the version the edit was made against.
+    await resolve(
+      proposalId,
+      item.path,
+      resolution,
+      content,
+      content !== undefined ? item.currentHash : undefined
+    )
     setBusy(false)
   }
 
@@ -64,9 +71,9 @@ function ItemCard({
             {item.conflict && (
               <span
                 className="rounded-full bg-amber-950 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
-                title="You edited this file after the suggestion was generated — the comparison below is against your latest version."
+                title="The file changed since this suggestion was made and the paragraph it edits no longer lines up. Open it with Review in editor to apply it by hand, edit the suggestion, or reject it."
               >
-                File changed
+                Needs review — file changed
               </span>
             )}
           </div>
@@ -138,7 +145,12 @@ function ItemCard({
               </button>
             )}
             <button
-              disabled={busy}
+              disabled={busy || item.conflict}
+              title={
+                item.conflict
+                  ? 'The file changed underneath this suggestion — use Review in editor, Edit, or Reject.'
+                  : undefined
+              }
               onClick={() => void act('accept')}
               className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
             >
@@ -158,6 +170,7 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
   const enterReview = useProposalsStore((s) => s.enterReview)
   const error = useProposalsStore((s) => s.error)
   const [busyAll, setBusyAll] = useState(false)
+  const [acceptAllReport, setAcceptAllReport] = useState<string | null>(null)
 
   useEffect(() => {
     void refresh()
@@ -167,12 +180,28 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
 
   const acceptAll = async (): Promise<void> => {
     setBusyAll(true)
+    setAcceptAllReport(null)
+    let applied = 0
+    let skipped = 0
     for (const p of proposals) {
       for (const item of p.items) {
-        await resolve(p.id, item.path, 'accept')
+        // Conflicted items need the author's eyes — never bulk-overwrite.
+        if (item.conflict) {
+          skipped += 1
+          continue
+        }
+        // resolve() re-checks against the live file, so an item that became
+        // conflicting after an earlier accept fails safe and counts as skipped.
+        if (await resolve(p.id, item.path, 'accept')) applied += 1
+        else skipped += 1
       }
     }
     setBusyAll(false)
+    setAcceptAllReport(
+      skipped === 0
+        ? `Applied ${applied}.`
+        : `Applied ${applied}; skipped ${skipped} that need review.`
+    )
   }
 
   return (
@@ -206,6 +235,11 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {acceptAllReport && (
+            <div className="mb-3 rounded-lg border border-line bg-raised px-3 py-2 text-xs text-ink-muted">
+              {acceptAllReport}
+            </div>
+          )}
           {error && (
             <div className="mb-3 rounded-lg border border-red-900 bg-red-950/60 px-3 py-2 text-xs text-red-300">
               {error}
@@ -231,7 +265,7 @@ export default function ProposalsPanel({ onClose }: { onClose: () => void }): Re
                       {...(item.path.endsWith('.md')
                         ? {
                             onReview: () => {
-                              enterReview(p.id, item.path)
+                              void enterReview(p.id, item.path)
                               onClose()
                             }
                           }

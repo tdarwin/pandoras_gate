@@ -165,7 +165,13 @@ everything.
 
 **llm-worker** (`src/llm-worker/`) runs local GGUF inference in an Electron
 `utilityProcess`, so model loading and prompt evaluation can never stall the UI, and a
-crash (bad GGUF, OOM) takes down only that process.
+crash (bad GGUF, OOM) takes down only that process. The worker executes generations and
+model loads **strictly one at a time** (`src/llm-worker/queue.ts`): one resident model
+and one memory pool mean a second concurrent context would be sized against whatever the
+first one left. Anything that would generate mid-chat — the agent's `update_codex`,
+`edit_chapter`, `generate_outline` tools — is instead *deferred*: the tool queues the run
+and `startChat` executes it after the reply finishes, reporting progress to the proposals
+UI via `pipeline:run` / `pipeline:status` events.
 
 ### Where things live
 
@@ -181,6 +187,9 @@ src/main/
 ├── draft/          # AI first-draft and outline generation
 ├── publish/        # per-platform clipboard profiles (RoyalRoad, Patreon)
 ├── git/            # isomorphic-git autocommit, history, diff, restore, sync
+│                   #   repo mutations serialize through a per-dir lock; per-file
+│                   #   history is served from a derived index cache in
+│                   #   .git/pandora/history-index.json (rebuilt if missing)
 ├── store.ts        # app state (recents, prefs, model paths)
 ├── secrets.ts      # API keys via Electron safeStorage — never written in plaintext
 ├── menu.ts         # native application menu
@@ -228,7 +237,16 @@ Two separate places, and the distinction matters:
 
 - **The novel** — a user-chosen directory of markdown and YAML, laid out as described in
   the [README](README.md#novel-folder-format). Source of truth for everything about the
-  story. Each novel gets a hidden git repo; every save auto-commits.
+  story. Each novel gets a hidden git repo; every save auto-commits. On window close and
+  quit, main runs a bounded save handshake (`app:flushRequest` → renderer snapshot →
+  `app:flushed`, `src/main/flush.ts`) so the last few seconds of typing always reach disk
+  and history.
+
+  AI edits queue as **proposals** (`.pandora/proposals/`), each storing the full document
+  it was generated against (`baseContent`). Accepting *rebases* the change onto the
+  current file (`rebaseProposal` in `src/main/metadata/pipeline.ts`) rather than
+  overwriting it — items that no longer line up surface as conflicts the author resolves
+  in review.
 - **App state** — `~/Library/Application Support/pandoras-gate/` on macOS
   (`%APPDATA%/pandoras-gate` on Windows): `app-state.json` (recents, preferences, model
   registry), `secrets.json` (encrypted via `safeStorage`), `models/`, `logs/`.

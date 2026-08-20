@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, rm, readFile, access } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -148,12 +148,47 @@ describe('chapters', () => {
   it('renames a chapter: file, frontmatter, and manifest stay in sync', async () => {
     const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
     await createChapter(novelDir, 'Old Title')
-    const state = await renameChapter(novelDir, 'chapters/001-old-title.md', 'New Dawn')
+    const result = await renameChapter(novelDir, 'chapters/001-old-title.md', 'New Dawn')
 
-    expect(state.manifest.chapters[0]!.file).toBe('chapters/001-new-dawn.md')
-    expect(state.manifest.chapters[0]!.title).toBe('New Dawn')
+    // The new path is returned explicitly for the renderer to re-point at.
+    expect(result.file).toBe('chapters/001-new-dawn.md')
+    expect(result.novel.manifest.chapters[0]!.file).toBe('chapters/001-new-dawn.md')
+    expect(result.novel.manifest.chapters[0]!.title).toBe('New Dawn')
     const raw = await readChapter(novelDir, 'chapters/001-new-dawn.md')
     expect(raw).toContain('title: New Dawn')
+  })
+
+  it('renaming to a title another chapter holds keeps both files distinct', async () => {
+    const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
+    await createChapter(novelDir, 'Interlude')
+    await createChapter(novelDir, 'Chapter Seven')
+    await writeChapter(
+      novelDir,
+      'chapters/002-chapter-seven.md',
+      '---\ntitle: Chapter Seven\nstatus: draft\n---\nSeven prose.\n'
+    )
+
+    const result = await renameChapter(novelDir, 'chapters/002-chapter-seven.md', 'Interlude')
+    // Its own prefix keeps the slug distinct — never chapter one's file.
+    expect(result.file).toBe('chapters/002-interlude.md')
+    expect(result.novel.manifest.chapters.map((c) => c.file)).toEqual([
+      'chapters/001-interlude.md',
+      'chapters/002-interlude.md'
+    ])
+    // Chapter one's content is untouched; seven's prose lives at the new path.
+    expect(await readChapter(novelDir, 'chapters/002-interlude.md')).toContain('Seven prose.')
+  })
+
+  it('rename routes around a file already sitting at the target path', async () => {
+    const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
+    await createChapter(novelDir, 'Chapter One')
+    // A hand-dropped file (users may edit the folder directly) claims the slug.
+    await writeFile(join(novelDir, 'chapters/001-interlude.md'), 'stray file\n', 'utf8')
+
+    const result = await renameChapter(novelDir, 'chapters/001-chapter-one.md', 'Interlude')
+    expect(result.file).toBe('chapters/001-interlude-2.md')
+    // The stray file is untouched.
+    expect(await readFile(join(novelDir, 'chapters/001-interlude.md'), 'utf8')).toBe('stray file\n')
   })
 
   it('reorders chapters and rejects non-permutations', async () => {

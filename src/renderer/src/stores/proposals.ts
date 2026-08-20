@@ -2,14 +2,18 @@ import { create } from 'zustand'
 import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
 import { useProjectStore } from './project'
 import { useChatStore } from './chat'
+import { useDraftStore } from './draft'
 
 export interface ReviewItem {
   path: string
   action: 'create' | 'update'
+  /** Proposal content rebased onto the current file (when it still applies). */
   newContent: string
   rationale: string
-  baseHash: string
   currentContent: string
+  /** sha256 of currentContent — passed back when accepting edited content. */
+  currentHash: string
+  /** The change no longer lines up with the current file; Accept is disabled. */
   conflict: boolean
 }
 
@@ -31,6 +35,8 @@ export interface InlineReview {
   path: string
   /** Current on-disk file content (raw, incl. frontmatter). */
   originalRaw: string
+  /** sha256 of originalRaw, echoed to main so a moved file is refused. */
+  currentHash: string
   /** Proposed file content (raw, incl. frontmatter). */
   proposedRaw: string
   /** Live body markdown — starts as the proposal's body, tracks edits/rejects. */
@@ -42,7 +48,12 @@ export interface InlineReview {
 
 interface ProposalsStore {
   proposals: ReviewProposal[]
+  /** True while any pipeline run is in flight (manual or chat-deferred). */
   running: boolean
+  /** A manual run (Update Codex / Outline / Review buttons) is awaiting its invoke. */
+  manualRunning: boolean
+  /** Chat-deferred generation batches currently executing in main. */
+  agentRuns: number
   /** Live phase text while a pipeline run is in flight. */
   runningStatus: string | null
   lastRunStatus: string | null
@@ -51,7 +62,7 @@ interface ProposalsStore {
 
   init: () => void
   pendingCount: () => number
-  enterReview: (proposalId: string, path: string) => void
+  enterReview: (proposalId: string, path: string) => Promise<void>
   updateReviewBody: (body: string) => void
   setReviewFmChoice: (choice: 'proposed' | 'current') => void
   applyReview: () => Promise<void>
@@ -66,12 +77,21 @@ interface ProposalsStore {
     scope: 'chapter' | 'novel',
     guidance?: string
   ) => Promise<void>
+  /** Resolves one item; false when main refused (conflict, stale review). */
   resolve: (
     proposalId: string,
     path: string,
     resolution: 'accept' | 'reject',
-    editedContent?: string
-  ) => Promise<void>
+    editedContent?: string,
+    expectedCurrentHash?: string
+  ) => Promise<boolean>
+}
+
+/** Accepting into the chapter an AI draft is streaming into would race the
+ *  draft's writer — the author stops the draft first. */
+function draftBlocks(path: string): boolean {
+  const draft = useDraftStore.getState()
+  return draft.drafting && draft.draftFile === path
 }
 
 let subscribed = false
@@ -79,6 +99,8 @@ let subscribed = false
 export const useProposalsStore = create<ProposalsStore>((set, get) => ({
   proposals: [],
   running: false,
+  manualRunning: false,
+  agentRuns: 0,
   runningStatus: null,
   lastRunStatus: null,
   error: null,
@@ -93,9 +115,42 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       const { text } = raw as { text: string }
       set({ runningStatus: text })
     })
+    // Chat-deferred generations (update_codex etc. run after the reply).
+    window.pandora.on('pipeline:run', (raw) => {
+      const payload = raw as { phase: 'started' | 'finished'; label: string; result?: string; error?: string }
+      if (payload.phase === 'started') {
+        set((s) => ({
+          agentRuns: s.agentRuns + 1,
+          running: true,
+          runningStatus: payload.label,
+          lastRunStatus: null
+        }))
+      } else {
+        set((s) => {
+          const agentRuns = Math.max(0, s.agentRuns - 1)
+          const running = agentRuns > 0 || s.manualRunning
+          return {
+            agentRuns,
+            running,
+            runningStatus: running ? s.runningStatus : null,
+            lastRunStatus: payload.result ?? s.lastRunStatus,
+            ...(payload.error !== undefined ? { error: payload.error } : {})
+          }
+        })
+        void get().refresh()
+      }
+    })
   },
 
-  enterReview: (proposalId, path) => {
+  enterReview: async (proposalId, path) => {
+    if (draftBlocks(path)) {
+      set({ error: 'The AI is drafting into this chapter — stop the draft first.' })
+      return
+    }
+    // Flush the buffer and re-read so the review diffs against what is
+    // actually on disk, not a stale refresh.
+    await useProjectStore.getState().saveActiveChapter()
+    await get().refresh()
     const proposal = get().proposals.find((p) => p.id === proposalId)
     const item = proposal?.items.find((i) => i.path === path)
     if (!proposal || !item) return
@@ -104,6 +159,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
         proposalId,
         path,
         originalRaw: item.currentContent,
+        currentHash: item.currentHash,
         proposedRaw: item.newContent,
         bodyBuffer: parseFrontmatter(item.newContent).body,
         fmChoice: 'proposed',
@@ -128,7 +184,14 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
         ? parseFrontmatter(review.originalRaw).data
         : parseFrontmatter(review.proposedRaw).data
     const content = serializeFrontmatter({ data, body: review.bodyBuffer })
-    await get().resolve(review.proposalId, review.path, 'accept', content)
+    const ok = await get().resolve(
+      review.proposalId,
+      review.path,
+      'accept',
+      content,
+      review.currentHash
+    )
+    if (!ok) return
     set({ review: null })
     const project = useProjectStore.getState()
     if (/^(chapters|metadata|outlines)\//.test(review.path)) {
@@ -171,7 +234,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
 
     // Snapshot first so chapter edits and metadata changes stay separate commits.
     await project.snapshotActiveChapter()
-    set({ running: true, error: null, lastRunStatus: null })
+    set({ manualRunning: true, running: true, error: null, lastRunStatus: null })
     const result = await window.pandora.invoke('proposals:run', {
       novelDir: novel.dir,
       chapterFile: file,
@@ -179,8 +242,9 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       modelId: model.id
     })
     if (result.ok) {
-      set({
-        running: false,
+      set((s) => ({
+        manualRunning: false,
+        running: s.agentRuns > 0,
         runningStatus: null,
         lastRunStatus:
           result.data.status === 'ran'
@@ -188,10 +252,10 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
             : result.data.status === 'no-changes'
               ? 'Codex already up to date'
               : null
-      })
+      }))
       await get().refresh()
     } else {
-      set({ running: false, runningStatus: null, ...(opts?.silent ? {} : { error: result.error.message }) })
+      set((s) => ({ manualRunning: false, running: s.agentRuns > 0, runningStatus: null, ...(opts?.silent ? {} : { error: result.error.message }) }))
     }
   },
 
@@ -208,7 +272,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     if (scope === 'chapter' && !project.activeFile?.startsWith('chapters/')) return
 
     await project.snapshotActiveChapter()
-    set({ running: true, error: null, lastRunStatus: null })
+    set({ manualRunning: true, running: true, error: null, lastRunStatus: null })
     const result = await window.pandora.invoke('outlines:generate', {
       novelDir: novel.dir,
       scope,
@@ -218,15 +282,16 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       modelId: model.id
     })
     if (result.ok) {
-      set({
-        running: false,
+      set((s) => ({
+        manualRunning: false,
+        running: s.agentRuns > 0,
         runningStatus: null,
         lastRunStatus:
           result.data.status === 'ran' ? 'Outline ready for review' : 'No outline changes suggested'
-      })
+      }))
       await get().refresh()
     } else {
-      set({ running: false, runningStatus: null, error: result.error.message })
+      set((s) => ({ manualRunning: false, running: s.agentRuns > 0, runningStatus: null, error: result.error.message }))
     }
   },
 
@@ -246,7 +311,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     }
 
     await project.snapshotActiveChapter()
-    set({ running: true, error: null, lastRunStatus: null })
+    set({ manualRunning: true, running: true, error: null, lastRunStatus: null })
     const result = await window.pandora.invoke('review:run', {
       novelDir: novel.dir,
       scope,
@@ -258,8 +323,9 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     })
     if (result.ok) {
       const isReport = reviewType === 'developmental' || reviewType === 'fact-check'
-      set({
-        running: false,
+      set((s) => ({
+        manualRunning: false,
+        running: s.agentRuns > 0,
         runningStatus: null,
         lastRunStatus:
           result.data.status === 'ran'
@@ -267,23 +333,30 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
               ? 'Report ready for review'
               : `${result.data.itemCount} chapter${result.data.itemCount === 1 ? '' : 's'} with edits`
             : 'Nothing to change'
-      })
+      }))
       await get().refresh()
     } else {
-      set({ running: false, runningStatus: null, error: result.error.message })
+      set((s) => ({ manualRunning: false, running: s.agentRuns > 0, runningStatus: null, error: result.error.message }))
     }
   },
 
-  resolve: async (proposalId, path, resolution, editedContent) => {
+  resolve: async (proposalId, path, resolution, editedContent, expectedCurrentHash) => {
     const project = useProjectStore.getState()
     const novel = project.novel
-    if (!novel) return
+    if (!novel) return false
+    if (resolution === 'accept' && draftBlocks(path)) {
+      set({ error: 'The AI is drafting into this chapter — stop the draft first.' })
+      return false
+    }
+    // Unsaved typing must reach disk before main rebases against the file.
+    if (resolution === 'accept') await project.saveActiveChapter()
     const result = await window.pandora.invoke('proposals:resolve', {
       novelDir: novel.dir,
       proposalId,
       path,
       resolution,
-      ...(editedContent !== undefined ? { editedContent } : {})
+      ...(editedContent !== undefined ? { editedContent } : {}),
+      ...(expectedCurrentHash !== undefined ? { expectedCurrentHash } : {})
     })
     if (result.ok) {
       // Accepting an edit to the open document must refresh the editor buffer.
@@ -292,8 +365,10 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
         if (read.ok) project.setSavedContent(read.data.content)
       }
       await get().refresh()
-    } else {
-      set({ error: result.error.message })
+      return true
     }
+    set({ error: result.error.message })
+    await get().refresh()
+    return false
   }
 }))

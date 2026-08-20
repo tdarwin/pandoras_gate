@@ -19,10 +19,15 @@ interface ProjectStore {
   applyNovelState: (novel: NovelState) => void
   /** Replace the buffer with on-disk content (not dirty). */
   setSavedContent: (content: string) => void
-  /** Append streamed text to the buffer (dirty; autosave picks it up). */
-  appendContent: (text: string) => void
-  closeNovel: () => void
+  /** Snapshots the open buffer, then clears the workspace. */
+  closeNovel: () => Promise<void>
   openChapter: (file: string) => Promise<void>
+  /**
+   * Re-read the ACTIVE file after main rewrote it (restore, status change).
+   * Unlike openChapter this never snapshots first — snapshotting would write
+   * the stale buffer straight over main's change.
+   */
+  reloadActiveChapter: () => Promise<void>
   setContent: (content: string) => void
   /** Quiet write to disk (crash safety) — no history entry. */
   saveActiveChapter: () => Promise<void>
@@ -60,9 +65,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   setSavedContent: (content) => set({ content, dirty: false }),
 
-  appendContent: (text) => set((s) => ({ content: s.content + text, dirty: true })),
 
-  closeNovel: () => set({ novel: null, activeFile: null, content: '', dirty: false }),
+  closeNovel: async () => {
+    // Every caller must get the snapshot — the sidebar ✕ used to skip it and
+    // dropped up to 5 s of typing.
+    await get().snapshotActiveChapter()
+    set({ novel: null, activeFile: null, content: '', dirty: false })
+  },
 
   openChapter: async (file) => {
     const { novel, activeFile } = get()
@@ -75,6 +84,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     } else {
       set({ lastError: result.error.message })
     }
+  },
+
+  reloadActiveChapter: async () => {
+    const { novel, activeFile } = get()
+    if (!novel || !activeFile) return
+    const result = await window.pandora.invoke('chapter:read', { novelDir: novel.dir, file: activeFile })
+    if (result.ok) set({ content: result.data.content, dirty: false })
+    else set({ lastError: result.error.message })
   },
 
   setContent: (content) => set({ content, dirty: true }),
@@ -128,10 +145,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       newTitle
     })
     if (result.ok) {
-      set({ novel: result.data })
-      if (activeFile === file) {
-        const renamed = result.data.manifest.chapters.find((c) => c.title === newTitle)
-        if (renamed && renamed.file !== file) set({ activeFile: renamed.file })
+      set({ novel: result.data.novel })
+      // Re-point by the RETURNED path — matching on title used to grab the
+      // first chapter with that title and overwrite it on the next save.
+      if (activeFile === file && result.data.file !== file) {
+        set({ activeFile: result.data.file })
       }
     } else {
       set({ lastError: result.error.message })
