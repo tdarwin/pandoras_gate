@@ -11,6 +11,7 @@ import * as project from '../project/service'
 import * as gitService from '../git/service'
 import { rendererFlushed } from '../flush'
 import { isOpenableExternalUrl } from '../navigation'
+import { setNovelAssetRoot } from '../assets/scheme'
 import { refreshAppMenu } from '../menu'
 import { readAppState, touchRecentNovel } from '../store'
 import { getProvider, startChat, cancelChat } from '../llm/chat'
@@ -147,6 +148,7 @@ export function registerIpcHandlers(): void {
   handle('project:createNovel', async (req) => {
     const state = await project.createNovel(req)
     await touchRecentNovel(state.dir)
+    setNovelAssetRoot(state.dir)
     await gitService.commitAll(state.dir, 'novel created')
     return state
   })
@@ -154,6 +156,7 @@ export function registerIpcHandlers(): void {
   handle('project:openNovel', async (req) => {
     const state = await project.openNovel(req.dir)
     await touchRecentNovel(state.dir)
+    setNovelAssetRoot(state.dir)
     // Adopt pre-existing novels (or repos from older versions) transparently.
     await gitService.ensureRepo(state.dir)
     return state

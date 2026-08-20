@@ -2,6 +2,8 @@ import { app, shell, BrowserWindow, nativeImage } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { isAllowedNavigation, isOpenableExternalUrl } from './navigation'
+import { registerAssetSchemePrivileges, registerAssetProtocol } from './assets/scheme'
+import { themesDir } from './themes/service'
 import appIcon from '../../resources/icon.png?asset'
 import { existsSync, renameSync } from 'node:fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -45,6 +47,9 @@ function migrateLegacyUserData(): void {
     logError('app', 'user data migration failed', err)
   }
 }
+
+// Electron requires scheme privileges before the ready event fires.
+registerAssetSchemePrivileges()
 
 let quitFlushed = false
 
@@ -149,6 +154,7 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  registerAssetProtocol(themesDir())
   registerIpcHandlers()
   void refreshAppMenu()
   createWindow()
