@@ -7,6 +7,9 @@ import {
 } from 'prosemirror-markdown'
 import type { Node as PMNode, Schema } from '@tiptap/pm/model'
 import { underlineTags } from '@shared/markdownUnderline'
+import { styledBlockFences } from '@shared/markdownStyledBlock'
+import { fontSpans } from '@shared/markdownFontSpan'
+import { serializeAttrs } from '@shared/markdownAttrs'
 
 /**
  * Markdown ⇄ ProseMirror bridge bound to the TipTap schema. Markdown stays
@@ -20,11 +23,14 @@ import { underlineTags } from '@shared/markdownUnderline'
  */
 
 /** CommonMark + GFM strikethrough and pipe tables; raw HTML is treated as
- * literal text, except <u>…</u> which round-trips the underline mark
- * (shared dialect — see @shared/markdownUnderline). */
+ * literal text, except <u>…</u> which round-trips the underline mark, plus
+ * the Pandora dialect: `::: {…}` styled blocks and `[text]{font="…"}` spans
+ * (shared rules — the publisher consumes the same dialect). */
 const tokenizer = MarkdownIt('commonmark', { html: false })
   .enable(['strikethrough', 'table'])
   .use(underlineTags)
+  .use(styledBlockFences)
+  .use(fontSpans)
 
 // ProseMirror table cells hold block content, but markdown-it emits cell
 // text as bare inline tokens — wrap each cell in a paragraph pair so the
@@ -77,10 +83,20 @@ function buildParser(schema: Schema): MarkdownParser {
     tr: { block: 'tableRow' },
     th: { block: 'tableHeader' },
     td: { block: 'tableCell' },
+    styled_block: {
+      block: 'styledBlock',
+      getAttrs: (tok) => ({
+        align: tok.attrGet('align'),
+        bg: tok.attrGet('bg'),
+        font: tok.attrGet('font'),
+        extra: tok.attrGet('extra')
+      })
+    },
     em: { mark: 'italic' },
     strong: { mark: 'bold' },
     s: { mark: 'strike' },
     u: { mark: 'underline' },
+    pandora_font: { mark: 'font', getAttrs: (tok) => ({ family: tok.attrGet('font') }) },
     link: { mark: 'link', getAttrs: (tok) => ({ href: tok.attrGet('href') }) },
     code_inline: { mark: 'code', noCloseToken: true }
   })
@@ -92,12 +108,13 @@ function buildParser(schema: Schema): MarkdownParser {
  * we pin house style ("-" bullets). */
 const d = defaultMarkdownSerializer
 
-/** Serializer-state internals the table capture borrows (stable at runtime,
- * absent from the public typings). */
+/** Serializer-state internals the table capture and the styled-block fence
+ * borrow (stable at runtime, absent from the public typings). */
 interface StateInternals {
   out: string
   delim: string
   closed: PMNode | null
+  flushClose(size: number): void
 }
 
 /**
@@ -163,6 +180,21 @@ const serializer = new MarkdownSerializer(
     paragraph: d.nodes.paragraph!,
     image: d.nodes.image!,
     hardBreak: d.nodes.hard_break!,
+    styledBlock(state, node) {
+      const attrs = serializeAttrs({
+        align: node.attrs.align ?? null,
+        bg: node.attrs.bg ?? null,
+        font: node.attrs.font ?? null,
+        extra: node.attrs.extra ?? null
+      })
+      state.write(`::: {${attrs}}\n`)
+      state.renderContent(node)
+      // A single newline before the closer — the default block separation
+      // would put a blank line inside the fence and break byte-stability.
+      ;(state as unknown as MarkdownSerializerState & StateInternals).flushClose(1)
+      state.write(':::')
+      state.closeBlock(node)
+    },
     // GFM pipe table: first row serves as the header row (GFM requires one).
     // Rows and cells are rendered here wholesale, never via own handlers.
     table(state, node) {
@@ -193,7 +225,17 @@ const serializer = new MarkdownSerializer(
     code: d.marks.code!,
     link: d.marks.link!,
     strike: { open: '~~', close: '~~', mixable: true, expelEnclosingWhitespace: true },
-    underline: { open: '<u>', close: '</u>', mixable: true, expelEnclosingWhitespace: true }
+    underline: { open: '<u>', close: '</u>', mixable: true, expelEnclosingWhitespace: true },
+    font: {
+      open: '[',
+      close(_state, mark) {
+        return `]{font="${String(mark.attrs.family ?? '')}"}`
+      },
+      // Outermost, always: `[*x*]{font="F"}` round-trips; `*[x]{…}*` would
+      // re-parse with the span inside the emphasis and drift.
+      mixable: false,
+      expelEnclosingWhitespace: true
+    }
   }
 )
 

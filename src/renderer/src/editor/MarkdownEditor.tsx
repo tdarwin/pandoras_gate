@@ -4,6 +4,7 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import { baseExtensions } from './extensions'
 import { docToMarkdown, markdownToDoc } from './markdown'
 import { TrackChanges } from './track-changes'
+import { ImagePaste } from './image-paste'
 
 /** Style commands the toolbar can drive without knowing the editor library. */
 export interface EditorHandle {
@@ -28,10 +29,30 @@ export interface EditorHandle {
   deleteRow: () => void
   deleteColumn: () => void
   deleteTable: () => void
+  /** Align the current block(s); null = default left. */
+  setBlockAlign: (align: 'center' | 'right' | null) => void
+  /** Tint the current block(s) — a named tint or #hex; null clears. */
+  setBlockBg: (bg: string | null) => void
+  /** Font for the current block(s); null = the theme font. */
+  setBlockFont: (font: string | null) => void
+  /** Font for the selected text; null removes it. */
+  setSpanFont: (family: string | null) => void
+  /** File-picker flow: imports into assets/ and inserts at the cursor. */
+  insertImage: () => void
+  /** Alt text for the selected image. */
+  setImageAlt: (alt: string) => void
   /** Whether a mark/node is active at the selection (toolbar highlighting). */
   isActive: (name: string, attrs?: Record<string, unknown>) => boolean
+  /** Current attrs of a mark/node at the selection (toolbar values). */
+  getAttributes: (name: string) => Record<string, unknown>
   /** Fires on every document/selection change; returns an unsubscribe. */
   subscribe: (cb: () => void) => () => void
+}
+
+/** Asset-import callbacks the workspace wires to main (null = no novel). */
+export interface ImageImporter {
+  fromDialog: () => Promise<{ rel: string } | null>
+  fromFile: (file: File) => Promise<{ rel: string } | null>
 }
 
 interface MarkdownEditorProps {
@@ -56,6 +77,8 @@ interface MarkdownEditorProps {
    * body — the difference renders as tracked changes with ✓/✕ per chunk.
    */
   reviewOriginal?: string
+  /** Image import into the novel's assets (toolbar, paste, drop). */
+  importImage?: ImageImporter
 }
 
 /** During streamed drafts, re-render the doc at most this often. */
@@ -75,7 +98,8 @@ export default function MarkdownEditor({
   editable = true,
   onSave,
   onReady,
-  reviewOriginal
+  reviewOriginal,
+  importImage
 }: MarkdownEditorProps): React.JSX.Element {
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
@@ -83,6 +107,8 @@ export default function MarkdownEditor({
   onSaveRef.current = onSave
   const onReadyRef = useRef(onReady)
   onReadyRef.current = onReady
+  const importImageRef = useRef(importImage)
+  importImageRef.current = importImage
   /** The markdown the current editor doc corresponds to. */
   const lastValueRef = useRef(value)
   const valueRef = useRef(value)
@@ -117,6 +143,9 @@ export default function MarkdownEditor({
       extensions: [
         ...baseExtensions(),
         saveShortcut,
+        ImagePaste.configure({
+          onImportImage: (file) => importImageRef.current?.fromFile(file) ?? Promise.resolve(null)
+        }),
         ...(reviewOriginal !== undefined
           ? [TrackChanges.configure({ original: reviewOriginal })]
           : [])
@@ -170,7 +199,25 @@ export default function MarkdownEditor({
       deleteRow: () => editor.chain().focus().deleteRow().run(),
       deleteColumn: () => editor.chain().focus().deleteColumn().run(),
       deleteTable: () => editor.chain().focus().deleteTable().run(),
+      setBlockAlign: (align) => editor.chain().focus().setBlockAlign(align).run(),
+      setBlockBg: (bg) => editor.chain().focus().setBlockBg(bg).run(),
+      setBlockFont: (font) => editor.chain().focus().setBlockFont(font).run(),
+      setSpanFont: (family) => {
+        if (family === null) editor.chain().focus().unsetFontSpan().run()
+        else editor.chain().focus().setFontSpan(family).run()
+      },
+      insertImage: () => {
+        void importImageRef.current?.fromDialog().then((result) => {
+          if (!result || editor.isDestroyed) return
+          const node = editor.schema.nodes.image!.create({ src: result.rel })
+          editor.view.dispatch(editor.state.tr.replaceSelectionWith(node))
+          editor.commands.focus()
+        })
+      },
+      setImageAlt: (alt) =>
+        editor.chain().focus().updateAttributes('image', { alt: alt || null }).run(),
       isActive: (name, attrs) => (attrs ? editor.isActive(name, attrs) : editor.isActive(name)),
+      getAttributes: (name) => editor.getAttributes(name),
       subscribe: (cb) => {
         editor.on('transaction', cb)
         return () => {

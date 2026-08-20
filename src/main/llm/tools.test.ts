@@ -330,6 +330,38 @@ describe('find_in_chapter / edit_chapter_section', () => {
     expect(item.newContent).not.toContain('arms folded against the wind')
   })
 
+  it('replacement text containing $-patterns is spliced verbatim', async () => {
+    // String.replace with a string expands $&, $`, $' — a model-authored
+    // replacement mentioning prices or regexes must land untouched.
+    await executeTool(
+      ctx(CHAPTER),
+      'edit_chapter_section',
+      JSON.stringify({
+        find: 'Rain began to fall as Kael spoke his first words.',
+        replacement: "The toll was $& steep — $100, she said, and $` besides.",
+        rationale: 'test'
+      })
+    )
+    const proposals = await listProposals(novelDir)
+    const item = proposals[0]!.items[0]!
+    expect(item.newContent).toContain("The toll was $& steep — $100, she said, and $` besides.")
+  })
+
+  it('append_to_chapter after a styled block keeps the closing fence intact', async () => {
+    await writeFile(
+      join(novelDir, CHAPTER),
+      `---\ntitle: The Iron Gate\nstatus: draft\n---\n::: {bg=note}\nSystem: level up.\n:::\n`
+    )
+    await executeTool(
+      ctx(CHAPTER),
+      'append_to_chapter',
+      JSON.stringify({ chapterFile: CHAPTER, content: 'New prose after the box.' })
+    )
+    const proposals = await listProposals(novelDir)
+    const item = proposals[0]!.items[0]!
+    expect(item.newContent).toContain('::: {bg=note}\nSystem: level up.\n:::\n\nNew prose after the box.')
+  })
+
   it('sequential section edits against one base BOTH survive accepting', async () => {
     // The prompt tells the model to "repeat for multiple spots" — every call
     // reads the same untouched file, so both proposals share one base.

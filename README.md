@@ -136,6 +136,7 @@ target is configured in `electron-builder.yml` and can be built locally.
 my-novel/
 ├── novel.yaml               # chapter order + status (source of truth)
 ├── chapters/001-slug.md     # markdown + YAML frontmatter
+├── assets/                  # images inserted into chapters (created on first use)
 ├── metadata/
 │   ├── synopsis.md          # whole-novel synopsis
 │   ├── summaries/001-slug.md
@@ -149,6 +150,26 @@ my-novel/
 Everything is human-editable in any editor; the app validates on load and never crashes on
 hand-edited files. A series adds a parent directory holding series-level metadata shared
 by the novels beneath it.
+
+### Richer styling: the Pandora dialect
+
+Markdown has no native form for alignment, background color, or fonts, so chapters that
+use those carry a small documented dialect — styled in the editor, plain-readable
+anywhere else:
+
+| In the editor | On disk |
+| --- | --- |
+| Centered / right-aligned block | `::: {align=center}` … `:::` |
+| Tinted block (callout, system message) | `::: {bg=note}` … `:::` (named: note, success, warning, danger, neutral — or `bg="#fff3cd"`) |
+| Block in another font | `::: {font="Iowan Old Style"}` … `:::` (attributes combine) |
+| A run of text in another font | `[text]{font="Garamond"}` |
+| Image | `![alt](assets/file.png)` — plain markdown; the file lives in `assets/` |
+
+The fences are Pandoc-style and degrade to harmless visible lines in any other markdown
+viewer; unknown attributes inside `{…}` are preserved verbatim. Named tints follow the
+active theme in both light and dark. When copying for RoyalRoad/Patreon the app maps
+what each platform's paste can carry (RoyalRoad keeps alignment) and tells you exactly
+what it had to drop.
 
 ## Custom themes
 

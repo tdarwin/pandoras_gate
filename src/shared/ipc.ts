@@ -290,6 +290,21 @@ export const ipcContract = {
     }),
     response: PrefsSchema
   },
+  /**
+   * Copies an image into <novel>/assets/ and returns its relative path.
+   * 'dialog' opens a picker in main; 'bytes' carries pasted/dropped data.
+   * rel is null when the user cancels the dialog.
+   */
+  'assets:import': {
+    request: z.object({
+      novelDir: z.string(),
+      source: z.discriminatedUnion('kind', [
+        z.object({ kind: z.literal('dialog') }),
+        z.object({ kind: z.literal('bytes'), base64: z.string(), name: z.string() })
+      ])
+    }),
+    response: z.object({ rel: z.string().nullable() })
+  },
   'themes:list': {
     request: z.undefined(),
     response: z.object({ themes: z.array(ThemeSummarySchema) })
@@ -559,7 +574,9 @@ export const ipcContract = {
       copied: z.literal(true),
       words: z.number(),
       /** Soft caution, e.g. the chapter is still marked draft. */
-      warning: z.string().optional()
+      warning: z.string().optional(),
+      /** Dialect features this platform's paste can't carry. */
+      dropped: z.array(z.string()).optional()
     })
   },
   'context:assemble': {

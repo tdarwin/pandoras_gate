@@ -121,6 +121,68 @@ describe('TipTap editor instance', () => {
     editor.destroy()
   })
 
+  it('renders relative image srcs through the asset scheme, keeping markdown relative', () => {
+    const editor = makeEditor('![the gate](assets/gate%20art.png)\n')
+    const img = editor.view.dom.querySelector('img')!
+    // Displayed through the privileged scheme (the sandboxed renderer cannot
+    // read novel files), but the document and markdown keep the relative path.
+    // Markdown srcs are URLs: `%20` means the file "gate art.png", so the
+    // display URL keeps the single encoding — never a double-encoded %2520,
+    // which the scheme handler's single decode would miss.
+    expect(img.getAttribute('src')).toBe('pandora-asset://novel/assets/gate%20art.png')
+    expect(docToMarkdown(editor.state.doc)).toBe('![the gate](assets/gate%20art.png)\n')
+    editor.destroy()
+  })
+
+  it('a bare % in an image src still resolves to the literal file name', () => {
+    const editor = makeEditor('![chart](assets/growth-100%.png)\n')
+    const img = editor.view.dom.querySelector('img')!
+    // markdown-it normalizes the malformed escape to %25 at parse time, so
+    // the node holds the valid spelling; the display URL keeps it single-
+    // encoded and the scheme's decode yields the file "growth-100%.png".
+    expect(img.getAttribute('src')).toBe('pandora-asset://novel/assets/growth-100%25.png')
+    const normalized = '![chart](assets/growth-100%25.png)\n'
+    expect(docToMarkdown(editor.state.doc)).toBe(normalized)
+    // The normalized form holds on the next pass.
+    const editor2 = makeEditor(normalized)
+    expect(docToMarkdown(editor2.state.doc)).toBe(normalized)
+    editor2.destroy()
+    editor.destroy()
+  })
+
+  it('renders styled blocks as tinted/aligned containers', () => {
+    const editor = makeEditor('::: {align=center bg=note}\nBoxed.\n:::\n')
+    const div = editor.view.dom.querySelector('div[data-styled-block]')!
+    expect(div.getAttribute('data-bg')).toBe('note')
+    expect(div.getAttribute('data-align')).toBe('center')
+    expect(div.textContent).toContain('Boxed.')
+    editor.destroy()
+  })
+
+  it('setBlockAlign wraps, updates, and lifts as attributes clear', () => {
+    const editor = makeEditor('Some prose.\n')
+    editor.commands.selectAll()
+    editor.chain().focus().setBlockAlign('center').run()
+    expect(docToMarkdown(editor.state.doc)).toBe('::: {align=center}\nSome prose.\n:::\n')
+    editor.chain().focus().setBlockBg('note').run()
+    expect(docToMarkdown(editor.state.doc)).toBe('::: {align=center bg=note}\nSome prose.\n:::\n')
+    editor.chain().focus().setBlockAlign(null).run()
+    editor.chain().focus().setBlockBg(null).run()
+    // Last attribute cleared — the wrapper is gone entirely.
+    expect(docToMarkdown(editor.state.doc)).toBe('Some prose.\n')
+    editor.destroy()
+  })
+
+  it('setFontSpan marks the selection and serializes as a bracketed span', () => {
+    const editor = makeEditor('Choose a word.\n')
+    editor.commands.setTextSelection({ from: 1, to: 7 })
+    editor.chain().setFontSpan('Garamond').run()
+    expect(docToMarkdown(editor.state.doc)).toBe('[Choose]{font="Garamond"} a word.\n')
+    editor.chain().setTextSelection({ from: 1, to: 7 }).unsetFontSpan().run()
+    expect(docToMarkdown(editor.state.doc)).toBe('Choose a word.\n')
+    editor.destroy()
+  })
+
   it('survives pathological content the old editor crashed on', () => {
     // Frontmatter-looking text, hr at doc start, marks spanning wraps — all
     // as plain body content. Nothing here should throw at render time.

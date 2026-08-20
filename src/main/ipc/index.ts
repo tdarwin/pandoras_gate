@@ -45,7 +45,7 @@ import { setSecret, hasSecret } from '../secrets'
 import { assembleContext, estimateTokens, resolveContextTarget } from '../context/assembler'
 import { toolOverheadTokens } from '../llm/tools'
 import { gatherStorySource } from '../context/gather'
-import { chapterHtml, chapterPlainText } from '../publish/profiles'
+import { chapterHtmlWithReport, chapterPlainText } from '../publish/profiles'
 import { parseFrontmatter } from '../../shared/frontmatter'
 import {
   runMetadataUpdate,
@@ -413,6 +413,23 @@ export function registerIpcHandlers(): void {
   // and an explicit list silently drops any pref added without editing it here.
   handle('prefs:set', (req) => writePrefs(definedOnly(req)))
 
+  handle('assets:import', async (req) => {
+    if (req.source.kind === 'bytes') {
+      const bytes = Buffer.from(req.source.base64, 'base64')
+      return { rel: (await project.importAsset(req.novelDir, req.source.name, bytes)).rel }
+    }
+    const result = await dialog.showOpenDialog({
+      title: 'Insert image',
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg'] }]
+    })
+    const source = result.canceled ? null : (result.filePaths[0] ?? null)
+    if (!source) return { rel: null }
+    const { readFile: readBytes } = await import('node:fs/promises')
+    const bytes = await readBytes(source)
+    return { rel: (await project.importAsset(req.novelDir, basename(source), bytes)).rel }
+  })
+
   handle('themes:list', async () => ({ themes: await themes.listThemes() }))
 
   handle('themes:resolve', (req) => themes.resolveTheme(req.id))
@@ -553,7 +570,7 @@ export function registerIpcHandlers(): void {
     const manifest = await project.readNovelManifest(req.novelDir)
     const entry = manifest.chapters.find((c) => c.file === req.file)
     const body = parseFrontmatter(await project.readChapter(req.novelDir, req.file)).body
-    const html = chapterHtml(body, req.platform, entry?.title)
+    const { html, dropped } = chapterHtmlWithReport(body, req.platform, entry?.title)
     const text = chapterPlainText(body, entry?.title)
     clipboard.write({ html, text })
     const words = text.split(/\s+/).filter((w) => /\w/.test(w)).length
@@ -561,7 +578,12 @@ export function registerIpcHandlers(): void {
       entry && (entry.status === 'draft' || entry.status === 'ai-draft')
         ? `chapter status is still “${entry.status}”`
         : undefined
-    return { copied: true as const, words, ...(warning ? { warning } : {}) }
+    return {
+      copied: true as const,
+      words,
+      ...(warning ? { warning } : {}),
+      ...(dropped.length > 0 ? { dropped } : {})
+    }
   })
 
   handle('context:assemble', async (req) => {

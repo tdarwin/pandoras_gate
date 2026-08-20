@@ -143,3 +143,84 @@ describe('markdown bridge', () => {
     expect(doc.textContent).toContain('plain closing line')
   })
 })
+
+describe('pandora dialect', () => {
+  it('round-trips every styled-block form byte-for-byte, twice', () => {
+    const cases = [
+      '::: {align=center}\nA centered epigraph.\n:::\n',
+      '::: {align=right}\n— K.V.\n:::\n',
+      '::: {bg=note}\nSystem message.\n:::\n',
+      '::: {bg="#fff3cd"}\nExact tint.\n:::\n',
+      '::: {align=center bg=warning font="Iowan Old Style"}\nAll three.\n:::\n',
+      '::: {bg=note}\n# Head inside\n\n- a list\n- item\n:::\n',
+      'Before.\n\n::: {align=center}\nBoxed.\n:::\n\nAfter.\n'
+    ]
+    for (const md of cases) {
+      expect(roundTrip(md)).toBe(md)
+      expect(roundTrip(roundTrip(md))).toBe(md)
+    }
+  })
+
+  it('parses a styled block into a real node with its attrs', () => {
+    const doc = markdownToDoc(schema, '::: {align=center bg=note}\nText.\n:::\n')
+    let found: Record<string, unknown> | null = null
+    doc.descendants((node) => {
+      if (node.type.name === 'styledBlock') found = node.attrs
+    })
+    expect(found).toMatchObject({ align: 'center', bg: 'note', font: null })
+    // The regression guard: the dialect must never trip the plain-text
+    // fallback — that would degrade a whole chapter to bare paragraphs.
+    expect(doc.firstChild!.type.name).toBe('styledBlock')
+  })
+
+  it('normalizes non-canonical attr forms on the first pass, then holds', () => {
+    const messy = '::: {font="Garamond" align=left bg="#FFF3CD"}\nText.\n:::\n'
+    const once = roundTrip(messy)
+    expect(once).toBe('::: {bg="#fff3cd" font="Garamond"}\nText.\n:::\n')
+    expect(roundTrip(once)).toBe(once)
+  })
+
+  it('passes unknown attrs through verbatim', () => {
+    const md = '::: {align=center epigraph=true}\nKept.\n:::\n'
+    expect(roundTrip(md)).toBe(md)
+  })
+
+  it('leaves degenerate fences as literal text', () => {
+    for (const md of [
+      '::: {align=center}\nno closer here\n',
+      ':::\nbare fences\n:::\n',
+      '::: {}\nempty braces\n:::\n'
+    ]) {
+      const doc = markdownToDoc(schema, md)
+      let styled = 0
+      doc.descendants((node) => {
+        if (node.type.name === 'styledBlock') styled += 1
+      })
+      expect(styled).toBe(0)
+      expect(doc.textContent).toContain(md.includes('closer') ? 'no closer' : md.split('\n')[1]!)
+    }
+  })
+
+  it('round-trips font spans, alone and with inner emphasis', () => {
+    for (const md of [
+      'Set in [small caps]{font="Garamond"} mid-sentence.\n',
+      '[A *styled* run]{font="Charter"}\n'
+    ]) {
+      expect(roundTrip(md)).toBe(md)
+      expect(roundTrip(roundTrip(md))).toBe(md)
+    }
+  })
+
+  it('font spans coexist with links and plain brackets', () => {
+    const md = 'A [link](https://x.example) and [plain] brackets.\n'
+    const out = roundTrip(md)
+    expect(out).toContain('[link](https://x.example)')
+    expect(out).toContain('plain')
+    expect(roundTrip(out)).toBe(out)
+  })
+
+  it('documents without the dialect are untouched', () => {
+    const md = '# Plain\n\nJust prose with **bold** and a [link](https://x.example).\n'
+    expect(roundTrip(md)).toBe(md)
+  })
+})
