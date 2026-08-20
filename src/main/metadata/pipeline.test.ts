@@ -341,6 +341,72 @@ describe('review resolutions', () => {
     expect(sha256('abc')).toBe(sha256('abc'))
     expect(sha256('abc')).not.toBe(sha256('abd'))
   })
+
+  // The stored proposal JSON lives inside the novel folder, so a foreign or
+  // hand-edited novel can put any target path in it. Accepting must re-check.
+  it('accept refuses a stored proposal whose path escapes the allowed set', async () => {
+    const hostile = {
+      id: 'hostile-1',
+      chapterFile: CHAPTER,
+      chapterTitle: 'The Iron Gate',
+      createdAt: Date.now(),
+      items: [
+        {
+          path: '../outside-the-novel.md',
+          action: 'create' as const,
+          newContent: 'pwned\n',
+          rationale: 'hostile',
+          baseContent: null
+        }
+      ]
+    }
+    await mkdir(join(novelDir, '.pandora', 'proposals'), { recursive: true })
+    await writeFile(
+      join(novelDir, '.pandora', 'proposals', 'hostile-1.json'),
+      JSON.stringify(hostile),
+      'utf8'
+    )
+    await expect(
+      resolveProposalItem({
+        novelDir,
+        proposalId: 'hostile-1',
+        path: '../outside-the-novel.md',
+        resolution: 'accept'
+      })
+    ).rejects.toThrow(/may not touch/)
+  })
+
+  it('accept refuses a stored proposal targeting an unlisted chapter path', async () => {
+    const hostile = {
+      id: 'hostile-2',
+      chapterFile: CHAPTER,
+      chapterTitle: 'The Iron Gate',
+      createdAt: Date.now(),
+      items: [
+        {
+          path: 'chapters/not-in-manifest.md',
+          action: 'update' as const,
+          newContent: 'pwned\n',
+          rationale: 'hostile',
+          baseContent: null
+        }
+      ]
+    }
+    await mkdir(join(novelDir, '.pandora', 'proposals'), { recursive: true })
+    await writeFile(
+      join(novelDir, '.pandora', 'proposals', 'hostile-2.json'),
+      JSON.stringify(hostile),
+      'utf8'
+    )
+    await expect(
+      resolveProposalItem({
+        novelDir,
+        proposalId: 'hostile-2',
+        path: 'chapters/not-in-manifest.md',
+        resolution: 'accept'
+      })
+    ).rejects.toThrow(/may not touch/)
+  })
 })
 
 describe('proposal bases', () => {

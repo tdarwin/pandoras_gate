@@ -10,6 +10,7 @@ import {
 } from '../../shared/schemas/project'
 import { parseFrontmatter, serializeFrontmatter } from '../../shared/frontmatter'
 import { slugify, chapterPrefix } from '../../shared/slug'
+import { resolveInside } from '../paths'
 
 const NOVEL_MANIFEST = 'novel.yaml'
 const SERIES_MANIFEST = 'series.yaml'
@@ -139,7 +140,13 @@ export async function openNovel(novelDir: string): Promise<NovelState> {
   let seriesTitle: string | undefined
   if (manifest.series) {
     try {
+      // The app only ever writes `../series.yaml`; a ref reaching anywhere
+      // but the novel's parent dir is hand-edited or foreign, and following
+      // it would read an attacker-chosen path. Treat it as broken instead.
       const seriesPath = resolve(novelDir, manifest.series)
+      if (dirname(seriesPath) !== dirname(resolve(novelDir))) {
+        throw new Error(`series ref escapes the parent folder: ${manifest.series}`)
+      }
       const series = await readSeriesManifest(dirname(seriesPath))
       seriesTitle = series.title
     } catch {
@@ -181,10 +188,11 @@ export async function renameChapter(
   const prefix = basename(file).slice(0, 3)
   let newFile = `chapters/${prefix}-${slugify(newTitle)}.md`
 
-  const raw = await readFile(join(novelDir, file), 'utf8')
+  const source = resolveInside(novelDir, file)
+  const raw = await readFile(source, 'utf8')
   const doc = parseFrontmatter(raw)
   doc.data['title'] = newTitle
-  await writeFile(join(novelDir, file), serializeFrontmatter(doc), 'utf8')
+  await writeFile(source, serializeFrontmatter(doc), 'utf8')
 
   if (newFile !== file) {
     // Titles repeat in fiction ("Interlude") — never silently keep the old
@@ -194,7 +202,7 @@ export async function renameChapter(
       newFile = `chapters/${prefix}-${slugify(newTitle)}-${attempt}.md`
       attempt += 1
     }
-    await rename(join(novelDir, file), join(novelDir, newFile))
+    await rename(source, join(novelDir, newFile))
     entry.file = newFile
   }
   entry.title = newTitle
@@ -220,11 +228,11 @@ export async function reorderChapters(novelDir: string, orderedFiles: string[]):
 }
 
 export async function readChapter(novelDir: string, file: string): Promise<string> {
-  return readFile(join(novelDir, file), 'utf8')
+  return readFile(resolveInside(novelDir, file), 'utf8')
 }
 
 export async function writeChapter(novelDir: string, file: string, content: string): Promise<void> {
-  await writeFile(join(novelDir, file), content, 'utf8')
+  await writeFile(resolveInside(novelDir, file), content, 'utf8')
 }
 
 /**
@@ -241,7 +249,7 @@ export async function archiveChapter(novelDir: string, file: string): Promise<No
   while (await exists(join(novelDir, target))) {
     target = `archive/${basename(file, '.md')}-${++n}.md`
   }
-  await rename(join(novelDir, file), join(novelDir, target))
+  await rename(resolveInside(novelDir, file), join(novelDir, target))
   manifest.chapters = manifest.chapters.filter((c) => c.file !== file)
   await writeNovelManifest(novelDir, manifest)
   return { dir: novelDir, manifest }
@@ -257,7 +265,7 @@ export async function deleteChapter(novelDir: string, file: string): Promise<Nov
     throw new Error(`Chapter not in manifest: ${file}`)
   }
   const { rm } = await import('node:fs/promises')
-  await rm(join(novelDir, file), { force: true })
+  await rm(resolveInside(novelDir, file), { force: true })
   manifest.chapters = manifest.chapters.filter((c) => c.file !== file)
   await writeNovelManifest(novelDir, manifest)
   return { dir: novelDir, manifest }
@@ -288,7 +296,8 @@ export async function listArchivedChapters(
 /** Moves an archived chapter back into the manifest (at the end). */
 export async function restoreArchivedChapter(novelDir: string, file: string): Promise<NovelState> {
   if (!file.startsWith('archive/')) throw new Error('Not an archived chapter')
-  const raw = await readFile(join(novelDir, file), 'utf8')
+  const source = resolveInside(novelDir, file)
+  const raw = await readFile(source, 'utf8')
   const { data } = parseFrontmatter(raw)
   const title =
     typeof data['title'] === 'string' && data['title'] ? data['title'] : basename(file, '.md')
@@ -300,7 +309,7 @@ export async function restoreArchivedChapter(novelDir: string, file: string): Pr
   while (await exists(join(novelDir, target))) {
     target = `chapters/${chapterPrefix(++attempt)}-${slugify(title)}.md`
   }
-  await rename(join(novelDir, file), join(novelDir, target))
+  await rename(source, join(novelDir, target))
   manifest.chapters.push(ChapterEntry.parse({ file: target, title, status: 'draft' }))
   await writeNovelManifest(novelDir, manifest)
   return { dir: novelDir, manifest }
@@ -310,7 +319,7 @@ export async function restoreArchivedChapter(novelDir: string, file: string): Pr
 export async function deleteArchivedChapter(novelDir: string, file: string): Promise<void> {
   if (!file.startsWith('archive/')) throw new Error('Not an archived chapter')
   const { rm } = await import('node:fs/promises')
-  await rm(join(novelDir, file), { force: true })
+  await rm(resolveInside(novelDir, file), { force: true })
 }
 
 /* ------------------------------------------------------------------ */
@@ -399,10 +408,11 @@ export async function setChapterStatus(
   entry.status = status
   await writeNovelManifest(novelDir, manifest)
 
-  const raw = await readFile(join(novelDir, file), 'utf8')
+  const target = resolveInside(novelDir, file)
+  const raw = await readFile(target, 'utf8')
   const doc = parseFrontmatter(raw)
   doc.data['status'] = status
-  await writeFile(join(novelDir, file), serializeFrontmatter(doc), 'utf8')
+  await writeFile(target, serializeFrontmatter(doc), 'utf8')
   return { dir: novelDir, manifest }
 }
 
@@ -430,5 +440,5 @@ export async function createMetadataDoc(
 export async function deleteMetadataDoc(novelDir: string, file: string): Promise<void> {
   if (!file.startsWith('metadata/')) throw new Error('Only Codex docs can be deleted here')
   const { rm } = await import('node:fs/promises')
-  await rm(join(novelDir, file), { force: true })
+  await rm(resolveInside(novelDir, file), { force: true })
 }

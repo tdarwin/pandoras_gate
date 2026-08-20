@@ -13,6 +13,7 @@ import {
 } from '../../shared/schemas/proposal'
 import { parseFrontmatter } from '../../shared/frontmatter'
 import { readNovelManifest, readChapter, listMetadata } from '../project/service'
+import { resolveInside } from '../paths'
 import { commitAll, flushAutocommit } from '../git/service'
 import { estimateTokens, elideMiddle, matchCharacters, truncateToTokens } from '../context/assembler'
 import { logInfo } from '../log'
@@ -83,7 +84,14 @@ async function migrateLegacyProposal(
 ): Promise<PendingProposal> {
   const items: PendingProposalItem[] = []
   for (const { baseHash, ...item } of legacy.items) {
-    const current = await safeRead(join(novelDir, item.path))
+    // Stored paths are data inside the novel folder; an uncontained one gets
+    // no base rather than a read outside the novel.
+    let current: string | null = null
+    try {
+      current = await safeRead(resolveInside(novelDir, item.path))
+    } catch {
+      current = null
+    }
     items.push({
       ...item,
       baseContent: current !== null && baseHash !== '' && sha256(current) === baseHash ? current : null
@@ -906,7 +914,16 @@ export async function resolveProposalItem(req: ResolveRequest): Promise<{ remain
   if (!item) throw new Error('Proposal item no longer exists')
 
   if (req.resolution === 'accept') {
-    const full = join(req.novelDir, item.path)
+    // Re-validate the target now, not just at proposal-creation time: the
+    // stored JSON lives inside the novel folder, so a foreign novel can put
+    // anything in it. Accepting may only write an allowed Codex/outline path
+    // or a chapter the current manifest actually lists.
+    const manifest = await readNovelManifest(req.novelDir).catch(() => null)
+    const isManifestChapter = manifest?.chapters.some((c) => c.file === item.path) ?? false
+    if (!isManifestChapter && !isAllowedProposalPath(item.path)) {
+      throw new Error(`This suggestion targets a file it may not touch: ${item.path}`)
+    }
+    const full = resolveInside(req.novelDir, item.path)
     // Prose typed since the run may exist only as a quiet save on disk —
     // give it a history entry BEFORE anything overwrites it. No-op when the
     // file is already committed.
