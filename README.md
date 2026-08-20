@@ -150,6 +150,36 @@ Everything is human-editable in any editor; the app validates on load and never 
 hand-edited files. A series adds a parent directory holding series-level metadata shared
 by the novels beneath it.
 
+## Custom themes
+
+Beyond the built-in Dark/Light/System palettes, Preferences → Appearance can import a
+color theme from another editor — VS Code `.json`, Sublime `.sublime-color-scheme`, or
+legacy `.tmTheme` — or you can write your own. A theme is a folder in the app's themes
+directory (Preferences → "Open themes folder") holding a `theme.yaml`; every field is
+optional, and `base` fills in whatever you omit:
+
+```yaml
+name: Gruvbox Warm
+base: dark            # dark | light — the palette behind anything you omit
+colors:               # UI: surface, panel, raised, line, lineStrong,
+  surface: '#1d2021'  #     ink, inkStrong, inkMuted, inkFaint
+  ink: '#ebdbb2'
+editor:
+  colors: { caret: '#fe8019', link: '#83a598' }   # also: selection, heading, strike,
+                                                  # codeBg, bullet, quote, quoteText, hr
+  font: { family: Iowan Old Style, size: 16, lineHeight: 1.8, measure: 42 }
+  background: { image: paper.png, opacity: 0.3, blur: 2 }  # image sits in this folder
+chat:
+  colors: { link: '#83a598' }  # also: head, codeBg, preBg, quote, quoteText
+```
+
+Edits apply live — no restart. A background image always gets a legibility tint between
+it and your prose (override with `tint:`). "Save current as custom theme" writes an
+editable starting point; sharing a theme is just sharing its folder. Editor font, size,
+line spacing, and line width can also be set directly in Preferences, on top of any
+theme. A malformed theme file never breaks the app: the picker shows what's wrong and
+the built-in palette takes over.
+
 ## Documentation
 
 | Document | What's in it |

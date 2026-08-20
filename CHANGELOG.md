@@ -12,6 +12,34 @@ Write for a novelist, not for a reviewer of the diff.
 
 ## [Unreleased]
 
+### Added
+
+- **Custom themes.** Preferences → Appearance can now import a color theme from VS Code,
+  Sublime Text (`.sublime-color-scheme`), or legacy `.tmTheme` files — or you can write
+  your own: a theme is a small YAML file in the new themes folder, and a two-line file
+  that sets `base` and one color is already valid. Themes can set fonts and put a
+  background image behind the editor or the chat panel (with a built-in tint so your
+  prose stays readable). Edits to theme files apply live, "Save current as custom theme"
+  gives you an editable starting point, and a broken theme file never takes the app down
+  — the picker tells you what's wrong and the built-in look takes over.
+- **Editor typography settings.** Font (any installed font, by name), size, line
+  spacing, and line width are now settable in Preferences and persist — on top of
+  whichever theme is active.
+
+### Fixed
+
+- **The chat panel now follows the light theme.** It was hard-coded to dark colors no
+  matter what the theme said.
+- **A failed preference save no longer lies.** If a setting couldn't be written to disk,
+  the toggle used to keep its new position and quietly revert on the next launch; now it
+  snaps back and tells you what went wrong.
+- **The crash screen points at a real menu.** Its "open the log folder" hint referenced
+  a Preferences section that doesn't exist; it now points at Help → Open Logs Folder.
+- **Safer handling of links and file paths.** The window can no longer be navigated to
+  arbitrary local files by a link in an AI chat reply, and every chapter or suggestion
+  path from a hand-edited or shared novel folder is now confined to that novel's folder
+  — including through symlinks.
+
 ## [0.5.1] — 2026-08-20
 
 ### Fixed

@@ -163,6 +163,14 @@ logic belongs in main.
 **renderer** (`src/renderer/src/`) is a React app with no privileges. It asks main for
 everything.
 
+The one way file bytes reach the renderer is the **`pandora-asset://` scheme**
+(`src/main/assets/scheme.ts`): a privileged protocol that serves images from exactly two
+roots — `pandora-asset://themes/<id>/<file>` (the userData themes folder) and
+`pandora-asset://novel/<rel>` (the open novel's directory, registered by the
+open/create-novel handlers). Every request passes the shared containment helper
+(`resolveInside` in `src/main/paths.ts`, symlink-aware), and the scheme is named in the
+renderer's CSP `img-src` rather than bypassing CSP.
+
 **llm-worker** (`src/llm-worker/`) runs local GGUF inference in an Electron
 `utilityProcess`, so model loading and prompt evaluation can never stall the UI, and a
 crash (bad GGUF, OOM) takes down only that process. The worker executes generations and
@@ -255,7 +263,12 @@ Two separate places, and the distinction matters:
   in review.
 - **App state** — `~/Library/Application Support/pandoras-gate/` on macOS
   (`%APPDATA%/pandoras-gate` on Windows): `app-state.json` (recents, preferences, model
-  registry), `secrets.json` (encrypted via `safeStorage`), `models/`, `logs/`.
+  registry), `secrets.json` (encrypted via `safeStorage`), `models/`, `logs/`, and
+  `themes/` — one folder per custom theme (`themes/<id>/theme.yaml` plus any image
+  assets; see the [README](README.md#custom-themes) for the file format). The folder is
+  watched (`watchThemes` in `src/main/themes/service.ts`), so hand edits apply live; a
+  malformed theme file stays listed in the picker with its problem and the app falls
+  back to the built-in palette.
 
 The app must never crash on a hand-edited novel file. Validation failures degrade — log,
 fall back, surface a readable message — because users are explicitly invited to edit these
