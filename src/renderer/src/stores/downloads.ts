@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { IpcEventPayload } from '@shared/ipc'
+import { onIpcEvent } from '../lib/events'
 
 /**
  * Global download tracker: one subscription to model:downloadProgress feeds
@@ -73,8 +73,7 @@ export const useDownloadsStore = create<DownloadsStore>((set) => ({
   init: () => {
     if (initialized) return
     initialized = true
-    window.pandora.on('model:downloadProgress', (raw) => {
-      const p = raw as IpcEventPayload<'model:downloadProgress'>
+    onIpcEvent('model:downloadProgress', (p) => {
       set((s) => {
         const downloads = { ...s.downloads }
         if (p.done || p.error === 'cancelled') {

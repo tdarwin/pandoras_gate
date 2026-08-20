@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { resolveInside } from '../paths'
 import type { LLMProvider, ToolDefinition } from '../../shared/llm/types'
 import type { DeferredRun } from './chat'
 import {
@@ -291,7 +291,7 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
             return 'Error: path must be an existing Codex document (metadata/... or outlines/...).'
           }
           try {
-            return await readFile(join(ctx.novelDir, args.path), 'utf8')
+            return await readFile(resolveInside(ctx.novelDir, args.path), 'utf8')
           } catch {
             return `Error: ${args.path} does not exist. Use list_codex_docs to see what does.`
           }
@@ -387,7 +387,7 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
           if (!target || !manifest.chapters.some((c) => c.file === target)) {
             return 'Error: no valid chapter — pass chapterFile from list_chapters or have the author open one.'
           }
-          const raw = await readFile(join(ctx.novelDir, target), 'utf8')
+          const raw = await readFile(resolveInside(ctx.novelDir, target), 'utf8')
           const body = parseFrontmatter(raw).body
           const paragraphs = body.split(/\n\s*\n/)
           const needle = args.query.trim().toLowerCase()
@@ -422,7 +422,7 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
             return 'Error: no valid chapter — pass chapterFile from list_chapters or have the author open one.'
           }
           await flushAutocommit(ctx.novelDir)
-          const raw = await readFile(join(ctx.novelDir, target), 'utf8')
+          const raw = await readFile(resolveInside(ctx.novelDir, target), 'utf8')
           const body = parseFrontmatter(raw).body
           const frontmatterPrefix = raw.slice(0, raw.length - body.length)
 
@@ -476,7 +476,7 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
             return 'Error: that chapter does not exist — check list_chapters. Do NOT create a new chapter unless the author asked for one.'
           }
           await flushAutocommit(ctx.novelDir)
-          const raw = await readFile(join(ctx.novelDir, args.chapterFile), 'utf8')
+          const raw = await readFile(resolveInside(ctx.novelDir, args.chapterFile), 'utf8')
           const body = parseFrontmatter(raw).body
           const frontmatterPrefix = raw.slice(0, raw.length - body.length)
           const joined = body.trim()

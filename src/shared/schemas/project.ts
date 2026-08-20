@@ -7,8 +7,15 @@ export const ChapterStatus = z.enum(['draft', 'ai-draft', 'revised', 'final'])
 export type ChapterStatus = z.infer<typeof ChapterStatus>
 
 export const ChapterEntry = z.object({
-  /** Path relative to the novel dir, e.g. "chapters/001-the-iron-gate.md" */
-  file: z.string(),
+  /**
+   * Path relative to the novel dir, e.g. "chapters/001-the-iron-gate.md".
+   * The pattern is a containment gate, not just tidiness: manifest entries
+   * drive filesystem reads and writes, so a hand-edited or foreign manifest
+   * must not be able to point outside chapters/ (e.g. `../../.zshrc`).
+   */
+  file: z
+    .string()
+    .regex(/^chapters\/[^/\\]+\.md$/, 'chapter paths must look like chapters/<name>.md'),
   title: z.string(),
   status: ChapterStatus.default('draft')
 })

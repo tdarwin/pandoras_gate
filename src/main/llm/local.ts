@@ -1,12 +1,12 @@
 import { app } from 'electron'
 import { basename, dirname, join, resolve, sep } from 'node:path'
 import { access, rm, rmdir } from 'node:fs/promises'
-import { realpathSync } from 'node:fs'
 import type { ChatRequest, LLMProvider, ModelInfo, StreamEvent } from '../../shared/llm/types'
 import { DEFAULT_CONTEXT_CEILING } from '../../shared/llm/memory'
 import { llmWorkerHost } from './worker-host'
 import { readAppState, writeAppState } from '../store'
 import { logInfo, logWarn } from '../log'
+import { realpathOrSelf } from '../paths'
 
 /**
  * Local models are GGUF files the user imported (or downloaded via the
@@ -31,14 +31,6 @@ export interface LocalModelEntry {
 /** Where the app puts models it downloaded itself, as opposed to imports. */
 export function modelsDir(): string {
   return join(app.getPath('userData'), 'models')
-}
-
-function realpathOrSelf(p: string): string {
-  try {
-    return realpathSync.native(p)
-  } catch {
-    return p
-  }
 }
 
 /**

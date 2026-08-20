@@ -23,7 +23,10 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()]
+    // zod is bundled, not externalized: the preload imports the IPC contract
+    // for its runtime channel allowlist, and a sandboxed preload cannot
+    // require() external node modules.
+    plugins: [externalizeDepsPlugin({ exclude: ['zod'] })]
   },
   renderer: {
     plugins: [react(), tailwindcss()],

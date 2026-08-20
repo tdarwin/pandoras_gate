@@ -4,11 +4,23 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join, dirname, sep } from 'node:path'
 import { logInfo } from './log'
 import { MODEL_ROLES, type ModelRoleMap } from '../shared/llm/catalog'
+import {
+  SNAPSHOT_INTERVALS,
+  CONTEXT_TARGETS,
+  ThemePrefSchema,
+  EditorFontFamilySchema,
+  EditorFontSizeSchema,
+  EditorLineHeightSchema,
+  EditorMeasureSchema,
+  type ThemePref
+} from '../shared/prefs'
 
 // Roles are declared with the catalog vocabulary they share; re-exported here
 // because this module is where the rest of main reaches for prefs types.
 export { MODEL_ROLES }
 export type { ModelRole, ModelRoleMap } from '../shared/llm/catalog'
+export { SNAPSHOT_INTERVALS, CONTEXT_TARGETS }
+export type { ThemePref }
 
 interface AppState {
   recentNovels: string[]
@@ -32,18 +44,14 @@ interface AppState {
     /** Only assigned roles are stored; missing = use the chat model. */
     modelRoles?: Record<string, string>
     showUnfilteredModels?: boolean
+    editorFontFamily?: string | null
+    editorFontSize?: number | null
+    editorLineHeight?: number | null
+    editorMeasure?: number | null
   }
 }
 
 const DEFAULT_STATE: AppState = { recentNovels: [] }
-
-/** 0 = no interval (snapshot only on save/blur/switch). */
-export const SNAPSHOT_INTERVALS = [0, 5, 10, 15, 20] as const
-
-/** 0 = automatic (lean target that scales gently with the model window). */
-export const CONTEXT_TARGETS = [0, 8192, 16384, 32768] as const
-
-export type ThemePref = 'dark' | 'light' | 'system'
 
 export interface Prefs {
   autoCodex: boolean
@@ -54,6 +62,11 @@ export interface Prefs {
   modelRoles: ModelRoleMap
   /** Opt-in to seeing models that write explicit content without refusing. */
   showUnfilteredModels: boolean
+  /** Appearance overrides on top of the active theme; null = theme's value. */
+  editorFontFamily: string | null
+  editorFontSize: number | null
+  editorLineHeight: number | null
+  editorMeasure: number | null
 }
 
 export async function readPrefs(): Promise<Prefs> {
@@ -71,12 +84,22 @@ export async function readPrefs(): Promise<Prefs> {
     contextTargetTokens: (CONTEXT_TARGETS as readonly number[]).includes(contextTarget)
       ? contextTarget
       : 0,
-    theme: theme === 'light' || theme === 'system' ? theme : 'dark',
+    theme: ThemePrefSchema.safeParse(theme).success ? (theme as ThemePref) : 'dark',
     modelRoles: Object.fromEntries(
       MODEL_ROLES.map((role) => [role, storedRoles[role] ?? null])
     ) as ModelRoleMap,
-    showUnfilteredModels: state.prefs?.showUnfilteredModels ?? false
+    showUnfilteredModels: state.prefs?.showUnfilteredModels ?? false,
+    editorFontFamily: coerce(EditorFontFamilySchema, state.prefs?.editorFontFamily),
+    editorFontSize: coerce(EditorFontSizeSchema, state.prefs?.editorFontSize),
+    editorLineHeight: coerce(EditorLineHeightSchema, state.prefs?.editorLineHeight),
+    editorMeasure: coerce(EditorMeasureSchema, state.prefs?.editorMeasure)
   }
+}
+
+/** Stored values are whatever the file says; invalid ones fall back to null. */
+function coerce<T>(schema: { safeParse: (v: unknown) => { success: boolean; data?: T } }, value: unknown): T | null {
+  const result = schema.safeParse(value ?? null)
+  return result.success ? (result.data as T) : null
 }
 
 export async function writePrefs(

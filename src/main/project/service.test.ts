@@ -111,6 +111,45 @@ describe('codex', () => {
   })
 })
 
+describe('path containment', () => {
+  it('chapter reads and writes refuse paths that escape the novel folder', async () => {
+    const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
+    await writeFile(join(dir, 'outside.md'), 'secret', 'utf8')
+    await expect(readChapter(novelDir, '../outside.md')).rejects.toThrow(/\.\./)
+    await expect(writeChapter(novelDir, '../outside.md', 'pwn')).rejects.toThrow(/\.\./)
+    await expect(deleteMetadataDoc(novelDir, 'metadata/../../outside.md')).rejects.toThrow(/\.\./)
+    expect(await readFile(join(dir, 'outside.md'), 'utf8')).toBe('secret')
+  })
+
+  it('a hand-edited manifest with a traversal chapter path degrades with a readable message', async () => {
+    const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
+    const manifestPath = join(novelDir, 'novel.yaml')
+    const raw = await readFile(manifestPath, 'utf8')
+    await writeFile(
+      manifestPath,
+      raw.replace('chapters: []', 'chapters:\n  - file: ../../.zshrc\n    title: Innocent\n'),
+      'utf8'
+    )
+    await expect(openNovel(novelDir)).rejects.toThrow(/chapter paths must look like/)
+  })
+
+  it('a series ref reaching outside the parent folder is treated as broken, not followed', async () => {
+    // A series.yaml two levels up — real, readable, but outside the novel's
+    // parent dir, so the ref may not be followed.
+    await writeFile(join(dir, 'series.yaml'), 'pandora: 1\ntitle: Foreign\nnovels: []\n', 'utf8')
+    const { dir: novelDir } = await createNovel({
+      parentDir: join(dir, 'nested'),
+      title: 'Solo',
+      author: 'D'
+    })
+    const manifestPath = join(novelDir, 'novel.yaml')
+    const raw = await readFile(manifestPath, 'utf8')
+    await writeFile(manifestPath, `${raw}series: ../../series.yaml\n`, 'utf8')
+    const opened = await openNovel(novelDir)
+    expect(opened.seriesTitle).toBeUndefined()
+  })
+})
+
 describe('openNovel', () => {
   it('roundtrips create -> open', async () => {
     const created = await createNovel({ parentDir: dir, title: 'Reopen Me', author: 'D' })

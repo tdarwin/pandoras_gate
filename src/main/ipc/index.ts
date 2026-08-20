@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import {
   ipcContract,
   type IpcChannel,
@@ -10,6 +10,9 @@ import { basename } from 'node:path'
 import * as project from '../project/service'
 import * as gitService from '../git/service'
 import { rendererFlushed } from '../flush'
+import { isOpenableExternalUrl } from '../navigation'
+import { setNovelAssetRoot } from '../assets/scheme'
+import * as themes from '../themes/service'
 import { refreshAppMenu } from '../menu'
 import { readAppState, touchRecentNovel } from '../store'
 import { getProvider, startChat, cancelChat } from '../llm/chat'
@@ -135,9 +138,18 @@ export function registerIpcHandlers(): void {
     return { dir: result.canceled ? null : (result.filePaths[0] ?? null) }
   })
 
+  handle('shell:openExternal', async (req) => {
+    // Validated in main, not just the renderer: the renderer is the side
+    // rendering untrusted markdown, so its judgment is not trusted here.
+    if (!isOpenableExternalUrl(req.url)) return { opened: false }
+    await shell.openExternal(req.url)
+    return { opened: true }
+  })
+
   handle('project:createNovel', async (req) => {
     const state = await project.createNovel(req)
     await touchRecentNovel(state.dir)
+    setNovelAssetRoot(state.dir)
     await gitService.commitAll(state.dir, 'novel created')
     return state
   })
@@ -145,6 +157,7 @@ export function registerIpcHandlers(): void {
   handle('project:openNovel', async (req) => {
     const state = await project.openNovel(req.dir)
     await touchRecentNovel(state.dir)
+    setNovelAssetRoot(state.dir)
     // Adopt pre-existing novels (or repos from older versions) transparently.
     await gitService.ensureRepo(state.dir)
     return state
@@ -399,6 +412,39 @@ export function registerIpcHandlers(): void {
   // ipc.ts already permits exactly the settable prefs and strips anything else,
   // and an explicit list silently drops any pref added without editing it here.
   handle('prefs:set', (req) => writePrefs(definedOnly(req)))
+
+  handle('themes:list', async () => ({ themes: await themes.listThemes() }))
+
+  handle('themes:resolve', (req) => themes.resolveTheme(req.id))
+
+  handle('themes:import', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Import theme',
+      properties: ['openFile'],
+      filters: [
+        {
+          name: 'Theme files',
+          extensions: ['json', 'jsonc', 'tmTheme', 'sublime-color-scheme', 'yaml', 'yml']
+        }
+      ]
+    })
+    const source = result.canceled ? null : (result.filePaths[0] ?? null)
+    if (!source) return { id: null }
+    return { id: (await themes.importThemeFile(source)).id }
+  })
+
+  handle('themes:duplicateCurrent', async (req) => {
+    if (req.from === 'system') {
+      // The renderer resolves 'system' to the effective base before asking.
+      throw new Error('Cannot duplicate "system" — pass the effective dark/light base')
+    }
+    return themes.duplicateTheme(req.from)
+  })
+
+  handle('themes:openFolder', async () => {
+    await shell.openPath(themes.themesDir())
+    return { opened: true as const }
+  })
 
   handle('sync:getConfig', async (req) => ({
     remoteUrl: await getRemoteUrl(req.novelDir),

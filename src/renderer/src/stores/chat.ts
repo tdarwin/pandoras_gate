@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { ChatMessage, ModelInfo } from '@shared/llm/types'
-import type { IpcEventPayload } from '@shared/ipc'
+import { onIpcEvent } from '../lib/events'
 import { useProjectStore } from './project'
 import { usePrefsStore, type ModelRole } from './prefs'
 
@@ -84,15 +84,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // to be corrected here as soon as the worker sizes it — otherwise the first
     // session with a model plans against the import-time estimate, which on a
     // tight machine means targeting more tokens than were actually allocated.
-    window.pandora.on('model:contextResolved', (raw) => {
-      const { modelId, contextLength } = raw as IpcEventPayload<'model:contextResolved'>
+    onIpcEvent('model:contextResolved', ({ modelId, contextLength }) => {
       set((s) => ({
         models: s.models.map((m) => (m.id === modelId ? { ...m, contextLength } : m))
       }))
     })
 
-    window.pandora.on('chat:event', (raw) => {
-      const { requestId, event } = raw as IpcEventPayload<'chat:event'>
+    onIpcEvent('chat:event', ({ requestId, event }) => {
       if (requestId !== get().requestId) return
       switch (event.type) {
         case 'delta': {

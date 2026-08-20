@@ -9,7 +9,8 @@ import StatusBar from '../components/StatusBar'
 import PreferencesModal from '../components/PreferencesModal'
 import AboutModal from '../components/AboutModal'
 import iconUrl from '../assets/icon.png'
-import type { IpcEventPayload } from '@shared/ipc'
+import { onIpcEvent } from '../lib/events'
+import { useThemeApplication } from './useThemeApplication'
 import { closeNovelSafely, prepareToLeaveNovel } from './novelActions'
 import { useDraftStore } from '../stores/draft'
 
@@ -36,7 +37,6 @@ export default function App(): React.JSX.Element {
   const setError = useProjectStore((s) => s.setError)
   const initDownloads = useDownloadsStore((s) => s.init)
   const initPrefs = usePrefsStore((s) => s.init)
-  const theme = usePrefsStore((s) => s.theme)
   const showPrefs = useUiStore((s) => s.showPrefs)
   const showAbout = useUiStore((s) => s.showAbout)
   const setShowPrefs = useUiStore((s) => s.setShowPrefs)
@@ -47,10 +47,11 @@ export default function App(): React.JSX.Element {
     void initPrefs()
   }, [initDownloads, initPrefs])
 
+  useThemeApplication()
+
   // Native menu commands act on the stores directly.
   useEffect(() => {
-    return window.pandora.on('menu:action', (raw) => {
-      const { action, dir, platform } = raw as IpcEventPayload<'menu:action'>
+    return onIpcEvent('menu:action', ({ action, dir, platform }) => {
       const ui = useUiStore.getState()
       const project = useProjectStore.getState()
       switch (action) {
@@ -90,7 +91,7 @@ export default function App(): React.JSX.Element {
   // Save-before-close handshake: main is about to close the window or quit.
   // Always ack, even with nothing to save — main waits (bounded) for it.
   useEffect(() => {
-    return window.pandora.on('app:flushRequest', () => {
+    return onIpcEvent('app:flushRequest', () => {
       void (async () => {
         const draft = useDraftStore.getState()
         if (draft.drafting) await draft.stop()
@@ -108,21 +109,6 @@ export default function App(): React.JSX.Element {
       chapterOpen: novel !== null && (activeFile?.startsWith('chapters/') ?? false)
     })
   }, [novel, activeFile])
-
-  // Apply the theme to <html data-theme>; 'system' follows the OS setting.
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: light)')
-    const apply = (): void => {
-      document.documentElement.dataset['theme'] =
-        theme === 'system' ? (mq.matches ? 'light' : 'dark') : theme
-    }
-    apply()
-    if (theme === 'system') {
-      mq.addEventListener('change', apply)
-      return () => mq.removeEventListener('change', apply)
-    }
-    return undefined
-  }, [theme])
 
   return (
     <div className="flex h-screen flex-col">

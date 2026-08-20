@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import { join } from 'node:path'
 import git from 'isomorphic-git'
+import { resolveInside } from '../paths'
 import { structuredPatch } from 'diff'
 
 /**
@@ -339,7 +340,7 @@ export async function restoreFile(
   // before overwriting (no-op when the tree is clean), so nothing a restore
   // replaces is ever unrecoverable.
   await commitAll(dir, `before restore: ${label}`, [filepath])
-  await fs.promises.writeFile(`${dir}/${filepath}`, content, 'utf8')
+  await fs.promises.writeFile(resolveInside(dir, filepath), content, 'utf8')
   return commitAll(dir, `restore: ${label} (from ${oid.slice(0, 7)})`, [filepath])
 }
 

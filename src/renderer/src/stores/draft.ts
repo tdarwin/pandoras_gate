@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { IpcEventPayload } from '@shared/ipc'
+import { onIpcEvent } from '../lib/events'
 import { useProjectStore } from './project'
 import { useChatStore } from './chat'
 
@@ -106,8 +106,8 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
     // a stampede of drafts that all fire when the chat stops.
     let pendingDraft: { chapterFile: string; instructions: string } | null = null
     let watching = false
-    window.pandora.on('draft:requested', (raw) => {
-      pendingDraft = raw as { chapterFile: string; instructions: string }
+    onIpcEvent('draft:requested', (payload) => {
+      pendingDraft = payload
       if (watching) return
       watching = true
       whenChatIdle(() => {
@@ -127,8 +127,7 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
         state.setSavedContent(draftContent)
       }
     })
-    window.pandora.on('chat:event', (raw) => {
-      const { requestId, event } = raw as IpcEventPayload<'chat:event'>
+    onIpcEvent('chat:event', ({ requestId, event }) => {
       if (requestId !== get().requestId) return
       switch (event.type) {
         case 'delta': {

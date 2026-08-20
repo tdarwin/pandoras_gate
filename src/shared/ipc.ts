@@ -1,6 +1,16 @@
 import { z } from 'zod'
 import { NovelStateSchema } from './schemas/project'
 import { CatalogEntryStatusSchema, HostedPickSchema, type ModelRoleMap } from './llm/catalog'
+import {
+  SnapshotIntervalSchema,
+  ContextTargetSchema,
+  ThemePrefSchema,
+  EditorFontFamilySchema,
+  EditorFontSizeSchema,
+  EditorLineHeightSchema,
+  EditorMeasureSchema
+} from './prefs'
+import { ThemeSummarySchema, ResolvedThemeSchema } from './schemas/theme'
 
 export const ChatMessageSchema = z.object({
   role: z.enum(['system', 'user', 'assistant', 'tool']),
@@ -34,6 +44,29 @@ export const ModelRolesSchema = z.object({
   developmental: z.string().nullable(),
   codex: z.string().nullable()
 }) satisfies z.ZodType<ModelRoleMap>
+
+/**
+ * The canonical prefs shape — what prefs:get and prefs:set both return.
+ * Interval/target stay plain numbers here: main coerces unknown stored values
+ * on read, and the write side is constrained by the prefs:set request schema.
+ */
+export const PrefsSchema = z.object({
+  autoCodex: z.boolean(),
+  snapshotOnBlur: z.boolean(),
+  snapshotIntervalMinutes: z.number(),
+  /** Story-context token target for AI chats/drafts; 0 = automatic. */
+  contextTargetTokens: z.number(),
+  theme: ThemePrefSchema,
+  /** Per-task model assignments; null = use the chat panel's model. */
+  modelRoles: ModelRolesSchema,
+  /** Opt-in to seeing models that write explicit content without refusing. */
+  showUnfilteredModels: z.boolean(),
+  /** Appearance overrides on top of the active theme; null = theme's value. */
+  editorFontFamily: EditorFontFamilySchema,
+  editorFontSize: EditorFontSizeSchema,
+  editorLineHeight: EditorLineHeightSchema,
+  editorMeasure: EditorMeasureSchema
+})
 
 export const StreamEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('delta'), text: z.string() }),
@@ -78,6 +111,11 @@ export const ipcContract = {
   'dialog:chooseDirectory': {
     request: z.object({ title: z.string().optional() }),
     response: z.object({ dir: z.string().nullable() })
+  },
+  /** Opens a web/mail URL in the system browser; anything else is refused. */
+  'shell:openExternal': {
+    request: z.object({ url: z.string() }),
+    response: z.object({ opened: z.boolean() })
   },
   'project:createNovel': {
     request: z.object({
@@ -234,42 +272,45 @@ export const ipcContract = {
   },
   'prefs:get': {
     request: z.undefined(),
-    response: z.object({
-      autoCodex: z.boolean(),
-      snapshotOnBlur: z.boolean(),
-      snapshotIntervalMinutes: z.number(),
-      /** Story-context token target for AI chats/drafts; 0 = automatic. */
-      contextTargetTokens: z.number(),
-      theme: z.enum(['dark', 'light', 'system']),
-      /** Per-task model assignments; null = use the chat panel's model. */
-      modelRoles: ModelRolesSchema,
-      /** Opt-in to seeing models that write explicit content without refusing. */
-      showUnfilteredModels: z.boolean()
-    })
+    response: PrefsSchema
   },
   'prefs:set': {
     request: z.object({
       autoCodex: z.boolean().optional(),
       snapshotOnBlur: z.boolean().optional(),
-      snapshotIntervalMinutes: z
-        .union([z.literal(0), z.literal(5), z.literal(10), z.literal(15), z.literal(20)])
-        .optional(),
-      contextTargetTokens: z
-        .union([z.literal(0), z.literal(8192), z.literal(16384), z.literal(32768)])
-        .optional(),
-      theme: z.enum(['dark', 'light', 'system']).optional(),
+      snapshotIntervalMinutes: SnapshotIntervalSchema.optional(),
+      contextTargetTokens: ContextTargetSchema.optional(),
+      theme: ThemePrefSchema.optional(),
       modelRoles: ModelRolesSchema.partial().optional(),
-      showUnfilteredModels: z.boolean().optional()
+      showUnfilteredModels: z.boolean().optional(),
+      editorFontFamily: EditorFontFamilySchema.optional(),
+      editorFontSize: EditorFontSizeSchema.optional(),
+      editorLineHeight: EditorLineHeightSchema.optional(),
+      editorMeasure: EditorMeasureSchema.optional()
     }),
-    response: z.object({
-      autoCodex: z.boolean(),
-      snapshotOnBlur: z.boolean(),
-      snapshotIntervalMinutes: z.number(),
-      contextTargetTokens: z.number(),
-      theme: z.enum(['dark', 'light', 'system']),
-      modelRoles: ModelRolesSchema,
-      showUnfilteredModels: z.boolean()
-    })
+    response: PrefsSchema
+  },
+  'themes:list': {
+    request: z.undefined(),
+    response: z.object({ themes: z.array(ThemeSummarySchema) })
+  },
+  'themes:resolve': {
+    request: z.object({ id: z.string() }),
+    response: ResolvedThemeSchema
+  },
+  /** File dialog in main; id is null when the user cancels. */
+  'themes:import': {
+    request: z.undefined(),
+    response: z.object({ id: z.string().nullable() })
+  },
+  /** From an effective base or a custom theme — never 'system'. */
+  'themes:duplicateCurrent': {
+    request: z.object({ from: ThemePrefSchema }),
+    response: z.object({ id: z.string() })
+  },
+  'themes:openFolder': {
+    request: z.undefined(),
+    response: z.object({ opened: z.literal(true) })
   },
   'sync:getConfig': {
     request: z.object({ novelDir: z.string() }),
@@ -585,6 +626,8 @@ export const ipcEvents = {
   }),
   /** Fired when the agent (or a pipeline run) created new proposals. */
   'proposals:changed': z.object({}),
+  /** A file in the themes folder changed on disk (hand edit, import). */
+  'themes:changed': z.object({}),
   /** Live phase text while a Codex/outline pipeline run is working. */
   'pipeline:status': z.object({ text: z.string() }),
   /** A chat-deferred generation batch started/finished (proposals UI state). */

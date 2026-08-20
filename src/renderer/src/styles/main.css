@@ -14,6 +14,32 @@
   --color-ink-faint: var(--t-ink-faint);
 }
 
+/* Theme-independent typography and surface tokens. Custom themes and the
+   appearance prefs override these as inline properties on <html>, which beat
+   every rule here regardless of selector. */
+:root {
+  /* Tailwind's preflight stack, named so themes can replace it. */
+  --f-ui:
+    ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+    'Segoe UI Symbol', 'Noto Color Emoji';
+  --f-editor: var(--f-ui);
+  --f-chat: var(--f-ui);
+  --f-editor-size: 15px;
+  --f-editor-lh: 1.75;
+  /* The editor's measure (max line width). */
+  --ed-measure: 46rem;
+  /* Background-image plumbing: structure lives in .editor-surface /
+     .chat-surface below; themes only supply values. */
+  --ed-bg-image: none;
+  --ed-bg-opacity: 1;
+  --ed-bg-blur: 0px;
+  --ed-bg-tint: transparent;
+  --chat-bg-image: none;
+  --chat-bg-opacity: 1;
+  --chat-bg-blur: 0px;
+  --chat-bg-tint: transparent;
+}
+
 :root,
 :root[data-theme='dark'] {
   color-scheme: dark;
@@ -36,8 +62,16 @@
   --ed-quote: #52525b;
   --ed-quote-text: #a1a1aa;
   --ed-hr: #3f3f46;
-  --ed-fm: #71717a;
-  --ed-fm-border: #27272a;
+  --chat-head: #fafafa;
+  --chat-code-bg: rgba(255, 255, 255, 0.08);
+  --chat-pre-bg: #09090b;
+  --chat-quote: #52525b;
+  --chat-quote-text: #a1a1aa;
+  --chat-link: #a5b4fc;
+  --tc-ins: #10b981;
+  --tc-del: #f87171;
+  --tc-accept: #34d399;
+  --tc-reject: #f87171;
 }
 
 :root[data-theme='light'] {
@@ -61,8 +95,20 @@
   --ed-quote: #d6d3d1;
   --ed-quote-text: #57534e;
   --ed-hr: #d6d3d1;
-  --ed-fm: #78716c;
-  --ed-fm-border: #e7e5e4;
+  --chat-head: #1c1917;
+  --chat-code-bg: rgba(0, 0, 0, 0.06);
+  --chat-pre-bg: #f5f5f4;
+  --chat-quote: #d6d3d1;
+  --chat-quote-text: #57534e;
+  --chat-link: #4f46e5;
+  --tc-ins: #059669;
+  --tc-del: #dc2626;
+  --tc-accept: #059669;
+  --tc-reject: #dc2626;
+}
+
+body {
+  font-family: var(--f-ui);
 }
 
 /* App-wide chrome: the title bar region is draggable on macOS (hiddenInset). */
@@ -74,13 +120,58 @@
   -webkit-app-region: no-drag;
 }
 
+/* Surfaces that can carry a theme background image. A tint layer sits
+   between the image and the prose so a busy image cannot defeat legibility;
+   both pseudo-layers are invisible while the tokens hold their defaults. */
+.editor-surface,
+.chat-surface {
+  position: relative;
+  isolation: isolate;
+}
+.editor-surface::before,
+.chat-surface::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  background-size: cover;
+  background-position: center;
+}
+.editor-surface::before {
+  inset: calc(-2 * var(--ed-bg-blur));
+  background-image: var(--ed-bg-image);
+  opacity: var(--ed-bg-opacity);
+  filter: blur(var(--ed-bg-blur));
+}
+.chat-surface::before {
+  inset: calc(-2 * var(--chat-bg-blur));
+  background-image: var(--chat-bg-image);
+  opacity: var(--chat-bg-opacity);
+  filter: blur(var(--chat-bg-blur));
+}
+.editor-surface::after,
+.chat-surface::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+.editor-surface::after {
+  background: var(--ed-bg-tint);
+}
+.chat-surface::after {
+  background: var(--chat-bg-tint);
+}
+
 /* The WYSIWYG prose editor (TipTap). Writers see typography, never syntax. */
 .prose-editor {
-  max-width: 46rem;
+  max-width: var(--ed-measure);
   margin: 0 auto;
   padding: 2.5rem 1.5rem 40vh;
-  font-size: 15px;
-  line-height: 1.75;
+  font-family: var(--f-editor);
+  font-size: var(--f-editor-size);
+  line-height: var(--f-editor-lh);
   color: var(--t-ink);
   caret-color: var(--ed-caret);
   outline: none;
@@ -214,13 +305,13 @@
 /* Tracked-changes review: insertions highlighted, deletions as inline
    struck-through widgets, ✓/✕ controls per chunk. */
 .prose-editor .tc-ins {
-  background: color-mix(in srgb, #10b981 22%, transparent);
+  background: color-mix(in srgb, var(--tc-ins) 22%, transparent);
   border-radius: 2px;
 }
 .prose-editor .tc-del {
-  color: #f87171;
+  color: var(--tc-del);
   text-decoration: line-through;
-  text-decoration-color: rgba(248, 113, 113, 0.7);
+  text-decoration-color: color-mix(in srgb, var(--tc-del) 70%, transparent);
   opacity: 0.85;
   padding: 0 1px;
 }
@@ -242,15 +333,19 @@
   cursor: pointer;
 }
 .prose-editor .tc-ctrl button:first-child:hover {
-  color: #34d399;
-  border-color: #34d399;
+  color: var(--tc-accept);
+  border-color: var(--tc-accept);
 }
 .prose-editor .tc-ctrl button:last-child:hover {
-  color: #f87171;
-  border-color: #f87171;
+  color: var(--tc-reject);
+  border-color: var(--tc-reject);
 }
 
-/* Markdown rendering inside chat bubbles. */
+/* Markdown rendering inside chat bubbles. Tokenized like the editor — the
+   old hard-coded dark hex meant the chat panel ignored the light theme. */
+.prose-chat {
+  font-family: var(--f-chat);
+}
 .prose-chat p {
   margin: 0 0 0.6em;
 }
@@ -262,7 +357,7 @@
 .prose-chat h3 {
   font-weight: 600;
   margin: 0.8em 0 0.4em;
-  color: #fafafa;
+  color: var(--chat-head);
 }
 .prose-chat ul,
 .prose-chat ol {
@@ -279,13 +374,13 @@
   margin: 0.15em 0;
 }
 .prose-chat code {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--chat-code-bg);
   border-radius: 4px;
   padding: 0.1em 0.3em;
   font-size: 0.85em;
 }
 .prose-chat pre {
-  background: #09090b;
+  background: var(--chat-pre-bg);
   border-radius: 8px;
   padding: 0.6em 0.8em;
   overflow-x: auto;
@@ -296,12 +391,12 @@
   padding: 0;
 }
 .prose-chat blockquote {
-  border-left: 3px solid #52525b;
+  border-left: 3px solid var(--chat-quote);
   padding-left: 0.8em;
-  color: #a1a1aa;
+  color: var(--chat-quote-text);
   margin: 0.5em 0;
 }
 .prose-chat a {
-  color: #a5b4fc;
+  color: var(--chat-link);
   text-decoration: underline;
 }
