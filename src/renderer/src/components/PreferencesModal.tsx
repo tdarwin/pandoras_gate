@@ -15,6 +15,7 @@ import { usePrefsStore, type ModelRole } from '../stores/prefs'
 import { useProjectStore } from '../stores/project'
 import { useChatStore } from '../stores/chat'
 import { onIpcEvent } from '../lib/events'
+import { FONT_SUGGESTIONS } from '../lib/fonts'
 
 /* Labels keyed by the shared value sets: adding a value to @shared/prefs is a
  * compile error here until the label exists — the UI cannot drift silently. */
@@ -36,20 +37,6 @@ const CONTEXT_LABELS: Record<ContextTarget, string> = {
   16384: 'Roomy (~16k tokens)',
   32768: 'Maximal (~32k tokens)'
 }
-
-/* Common book faces for the font datalist — suggestions, not a constraint. */
-const FONT_SUGGESTIONS = [
-  'Iowan Old Style',
-  'Palatino',
-  'Georgia',
-  'Baskerville',
-  'Charter',
-  'Hoefler Text',
-  'Athelas',
-  'Times New Roman',
-  'Avenir Next',
-  'Helvetica Neue'
-]
 
 const EDITOR_FONT_SIZES = [13, 14, 15, 16, 17, 18, 20]
 const EDITOR_LINE_HEIGHTS = [1.5, 1.6, 1.75, 1.9, 2.1]
