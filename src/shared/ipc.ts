@@ -1,7 +1,15 @@
 import { z } from 'zod'
 import { NovelStateSchema } from './schemas/project'
 import { CatalogEntryStatusSchema, HostedPickSchema, type ModelRoleMap } from './llm/catalog'
-import { SnapshotIntervalSchema, ContextTargetSchema, ThemePrefSchema } from './prefs'
+import {
+  SnapshotIntervalSchema,
+  ContextTargetSchema,
+  ThemePrefSchema,
+  EditorFontFamilySchema,
+  EditorFontSizeSchema,
+  EditorLineHeightSchema,
+  EditorMeasureSchema
+} from './prefs'
 import { ThemeSummarySchema, ResolvedThemeSchema } from './schemas/theme'
 
 export const ChatMessageSchema = z.object({
@@ -52,7 +60,12 @@ export const PrefsSchema = z.object({
   /** Per-task model assignments; null = use the chat panel's model. */
   modelRoles: ModelRolesSchema,
   /** Opt-in to seeing models that write explicit content without refusing. */
-  showUnfilteredModels: z.boolean()
+  showUnfilteredModels: z.boolean(),
+  /** Appearance overrides on top of the active theme; null = theme's value. */
+  editorFontFamily: EditorFontFamilySchema,
+  editorFontSize: EditorFontSizeSchema,
+  editorLineHeight: EditorLineHeightSchema,
+  editorMeasure: EditorMeasureSchema
 })
 
 export const StreamEventSchema = z.discriminatedUnion('type', [
@@ -269,7 +282,11 @@ export const ipcContract = {
       contextTargetTokens: ContextTargetSchema.optional(),
       theme: ThemePrefSchema.optional(),
       modelRoles: ModelRolesSchema.partial().optional(),
-      showUnfilteredModels: z.boolean().optional()
+      showUnfilteredModels: z.boolean().optional(),
+      editorFontFamily: EditorFontFamilySchema.optional(),
+      editorFontSize: EditorFontSizeSchema.optional(),
+      editorLineHeight: EditorLineHeightSchema.optional(),
+      editorMeasure: EditorMeasureSchema.optional()
     }),
     response: PrefsSchema
   },

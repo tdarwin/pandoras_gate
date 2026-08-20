@@ -37,3 +37,20 @@ export const ThemePrefSchema = z.union([
     message: 'expected dark, light, system, or custom:<theme-id>'
   })
 ]) satisfies z.ZodType<ThemePref>
+
+/*
+ * Appearance overrides: null = use the active theme's value. They sit on top
+ * of whatever theme is selected, so built-in-theme users can set fonts too.
+ * Values are emitted into CSS — the family regex keeps metacharacters out.
+ */
+export const EditorFontFamilySchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[^;{}"\\]+$/, 'font family names cannot contain ; { } " or \\')
+  .nullable()
+/** px */
+export const EditorFontSizeSchema = z.number().min(10).max(28).nullable()
+export const EditorLineHeightSchema = z.number().min(1).max(3).nullable()
+/** Max line width, in rem. */
+export const EditorMeasureSchema = z.number().min(20).max(80).nullable()

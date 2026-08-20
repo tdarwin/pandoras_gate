@@ -16,6 +16,11 @@ interface PrefsStore {
   theme: ThemePref
   modelRoles: ModelRoleMap
   showUnfilteredModels: boolean
+  /** Appearance overrides on top of the active theme; null = theme's value. */
+  editorFontFamily: string | null
+  editorFontSize: number | null
+  editorLineHeight: number | null
+  editorMeasure: number | null
   loaded: boolean
   init: () => Promise<void>
   update: (patch: {
@@ -26,6 +31,10 @@ interface PrefsStore {
     theme?: ThemePref
     modelRoles?: Partial<ModelRoleMap>
     showUnfilteredModels?: boolean
+    editorFontFamily?: string | null
+    editorFontSize?: number | null
+    editorLineHeight?: number | null
+    editorMeasure?: number | null
   }) => Promise<void>
 }
 
@@ -37,6 +46,10 @@ export const usePrefsStore = create<PrefsStore>((set, get) => ({
   theme: 'dark',
   modelRoles: NO_ROLES,
   showUnfilteredModels: false,
+  editorFontFamily: null,
+  editorFontSize: null,
+  editorLineHeight: null,
+  editorMeasure: null,
   loaded: false,
 
   init: async () => {
@@ -57,7 +70,11 @@ export const usePrefsStore = create<PrefsStore>((set, get) => ({
       contextTargetTokens: s.contextTargetTokens,
       theme: s.theme,
       modelRoles: s.modelRoles,
-      showUnfilteredModels: s.showUnfilteredModels
+      showUnfilteredModels: s.showUnfilteredModels,
+      editorFontFamily: s.editorFontFamily,
+      editorFontSize: s.editorFontSize,
+      editorLineHeight: s.editorLineHeight,
+      editorMeasure: s.editorMeasure
     }
     set((cur) => ({
       ...patch,
