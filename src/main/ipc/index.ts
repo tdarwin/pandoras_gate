@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import {
   ipcContract,
   type IpcChannel,
@@ -10,6 +10,7 @@ import { basename } from 'node:path'
 import * as project from '../project/service'
 import * as gitService from '../git/service'
 import { rendererFlushed } from '../flush'
+import { isOpenableExternalUrl } from '../navigation'
 import { refreshAppMenu } from '../menu'
 import { readAppState, touchRecentNovel } from '../store'
 import { getProvider, startChat, cancelChat } from '../llm/chat'
@@ -133,6 +134,14 @@ export function registerIpcHandlers(): void {
       properties: ['openDirectory', 'createDirectory']
     })
     return { dir: result.canceled ? null : (result.filePaths[0] ?? null) }
+  })
+
+  handle('shell:openExternal', async (req) => {
+    // Validated in main, not just the renderer: the renderer is the side
+    // rendering untrusted markdown, so its judgment is not trusted here.
+    if (!isOpenableExternalUrl(req.url)) return { opened: false }
+    await shell.openExternal(req.url)
+    return { opened: true }
   })
 
   handle('project:createNovel', async (req) => {

@@ -1,5 +1,7 @@
 import { app, shell, BrowserWindow, nativeImage } from 'electron'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { isAllowedNavigation, isOpenableExternalUrl } from './navigation'
 import appIcon from '../../resources/icon.png?asset'
 import { existsSync, renameSync } from 'node:fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -93,21 +95,28 @@ function createWindow(): void {
     if (!mainWindow.isDestroyed()) mainWindow.webContents.reload()
   })
 
-  // All external links open in the system browser, never in-app.
+  // All external links open in the system browser, never in-app — and only
+  // web/mail URLs reach the OS: file://, javascript:, and custom schemes are
+  // dropped rather than handed to shell.openExternal.
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    void shell.openExternal(details.url)
+    if (isOpenableExternalUrl(details.url)) void shell.openExternal(details.url)
     return { action: 'deny' }
   })
+  // The window may only ever navigate back to its own entry document (see
+  // navigation.ts for why the old file:// prefix check was a takeover path).
+  const entryFile = join(__dirname, '../renderer/index.html')
+  const entryUrl =
+    is.dev && process.env['ELECTRON_RENDERER_URL']
+      ? process.env['ELECTRON_RENDERER_URL']
+      : pathToFileURL(entryFile).href
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(process.env['ELECTRON_RENDERER_URL'] ?? 'file://')) {
-      event.preventDefault()
-    }
+    if (!isAllowedNavigation(url, entryUrl)) event.preventDefault()
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    void mainWindow.loadFile(entryFile)
   }
 }
 

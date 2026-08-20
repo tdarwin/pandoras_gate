@@ -98,6 +98,11 @@ export const ipcContract = {
     request: z.object({ title: z.string().optional() }),
     response: z.object({ dir: z.string().nullable() })
   },
+  /** Opens a web/mail URL in the system browser; anything else is refused. */
+  'shell:openExternal': {
+    request: z.object({ url: z.string() }),
+    response: z.object({ opened: z.boolean() })
+  },
   'project:createNovel': {
     request: z.object({
       parentDir: z.string(),

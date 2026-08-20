@@ -1,12 +1,46 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useChatStore, type ChatEntry, type ContextReport } from '../stores/chat'
 import ModelsManager from './ModelsManager'
 
 // Module constant: a fresh array literal per render would defeat the memo below.
 const REMARK_PLUGINS = [remarkGfm]
+
+/**
+ * Chat replies are untrusted markdown. The default transform keeps relative
+ * URLs, which resolve against the window's own file:// origin in packaged
+ * builds — a model-authored link could navigate the privileged window. Only
+ * absolute web/mail URLs survive, and clicks go through main's validated
+ * shell:openExternal instead of anchor navigation.
+ */
+function safeChatUrl(url: string): string {
+  try {
+    const protocol = new URL(url).protocol
+    if (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:') return url
+  } catch {
+    // Relative or malformed — drop it.
+  }
+  return ''
+}
+
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ href, children }) =>
+    href ? (
+      <a
+        href={href}
+        onClick={(e) => {
+          e.preventDefault()
+          void window.pandora.invoke('shell:openExternal', { url: href })
+        }}
+      >
+        {children}
+      </a>
+    ) : (
+      <span>{children}</span>
+    )
+}
 
 /**
  * One transcript entry. Memoized so a streaming delta re-parses ONLY the
@@ -38,7 +72,13 @@ const MessageBubble = memo(function MessageBubble({
   }
   return (
     <div className="prose-chat max-w-none text-sm leading-relaxed text-ink">
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{entry.content}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        urlTransform={safeChatUrl}
+        components={MARKDOWN_COMPONENTS}
+      >
+        {entry.content}
+      </ReactMarkdown>
       {streamingCursor && (
         <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-indigo-400 align-text-bottom" />
       )}
