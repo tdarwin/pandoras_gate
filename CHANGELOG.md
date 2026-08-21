@@ -12,6 +12,8 @@ Write for a novelist, not for a reviewer of the diff.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-08-20
+
 ### Added
 
 - **Richer styling without leaving markdown.** The editor can now center or right-align
@@ -51,6 +53,11 @@ Write for a novelist, not for a reviewer of the diff.
   arbitrary local files by a link in an AI chat reply, and every chapter or suggestion
   path from a hand-edited or shared novel folder is now confined to that novel's folder
   — including through symlinks.
+- **Sync only sends your access token to the remote you set.** Pushing now refuses a novel
+  whose git config points at a different host than the one you configured in
+  Preferences → Sync, and rejects plain `http://` remotes outright — so a shared or
+  hand-edited novel folder can't quietly redirect your token to another server, and it's
+  never sent in the clear.
 
 ## [0.5.1] — 2026-08-20
 
@@ -220,7 +227,8 @@ First tagged release.
 - **One-paste publishing** to RoyalRoad and Patreon.
 - Chapter management, tunable interval snapshots, git sync, and preferences.
 
-[Unreleased]: https://github.com/tdarwin/pandoras_gate/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/tdarwin/pandoras_gate/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/tdarwin/pandoras_gate/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/tdarwin/pandoras_gate/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/tdarwin/pandoras_gate/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/tdarwin/pandoras_gate/compare/v0.4.1...v0.4.2
