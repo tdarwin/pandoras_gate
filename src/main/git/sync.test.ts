@@ -99,4 +99,16 @@ describe('pushToRemote host binding', () => {
     // Guard fired before any token binding was (re)written.
     expect(secrets.setSecret).not.toHaveBeenCalled()
   })
+
+  it('refuses an http:// origin read from .git/config (never sends the token in cleartext)', async () => {
+    // normalizeRemoteUrl only guards the Sync form; the origin here bypasses it.
+    // Even on the authorized host, http:// must be rejected before git.push.
+    await git.addRemote({ fs, dir, remote: 'origin', url: 'http://github.com/me/novel.git' })
+    secrets.getSecret.mockImplementation(async (name: string) =>
+      name === 'git-sync-token' ? 'ghp_secret' : name === 'git-sync-host' ? 'github.com' : null
+    )
+    await expect(pushToRemote(dir)).rejects.toThrow(/https:\/\/|cleartext/)
+    // No token binding written, and the token was never resolved for a push.
+    expect(secrets.setSecret).not.toHaveBeenCalled()
+  })
 })
