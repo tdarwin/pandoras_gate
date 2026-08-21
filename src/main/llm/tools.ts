@@ -15,6 +15,7 @@ import { parseFrontmatter } from '../../shared/frontmatter'
 import { flushAutocommit, commitAll } from '../git/service'
 import { logInfo, logError } from '../log'
 import { withSpan } from '../telemetry'
+import { contentCaptureEnabled } from './genai-otel'
 import { SpanStatusCode } from '@opentelemetry/api'
 
 /**
@@ -214,25 +215,38 @@ export async function executeTool(
   argsJson: string
 ): Promise<string> {
   logInfo('tools', `executing ${name}`, argsJson)
+  // Tool arguments and results carry manuscript prose (codex/chapter text,
+  // find/replace strings). Record it verbatim only when GenAI content capture
+  // is on, matching tracedChatStream; otherwise record just a length so a dev
+  // with an OTLP endpoint but capture off ships no prose to the collector.
+  const captureContent = contentCaptureEnabled()
   return withSpan(
     `execute_tool ${name}`,
     {
       'gen_ai.operation.name': 'execute_tool',
       'gen_ai.tool.name': name,
       'gen_ai.tool.type': 'function',
-      'gen_ai.tool.call.arguments': argsJson,
+      ...(captureContent
+        ? { 'gen_ai.tool.call.arguments': argsJson }
+        : { 'gen_ai.tool.call.arguments.length': argsJson.length }),
       'gen_ai.request.model': ctx.modelId,
       ...(ctx.conversationId ? { 'gen_ai.conversation.id': ctx.conversationId } : {})
     },
     async (span) => {
       const result = await executeToolInner(ctx, name, argsJson)
-      span.setAttribute('gen_ai.tool.call.result', result.slice(0, 4000))
+      if (captureContent) span.setAttribute('gen_ai.tool.call.result', result.slice(0, 4000))
+      else span.setAttribute('gen_ai.tool.call.result.length', result.length)
       if (result.startsWith('Error') || result.startsWith('Nothing queued')) {
         // Tool-level failures return strings (so the model can react), but
-        // observability needs them as real errors with the message attached.
-        span.setStatus({ code: SpanStatusCode.ERROR, message: result.slice(0, 500) })
+        // observability needs them as real errors. The message can embed the
+        // user's own text, so gate it the same way — always keep error.type.
+        span.setStatus(
+          captureContent
+            ? { code: SpanStatusCode.ERROR, message: result.slice(0, 500) }
+            : { code: SpanStatusCode.ERROR }
+        )
         span.setAttribute('error.type', 'tool_error')
-        span.setAttribute('error.message', result.slice(0, 4000))
+        if (captureContent) span.setAttribute('error.message', result.slice(0, 4000))
         logError('tools', `${name} returned an error result`, result.slice(0, 500))
       }
       return result
