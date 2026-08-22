@@ -5,6 +5,7 @@ import { baseExtensions } from './extensions'
 import { markdownToDoc, docToMarkdown } from './markdown'
 import {
   inlineDocContent,
+  suggestionsAttached,
   TrackChanges,
   pendingChanges,
   pendingChangeCount,
@@ -440,6 +441,27 @@ describe('TrackChanges', () => {
     expect(chunks).toHaveLength(1)
     expect(chunks[0]!.sources).toEqual(['p1'])
     expect(docToMarkdown(savableDoc(editor.state))).toBe('Alpha.\n\nBeta.\n')
+    editor.destroy()
+  })
+
+  it('a detached overlay says so, so a count of zero is never mistaken for a decision', () => {
+    const editor = makeReviewEditor('Old line.\n', 'New line.\n')
+    expect(suggestionsAttached(editor.state)).toBe(true)
+    expect(pendingChangeCount(editor.state)).toBe(1)
+
+    editor.commands.detachSuggestions()
+    // Both are zero now. Only one of them means "the author decided".
+    expect(pendingChangeCount(editor.state)).toBe(0)
+    expect(suggestionsAttached(editor.state)).toBe(false)
+
+    editor.commands.acceptAllChanges()
+    expect(suggestionsAttached(editor.state)).toBe(false)
+    editor.destroy()
+  })
+
+  it('a structural proposal leaves the overlay unattached', () => {
+    const editor = makeReviewEditor('Hello.\n', '> Hello.\n')
+    expect(suggestionsAttached(editor.state)).toBe(false)
     editor.destroy()
   })
 })

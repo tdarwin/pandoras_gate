@@ -51,6 +51,8 @@ export interface AttachSpec {
 }
 
 interface TrackState {
+  /** True while an overlay is on the document — inert and detached are false. */
+  attached: boolean
   original: PMNode
   set: ChangeSet<string>
   /** Ranges (in current-doc coordinates) the author explicitly accepted. */
@@ -433,6 +435,17 @@ export function pendingChanges(state: EditorState): Chunk[] {
   return track ? visibleChanges(track, state.doc) : []
 }
 
+/**
+ * Whether an overlay is actually on the document.
+ *
+ * A count of zero is ambiguous — everything decided, or nothing attached —
+ * and reading a DETACH as "the author decided everything" deleted the
+ * suggestion that was about to be shown and recorded it as refused.
+ */
+export function suggestionsAttached(state: EditorState): boolean {
+  return trackChangesKey.getState(state)?.attached ?? false
+}
+
 /** Number of unresolved suggested changes (for badges/tests). */
 export function pendingChangeCount(state: EditorState): number {
   return pendingChanges(state).length
@@ -595,6 +608,7 @@ function attachedState(schema: PMNode['type']['schema'], raw: AttachSpec, doc: P
     doc: i === spec.chain.length - 1 ? doc : markdownToDoc(schema, link.content)
   }))
   return {
+    attached: chain.length > 0,
     original,
     set: chain.length > 0 ? foldChain(original, chain) : ChangeSet.create<string>(original, undefined, attrsAwareEncoder),
     accepted: [],
@@ -754,6 +768,7 @@ export const TrackChanges = Extension.create<TrackChangesOptions>({
         state: {
           init: (_config, state) => {
             const inert: TrackState = {
+              attached: false,
               original: state.doc,
               set: ChangeSet.create<string>(state.doc, undefined, attrsAwareEncoder),
               accepted: [],
@@ -777,6 +792,7 @@ export const TrackChanges = Extension.create<TrackChangesOptions>({
             }
             if (meta?.detach) {
               return {
+                attached: false,
                 original: newState.doc,
                 set: ChangeSet.create<string>(newState.doc, undefined, attrsAwareEncoder),
                 accepted: [],
@@ -803,6 +819,7 @@ export const TrackChanges = Extension.create<TrackChangesOptions>({
             }
 
             const next: TrackState = {
+              attached: value.attached,
               original: value.original,
               set,
               accepted,
