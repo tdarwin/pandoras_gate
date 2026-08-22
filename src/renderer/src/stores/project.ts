@@ -4,6 +4,46 @@ import { onIpcEvent } from '../lib/events'
 
 let subscribed = false
 
+/**
+ * Set by the proposals store. A document with suggestions pending must be
+ * saved by RECORDING decisions, not by writing the buffer over the stored
+ * proposals — but every save path (autosave, blur, the interval snapshot, ⌘S,
+ * switching chapters, closing the novel) goes through the two functions below,
+ * so the choice belongs here rather than at each call site.
+ *
+ * Injected rather than imported to keep the dependency one-way: the proposals
+ * store already reads this one.
+ *
+ * Returns false when it did not handle the write — fall back to the ordinary
+ * path, because a refused decision must never cost the author their typing.
+ */
+type SuggestionWriter = (file: string, content: string, snapshot: boolean) => Promise<boolean>
+let suggestionWriter: SuggestionWriter | null = null
+export function setSuggestionWriter(fn: SuggestionWriter): void {
+  suggestionWriter = fn
+}
+
+/**
+ * Told what the file says after an ordinary write, so a suggestion overlay
+ * that just refused a decision is re-anchored to what actually landed rather
+ * than to what was there before the fallback.
+ */
+type CurrentSink = (file: string, content: string) => void
+let currentSink: CurrentSink | null = null
+export function setCurrentSink(fn: CurrentSink): void {
+  currentSink = fn
+}
+
+/** Called on close/switch so nothing from one novel leaks into the next. */
+type NovelReset = () => void
+const novelResets: NovelReset[] = []
+export function onNovelChange(fn: NovelReset): void {
+  novelResets.push(fn)
+}
+function resetForNovelChange(): void {
+  for (const fn of novelResets) fn()
+}
+
 interface ProjectStore {
   /** One-time event subscriptions (manifest changes made in main). */
   init: () => void
@@ -59,7 +99,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   setError: (message) => set({ lastError: message }),
 
-  setNovel: (novel) => set({ novel, activeFile: null, content: '', dirty: false }),
+  setNovel: (novel) => {
+    // Chat transcripts, drafting state, and pending-suggestion overlays belong
+    // to the novel they came from. Workspace stays mounted across
+    // File → Open Recent, so without this, novel A's conversation gets sent as
+    // history for novel B and A's suggestions render over B's documents.
+    resetForNovelChange()
+    set({ novel, activeFile: null, content: '', dirty: false })
+  },
 
   applyNovelState: (novel) => set({ novel }),
 
@@ -70,6 +117,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     // Every caller must get the snapshot — the sidebar ✕ used to skip it and
     // dropped up to 5 s of typing.
     await get().snapshotActiveChapter()
+    resetForNovelChange()
     set({ novel: null, activeFile: null, content: '', dirty: false })
   },
 
@@ -94,23 +142,38 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     else set({ lastError: result.error.message })
   },
 
-  setContent: (content) => set({ content, dirty: true }),
+  // A write that changes nothing is not an edit. The editor emits its
+  // serialized document once at creation, and treating that as a change made
+  // every file dirty the moment it was opened — so merely LOOKING at a chapter
+  // queued an autosave that rewrote it.
+  setContent: (content) =>
+    set((s) => (s.content === content ? {} : { content, dirty: true })),
 
   saveActiveChapter: async () => {
     const { novel, activeFile, content, dirty } = get()
     if (!novel || !activeFile || !dirty) return
+    if (await suggestionWriter?.(activeFile, content, false)) {
+      set({ dirty: false })
+      return
+    }
     const result = await window.pandora.invoke('chapter:write', {
       novelDir: novel.dir,
       file: activeFile,
       content
     })
-    if (result.ok) set({ dirty: false })
-    else set({ lastError: result.error.message })
+    if (result.ok) {
+      set({ dirty: false })
+      currentSink?.(activeFile, content)
+    } else set({ lastError: result.error.message })
   },
 
   snapshotActiveChapter: async () => {
     const { novel, activeFile, content } = get()
     if (!novel || !activeFile) return
+    if (await suggestionWriter?.(activeFile, content, true)) {
+      set({ dirty: false })
+      return
+    }
     // Always write+snapshot: commits are no-ops when nothing changed, and
     // this also sweeps up earlier quiet writes into a history entry.
     const result = await window.pandora.invoke('chapter:write', {
@@ -119,8 +182,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       content,
       snapshot: true
     })
-    if (result.ok) set({ dirty: false })
-    else set({ lastError: result.error.message })
+    if (result.ok) {
+      set({ dirty: false })
+      currentSink?.(activeFile, content)
+    } else set({ lastError: result.error.message })
   },
 
   createChapter: async (title) => {

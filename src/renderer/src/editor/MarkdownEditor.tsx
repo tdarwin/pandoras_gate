@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Extension, getSchema } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
-import { TextSelection } from '@tiptap/pm/state'
+import { TextSelection, type EditorState } from '@tiptap/pm/state'
 import { baseExtensions } from './extensions'
 import { markdownToDoc } from './markdown'
 import {
@@ -66,6 +66,10 @@ export interface EditorHandle {
   rejectAllSuggestions: () => void
   /** Moves the caret to the next suggestion, wrapping; false when there are none. */
   goToNextSuggestion: () => boolean
+  /** Shows suggestions on the live document — no remount, no focus change. */
+  attachSuggestions: (spec: AttachSpec) => void
+  /** Drops the overlay, leaving the savable document behind. */
+  detachSuggestions: () => void
 }
 
 /** Asset-import callbacks the workspace wires to main (null = no novel). */
@@ -176,6 +180,28 @@ export default function MarkdownEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId])
 
+  /**
+   * Pushes the savable document up, then the count.
+   *
+   * Order matters both ways. Content first, because a decision that CHANGES
+   * the text (accept) must leave the buffer dirty before anything reacts to
+   * the count — otherwise the store persists the decision against the old
+   * buffer and resolves the proposals out from under the save that follows.
+   * Count always, because a decision that changes NOTHING (reject) would
+   * otherwise never be reported at all.
+   */
+  const emit = (state: EditorState): void => {
+    const md = savableMarkdown(state)
+    // TipTap emits one update as the editor is created. Passing that up marks
+    // a freshly opened document dirty, which queues an autosave that rewrites
+    // a file the author only looked at.
+    if (md !== lastValueRef.current) {
+      lastValueRef.current = md
+      onChangeRef.current(md)
+    }
+    onSuggestionsChangeRef.current?.(pendingChangeCount(state))
+  }
+
   const editor = useEditor(
     {
       extensions: [
@@ -204,10 +230,7 @@ export default function MarkdownEditor({
         // The SAVABLE document, not the visible one: with suggestions shown
         // the editor holds AI text the author has not agreed to, and autosave
         // must not write it.
-        const md = savableMarkdown(editor.state)
-        lastValueRef.current = md
-        onChangeRef.current(md)
-        onSuggestionsChangeRef.current?.(pendingChangeCount(editor.state))
+        emit(editor.state)
       }
     },
     // Recreate (fresh undo history) only when switching documents.
@@ -280,7 +303,13 @@ export default function MarkdownEditor({
       rejectAllSuggestions: () => {
         editor.chain().rejectAllChanges().run()
       },
-      goToNextSuggestion: () => editor.chain().goToNextSuggestion().run()
+      goToNextSuggestion: () => editor.chain().goToNextSuggestion().run(),
+      attachSuggestions: (spec) => {
+        editor.chain().attachSuggestions(spec).run()
+      },
+      detachSuggestions: () => {
+        editor.chain().detachSuggestions().run()
+      }
     })
     return () => onReadyRef.current?.(null)
   }, [editor])
