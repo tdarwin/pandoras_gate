@@ -50,8 +50,21 @@ export const PendingProposalItem = z.object({
    * The full doc content the proposal was generated against (null for
    * create). Kept verbatim so accepting can REBASE the change onto whatever
    * the file says now instead of overwriting it wholesale.
+   *
+   * Advances as the author decides: once a hunk is accepted, the file — and
+   * therefore the base for what is left — has moved on.
    */
-  baseContent: z.string().nullable()
+  baseContent: z.string().nullable(),
+  /**
+   * The content as FIRST proposed, for the rejected-suggestion memory.
+   *
+   * `newContent` shrinks as hunks are rejected one by one, so by the time an
+   * item empties it says only "the file as it already is" — useless as a
+   * fingerprint of what the author turned down. This keeps the original.
+   * Null the moment any part of the item is accepted: a partially accepted
+   * document has moved on, and re-proposing the rest later is correct.
+   */
+  asProposed: z.string().nullable()
 })
 export type PendingProposalItem = z.infer<typeof PendingProposalItem>
 

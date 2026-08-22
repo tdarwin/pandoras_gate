@@ -10,7 +10,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc'
 import { refreshAppMenu } from './menu'
 import { legacyUserDataDir, migrateLegacyStatePaths } from './store'
-import { flushAllAutocommits, awaitIdle } from './git/service'
+import { flushAllAutocommits } from './git/service'
+import { awaitIdle } from './locks'
 import { requestRendererFlush, requestAllRendererFlushes } from './flush'
 import { initTelemetry, shutdownTelemetry } from './telemetry'
 import { logInfo, logWarn, logError } from './log'
@@ -87,6 +88,9 @@ function createWindow(): void {
     event.preventDefault()
     void (async () => {
       await requestRendererFlush(mainWindow)
+      // Decision and state writes settle BEFORE the commit flush — the flush
+      // can only commit what has already reached disk.
+      await awaitIdle()
       await flushAllAutocommits()
       await awaitIdle()
       closeFlushed = true
@@ -191,7 +195,12 @@ app.on('before-quit', (event) => {
     // Renderer buffers first — the git flush below can only commit what the
     // renderer has written to disk.
     await requestAllRendererFlushes()
-    await Promise.allSettled([flushAllAutocommits().then(() => awaitIdle()), shutdownTelemetry()])
+    await Promise.allSettled([
+      awaitIdle()
+        .then(() => flushAllAutocommits())
+        .then(() => awaitIdle()),
+      shutdownTelemetry()
+    ])
   })().finally(() => {
     quitFlushed = true
     app.quit()
