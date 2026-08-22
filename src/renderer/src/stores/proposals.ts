@@ -619,6 +619,11 @@ async function writeDecisions(
         { active: { ...s.active, current: result.data.content ?? s.active.current } }
       : {}
   )
+  // A document that had no file has one now. The flag that keeps saves from
+  // materialising a rejected phantom must not outlive the accept that created
+  // it, or an author who selects all and deletes gets their deletion swallowed
+  // and genuine read errors stay hidden for the rest of the session.
+  if (result.data.content !== null) useProjectStore.getState().notePathWritten(active.path)
   // What went to disk can differ from the buffer. Left unsynced, the next
   // plain save — once the suggestions resolve and this writer stops running —
   // put the buffer straight back over it.
@@ -672,9 +677,12 @@ async function finishBulk(
       }.`
     )
   }
-  // A create that was rejected has no file to re-read; the reload would only
-  // ever return ENOENT.
-  const project = useProjectStore.getState()
-  if (reloadOpenDoc && !project.activeMissing) await project.reloadActiveChapter()
+  // Including a create that was just ACCEPTED: main has made the file, and
+  // skipping the reload left the editor holding the empty buffer it started
+  // with — which the next save then wrote back over the new profile.
+  // `reloadActiveChapter` already stays quiet about the ENOENT that is the
+  // expected answer for a document with no file, so a rejected create needs no
+  // special case here.
+  if (reloadOpenDoc) await useProjectStore.getState().reloadActiveChapter()
   return result.data.applied > 0
 }

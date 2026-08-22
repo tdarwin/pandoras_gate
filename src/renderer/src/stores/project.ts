@@ -82,6 +82,12 @@ interface ProjectStore {
   applyNovelState: (novel: NovelState) => void
   /** Replace the buffer with on-disk content (not dirty). */
   setSavedContent: (content: string) => void
+  /**
+   * main wrote this path — through the suggestion writer, which returns to the
+   * caller as "saved" without going near `chapter:write`. A document opened
+   * with `allowMissing` has a file from that moment on.
+   */
+  notePathWritten: (path: string) => void
   /** Snapshots the open buffer, then clears the workspace. */
   closeNovel: () => Promise<void>
   /**
@@ -138,7 +144,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   applyNovelState: (novel) => set({ novel }),
 
-  setSavedContent: (content) => set({ content, dirty: false }),
+  setSavedContent: (content) => set({ content, dirty: false, activeMissing: false }),
+
+  notePathWritten: (path) =>
+    set((s) => (s.activeFile === path ? { activeMissing: false } : {})),
 
 
   closeNovel: async () => {
