@@ -264,6 +264,16 @@ Two separate places, and the distinction matters:
   compose instead of the last silently reverting the first two. A proposal that will not
   re-anchor is set aside with its reason rather than poisoning the fold.
 
+  Suggestions are reviewed **inline**, in the ordinary editor — there is no queue and no
+  review mode. Two rules keep the save path honest: only proposals the author can actually
+  SEE are decided (the overlay must be attached, and the fold's set-aside proposals are not
+  on screen), and frontmatter defaults to the author's own, never the proposal's. The document the editor holds is the file plus every pending suggestion;
+  what gets saved is `savableDoc` (see below), so an undecided suggestion never reaches
+  disk. Every save path in `stores/project.ts` routes through the injected
+  `suggestionWriter` when the open document has suggestions, so autosave, blur, the
+  interval snapshot, ⌘S, switching chapters and closing the novel all record decisions
+  rather than writing the buffer over them.
+
   A decision is recorded by `applyProposalDecisions`: what the file should say now, and
   what is still proposed — for the proposals the author actually saw. Anything not named
   in `decisions` is left untouched, `baseContent` included, because the fold re-anchors it
@@ -272,6 +282,18 @@ Two separate places, and the distinction matters:
   than patched hunk by hunk, so the stored item is a pure function of what the author is
   looking at and a crash mid-review leaves nothing to reconcile. `baseContent` advances
   as hunks are accepted; the item resolves when nothing is left to suggest.
+
+  A refused apply means the file moved under the author, and what happens next depends on
+  whether there was anything to write. When there was, the writer declines and the caller
+  makes an ordinary write, which re-anchors the overlay: the buffer holds typing, and
+  losing that is worse than overwriting the change main objected to. When there was not —
+  `write` is null exactly when the savable document already equals the anchor — the writer
+  handles it and reports so, because a fallback write there has nothing to offer but
+  damage: it puts the pre-change text back over the external edit. That path re-folds and
+  re-reads the buffer instead, which was a copy of the anchor main just called stale. Both
+  are conditional on the buffer still being what was sent: keystrokes typed during the
+  round trip win, ride the next save, and keep the buffer dirty so autosave still has a
+  reason to fire.
 
   Concurrency: every read-modify-write of `.pandora/state.json`, of the proposal JSON,
   and of a git index runs through `withLock` (`src/main/locks.ts`) — nothing in Electron
