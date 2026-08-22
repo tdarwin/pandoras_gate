@@ -20,6 +20,9 @@ import { stringify as stringifyYaml } from 'yaml'
 
 const AUTO_METADATA_DELAY_MS = 15_000
 
+/** The single-proposal id the "Review in editor" flow attributes chunks to. */
+const REVIEW_PROPOSAL = 'review'
+
 function wordCount(body: string): { words: number; readMinutes: number } {
   const words = body.split(/\s+/).filter((w) => /\w/.test(w)).length
   return { words, readMinutes: Math.max(1, Math.round(words / 230)) }
@@ -86,12 +89,12 @@ export default function Workspace(): React.JSX.Element {
   }, [novel.dir])
   const lastRunStatus = useProposalsStore((s) => s.lastRunStatus)
   const review = useProposalsStore((s) => s.review)
-  const updateReviewBody = useProposalsStore((s) => s.updateReviewBody)
   const setReviewFmChoice = useProposalsStore((s) => s.setReviewFmChoice)
   const applyReview = useProposalsStore((s) => s.applyReview)
   const rejectReview = useProposalsStore((s) => s.rejectReview)
   const exitReview = useProposalsStore((s) => s.exitReview)
   const [editorHandle, setEditorHandle] = useState<EditorHandle | null>(null)
+  const [reviewHandle, setReviewHandle] = useState<EditorHandle | null>(null)
   const pendingCount = useProposalsStore((s) => s.pendingTotal)
   const runProposals = useProposalsStore((s) => s.runForActiveChapter)
   const generateOutline = useProposalsStore((s) => s.generateOutline)
@@ -287,7 +290,9 @@ export default function Workspace(): React.JSX.Element {
                 Later
               </button>
               <button
-                onClick={() => void applyReview()}
+                onClick={() =>
+                  void applyReview(reviewHandle?.proposedBody(REVIEW_PROPOSAL) ?? proposed.body)
+                }
                 className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600"
               >
                 Apply
@@ -323,9 +328,15 @@ export default function Workspace(): React.JSX.Element {
           <div className="min-h-0 flex-1 overflow-hidden">
             <MarkdownEditor
               docId={`review:${review.path}`}
-              value={review.bodyBuffer}
-              onChange={updateReviewBody}
-              reviewOriginal={original.body}
+              // `value` is the SAVABLE body — the file as it stands. The doc
+              // the editor shows is the folded proposal on top of it.
+              value={original.body}
+              onChange={() => {}}
+              suggestion={{
+                original: original.body,
+                chain: [{ proposalId: REVIEW_PROPOSAL, content: proposed.body }]
+              }}
+              onReady={setReviewHandle}
               importImage={importImage}
             />
           </div>

@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Extension, getSchema } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
+import { TextSelection } from '@tiptap/pm/state'
 import { baseExtensions } from './extensions'
-import { docToMarkdown, markdownToDoc } from './markdown'
-import { TrackChanges } from './track-changes'
+import { markdownToDoc } from './markdown'
+import {
+  TrackChanges,
+  pendingChangeCount,
+  savableMarkdown,
+  proposedMarkdown,
+  type AttachSpec
+} from './track-changes'
 import { ImagePaste } from './image-paste'
 
 /** Style commands the toolbar can drive without knowing the editor library. */
@@ -47,6 +54,18 @@ export interface EditorHandle {
   getAttributes: (name: string) => Record<string, unknown>
   /** Fires on every document/selection change; returns an unsubscribe. */
   subscribe: (cb: () => void) => () => void
+
+  /* --- Suggestions (no-ops when nothing is attached) --- */
+  /** Undecided suggestions currently shown. */
+  suggestionCount: () => number
+  /** Markdown as it should be saved: undecided suggestions reverted. */
+  savableBody: () => string
+  /** Markdown of what one proposal still proposes. */
+  proposedBody: (proposalId: string) => string
+  acceptAllSuggestions: () => void
+  rejectAllSuggestions: () => void
+  /** Moves the caret to the next suggestion, wrapping; false when there are none. */
+  goToNextSuggestion: () => boolean
 }
 
 /** Asset-import callbacks the workspace wires to main (null = no novel). */
@@ -73,10 +92,16 @@ interface MarkdownEditorProps {
   /** Style commands for the toolbar; null when the editor unmounts. */
   onReady?: (handle: EditorHandle | null) => void
   /**
-   * Review mode: `value` holds the PROPOSED body and this holds the on-disk
-   * body — the difference renders as tracked changes with ✓/✕ per chunk.
+   * Pending suggestions for this document: the on-disk body plus the
+   * proposals folded onto it. The difference renders inline as tracked
+   * changes with ✓/✕ per chunk, in the ordinary editor — no mode switch.
+   * Null when the document has nothing pending.
    */
-  reviewOriginal?: string
+  suggestion?: AttachSpec | null
+  /** proposalId → human label, for per-chunk attribution on hover. */
+  suggestionTitles?: Record<string, string>
+  /** Fires when the set of undecided suggestions changes. */
+  onSuggestionsChange?: (count: number) => void
   /** Image import into the novel's assets (toolbar, paste, drop). */
   importImage?: ImageImporter
 }
@@ -98,7 +123,9 @@ export default function MarkdownEditor({
   editable = true,
   onSave,
   onReady,
-  reviewOriginal,
+  suggestion = null,
+  suggestionTitles,
+  onSuggestionsChange,
   importImage
 }: MarkdownEditorProps): React.JSX.Element {
   const onChangeRef = useRef(onChange)
@@ -113,6 +140,14 @@ export default function MarkdownEditor({
   const lastValueRef = useRef(value)
   const valueRef = useRef(value)
   valueRef.current = value
+  // Kept in sync: `initialContent` reads this on every docId change, so a
+  // stale spec would seed the new chapter with the previous one's proposal.
+  const suggestionRef = useRef(suggestion)
+  suggestionRef.current = suggestion
+  const suggestionTitlesRef = useRef(suggestionTitles)
+  suggestionTitlesRef.current = suggestionTitles
+  const onSuggestionsChangeRef = useRef(onSuggestionsChange)
+  onSuggestionsChangeRef.current = onSuggestionsChange
 
   const saveShortcut = useMemo(
     () =>
@@ -130,11 +165,14 @@ export default function MarkdownEditor({
     []
   )
 
-  // Parse the initial document at creation so the editor (and the review
-  // diff, when active) never sees a transient empty doc.
+  // Parse the initial document at creation so the editor never sees a
+  // transient empty doc. With suggestions attached the document IS the folded
+  // proposal — `value` stays the savable body, which is what the parent saves.
   const initialContent = useMemo(() => {
     lastValueRef.current = valueRef.current
-    return markdownToDoc(getSchema(baseExtensions()), valueRef.current).toJSON() as object
+    const spec = suggestionRef.current
+    const body = spec?.chain[spec.chain.length - 1]?.content ?? valueRef.current
+    return markdownToDoc(getSchema(baseExtensions()), body).toJSON() as object
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId])
 
@@ -146,9 +184,13 @@ export default function MarkdownEditor({
         ImagePaste.configure({
           onImportImage: (file) => importImageRef.current?.fromFile(file) ?? Promise.resolve(null)
         }),
-        ...(reviewOriginal !== undefined
-          ? [TrackChanges.configure({ original: reviewOriginal })]
-          : [])
+        // Always present, never toggled by remounting the editor: recreating
+        // it steals focus and resets the caret, and suggestions can arrive
+        // 15 s after a save — mid-sentence.
+        TrackChanges.configure({
+          suggestion: suggestionRef.current,
+          ...(suggestionTitlesRef.current ? { titles: suggestionTitlesRef.current } : {})
+        })
       ],
       content: initialContent,
       autofocus: true,
@@ -159,9 +201,13 @@ export default function MarkdownEditor({
         }
       },
       onUpdate({ editor }) {
-        const md = docToMarkdown(editor.state.doc)
+        // The SAVABLE document, not the visible one: with suggestions shown
+        // the editor holds AI text the author has not agreed to, and autosave
+        // must not write it.
+        const md = savableMarkdown(editor.state)
         lastValueRef.current = md
         onChangeRef.current(md)
+        onSuggestionsChangeRef.current?.(pendingChangeCount(editor.state))
       }
     },
     // Recreate (fresh undo history) only when switching documents.
@@ -223,7 +269,18 @@ export default function MarkdownEditor({
         return () => {
           editor.off('transaction', cb)
         }
-      }
+      },
+
+      suggestionCount: () => pendingChangeCount(editor.state),
+      savableBody: () => savableMarkdown(editor.state),
+      proposedBody: (proposalId) => proposedMarkdown(editor.state, proposalId),
+      acceptAllSuggestions: () => {
+        editor.chain().acceptAllChanges().run()
+      },
+      rejectAllSuggestions: () => {
+        editor.chain().rejectAllChanges().run()
+      },
+      goToNextSuggestion: () => editor.chain().goToNextSuggestion().run()
     })
     return () => onReadyRef.current?.(null)
   }, [editor])
@@ -240,15 +297,24 @@ export default function MarkdownEditor({
     const apply = (): void => {
       const next = valueRef.current
       lastValueRef.current = next
-      editor.commands.setContent(markdownToDoc(editor.schema, next), { emitUpdate: false })
+      const doc = markdownToDoc(editor.schema, next)
+      const { state, dispatch } = editor.view
+      const tr = state.tr.replace(0, state.doc.content.size, doc.slice(0, doc.content.size))
+      // An external write is not something the author did, so it is not
+      // something ⌘Z should undo. TipTap's setContent is an ordinary
+      // history-recorded replace: pressing undo after an AI change reverted
+      // it in one step and autosave then persisted the reversion — and every
+      // 250 ms frame of a streamed draft was its own undo step.
+      tr.setMeta('addToHistory', false)
       if (forceSync) {
         // Follow the streamed text without stealing focus.
-        editor
-          .chain()
-          .setTextSelection(editor.state.doc.content.size)
-          .scrollIntoView()
-          .run()
+        tr.setSelection(TextSelection.create(tr.doc, tr.doc.content.size)).scrollIntoView()
+      } else {
+        // Keep the caret where it was rather than snapping to the top.
+        const from = Math.min(state.selection.from, tr.doc.content.size)
+        tr.setSelection(TextSelection.near(tr.doc.resolve(from)))
       }
+      dispatch(tr)
     }
 
     if (forceSync) {

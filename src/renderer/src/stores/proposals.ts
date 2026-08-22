@@ -31,8 +31,6 @@ export interface InlineReview {
   originalRaw: string
   /** Proposed file content: every pending proposal for this path, folded. */
   proposedRaw: string
-  /** Live body markdown — starts as the proposal's body, tracks edits/rejects. */
-  bodyBuffer: string
   fmChoice: 'proposed' | 'current'
   rationale: string
   sourceTitle: string
@@ -56,9 +54,9 @@ interface ProposalsStore {
 
   init: () => void
   enterReview: (path: string) => Promise<void>
-  updateReviewBody: (body: string) => void
   setReviewFmChoice: (choice: 'proposed' | 'current') => void
-  applyReview: () => Promise<void>
+  /** `body` is the markdown the editor holds — every chunk not struck out. */
+  applyReview: (body: string) => Promise<void>
   rejectReview: () => Promise<void>
   exitReview: () => void
   refresh: () => Promise<void>
@@ -160,7 +158,6 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
         proposalIds: folded.data.chain.map((l) => l.proposalId),
         originalRaw: folded.data.current,
         proposedRaw: last.content,
-        bodyBuffer: parseFrontmatter(last.content).body,
         fmChoice: 'proposed',
         rationale: folded.data.chain.map((l) => l.rationale).join(' · '),
         sourceTitle: [...new Set(folded.data.chain.map((l) => l.sourceTitle))].join(', ')
@@ -168,13 +165,10 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     })
   },
 
-  updateReviewBody: (body) =>
-    set((s) => (s.review ? { review: { ...s.review, bodyBuffer: body } } : {})),
-
   setReviewFmChoice: (choice) =>
     set((s) => (s.review ? { review: { ...s.review, fmChoice: choice } } : {})),
 
-  applyReview: async () => {
+  applyReview: async (body) => {
     const { review } = get()
     const novel = useProjectStore.getState().novel
     if (!review || !novel) return
@@ -185,7 +179,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     // The body buffer already reflects per-chunk rejections and edits.
     const source = review.fmChoice === 'current' ? review.originalRaw : review.proposedRaw
     const { data, rawFrontmatter } = parseFrontmatter(source)
-    const content = serializeFrontmatter({ data, body: review.bodyBuffer, rawFrontmatter })
+    const content = serializeFrontmatter({ data, body, rawFrontmatter })
     const result = await window.pandora.invoke('proposals:apply', {
       novelDir: novel.dir,
       path: review.path,
