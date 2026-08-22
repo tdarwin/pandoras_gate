@@ -9,6 +9,7 @@ import {
   suggestionsAttached,
   trackChangesKey,
   TrackChanges,
+  trackChangesKey,
   pendingChangeCount,
   savableMarkdown,
   proposedMarkdown,
@@ -67,8 +68,10 @@ export interface EditorHandle {
   proposedBody: (proposalId: string) => string
   acceptAllSuggestions: () => void
   rejectAllSuggestions: () => void
-  /** Moves the caret to the next suggestion, wrapping; false when there are none. */
+  /** Moves the caret to the next suggestion; false past the last one. */
   goToNextSuggestion: () => boolean
+  /** Back to the first one — the walk's wrap, done by the caller. */
+  goToFirstSuggestion: () => boolean
   /** Shows suggestions on the live document — no remount, no focus change. */
   attachSuggestions: (spec: AttachSpec) => void
   /** Drops the overlay, leaving the savable document behind. */
@@ -237,6 +240,18 @@ export default function MarkdownEditor({
           spellcheck: 'true'
         }
       },
+      // Accepting a suggestion is metadata-only — the document does not
+      // change, but what should be SAVED does, so `onUpdate` never fires.
+      // Without this, clicking ✓ leaves the parent's buffer (and the word
+      // count, and the next save) holding the pre-accept text.
+      onTransaction({ editor, transaction }) {
+        if (!transaction.getMeta(trackChangesKey)) return
+        const md = savableMarkdown(editor.state)
+        if (md === lastValueRef.current) return
+        lastValueRef.current = md
+        onChangeRef.current(md)
+        onSuggestionsChangeRef.current?.(pendingChangeCount(editor.state))
+      },
       onUpdate({ editor }) {
         // The SAVABLE document, not the visible one: with suggestions shown
         // the editor holds AI text the author has not agreed to, and autosave
@@ -312,31 +327,30 @@ export default function MarkdownEditor({
         }
       },
 
-      // Guarded, all of them: these are driven by EFFECTS rather than clicks,
-      // and an effect can hold a handle whose editor React destroyed in the
-      // same commit — switching chapters does exactly that. `editor.chain()`
-      // on a destroyed editor throws out of a passive effect, which lands on
-      // the error boundary and costs the author the last few seconds of typing.
+      // A handle can outlive its editor by a render: switching documents
+      // recreates the editor, and an effect holding the previous handle fires
+      // before the new one is published. TipTap's `chain()` throws on a
+      // destroyed editor, so the suggestion commands — the ones effects drive
+      // rather than clicks — check first.
       suggestionCount: () => (editor.isDestroyed ? 0 : pendingChangeCount(editor.state)),
-      savableBody: () => (editor.isDestroyed ? valueRef.current : savableMarkdown(editor.state)),
+      savableBody: () => (editor.isDestroyed ? lastValueRef.current : savableMarkdown(editor.state)),
       proposedBody: (proposalId) =>
-        editor.isDestroyed ? valueRef.current : proposedMarkdown(editor.state, proposalId),
+        editor.isDestroyed ? lastValueRef.current : proposedMarkdown(editor.state, proposalId),
       acceptAllSuggestions: () => {
-        if (editor.isDestroyed) return
-        editor.chain().acceptAllChanges().run()
+        if (!editor.isDestroyed) editor.chain().acceptAllChanges().run()
       },
       rejectAllSuggestions: () => {
-        if (editor.isDestroyed) return
-        editor.chain().rejectAllChanges().run()
+        if (!editor.isDestroyed) editor.chain().rejectAllChanges().run()
       },
-      goToNextSuggestion: () => !editor.isDestroyed && editor.chain().goToNextSuggestion().run(),
+      goToNextSuggestion: () =>
+        !editor.isDestroyed && editor.chain().goToNextSuggestion().run(),
+      goToFirstSuggestion: () =>
+        !editor.isDestroyed && editor.chain().goToFirstSuggestion().run(),
       attachSuggestions: (spec) => {
-        if (editor.isDestroyed) return
-        editor.chain().attachSuggestions(spec).run()
+        if (!editor.isDestroyed) editor.chain().attachSuggestions(spec).run()
       },
       detachSuggestions: () => {
-        if (editor.isDestroyed) return
-        editor.chain().detachSuggestions().run()
+        if (!editor.isDestroyed) editor.chain().detachSuggestions().run()
       },
       suggestionsAttached: () => !editor.isDestroyed && suggestionsAttached(editor.state)
     })
