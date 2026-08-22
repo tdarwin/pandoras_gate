@@ -289,6 +289,59 @@ Two separate places, and the distinction matters:
   malformed theme file stays listed in the picker with its problem and the app falls
   back to the built-in palette.
 
+### Suggestions in the editor
+
+`src/renderer/src/editor/track-changes.ts` shows pending suggestions inline. The document
+being edited is the on-disk file **plus** every pending suggestion; the extension holds the
+original and renders the difference. Two documents come back out, and the distinction is
+the whole design:
+
+- `savableDoc` — undecided suggestions reverted. This is what `onChange` emits and what
+  autosave writes, so AI text the author has not agreed to never reaches disk.
+- `proposedDoc(id)` — everything decided, plus only that proposal's undecided suggestions.
+  This is what gets stored back as the proposal's `newContent`.
+
+Every span carries its source: a proposal id, or `AUTHOR` for the writer's own typing.
+`Change.merge` fuses touching ranges, so a keystroke at the edge of a suggestion lands
+inside the AI's change. `narrow()` decides who owns the result: leading and trailing
+author *insertions* are trimmed back off (adjacent typing is not a decision), while an
+insertion in the interior, an author *deletion* anywhere, or an insertion that leaves no
+proposal text behind all mean the chunk has been taken over and is now the author's.
+
+Every one of those rules errs the same way, and deliberately: when ownership is ambiguous
+the chunk becomes the author's, because the alternative is a save that eats what they
+wrote. The two sides do not trim symmetrically — a character the author deleted can sit
+between two spans a proposal deleted, and even a *trailing* author deletion cannot be
+trimmed off the A range alone, because the B range has already swallowed the unchanged
+text beyond it (measured: `A quiet night.` came back as `A quiet.`). So a deletion adopts
+rather than trims.
+
+**This is the one place the app decides for the author.** Backspacing next to a pending
+suggestion accepts it — the model's word reaches disk without a ✓, and the ✓/✕ disappear.
+It is a deliberate trade against the only alternative on offer, which is losing prose the
+author typed, and it is narrow: it needs a deletion that fuses into the suggestion's own
+change, and it adopts only that chunk. Everywhere else "you approve everything" holds
+exactly.
+
+Reverting goes through a `Transform`, not `Node.replace`, and over the *displayed* chunks
+rather than raw token spans: a wrap suggestion (paragraph → blockquote, paragraphs → list)
+has endpoints at different depths, which `Node.replace` rejects outright — and the throw
+escaped through `onUpdate`, stopping autosave for the rest of the session.
+
+Accepting is metadata-only, so it is not undoable; rejecting mutates the document and is.
+
+The overlay attaches and detaches through plugin metadata, never by recreating the editor:
+`useEditor` recreates on `docId` alone, and a recreate steals focus and resets the caret —
+unacceptable when suggestions can arrive fifteen seconds after a save, mid-sentence.
+
+The diff is built one StepMap per changed block (`blockStepMaps`), not one for the whole
+document, because `prosemirror-changeset` gives up past 5000 characters of edit distance
+and returns a single all-or-nothing chunk. Two constraints shape it: paired blocks are
+mapped by their *inner* range, since `Change.merge` fuses touching ranges back together;
+and the maps are applied in descending order as separate single-range maps, because
+changeset's `addSteps` carries only the previous range's delta between ranges of one map,
+so a three-range map comes out mis-positioned.
+
 The app must never crash on a hand-edited novel file. Validation failures degrade — log,
 fall back, surface a readable message — because users are explicitly invited to edit these
 files in any editor.
