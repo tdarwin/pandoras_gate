@@ -336,58 +336,35 @@ rather than raw token spans: a wrap suggestion (paragraph → blockquote, paragr
 has endpoints at different depths, which `Node.replace` rejects outright — and the throw
 escaped through `onUpdate`, stopping autosave for the rest of the session.
 
-A restructuring — a wrap, an unwrap, a styled-block attribute — arrives as token changes
-carrying no text at all, and one of those on its own is not a decision anybody can make:
-rejecting an opening token alone splices half a wrap, which is not a document. So the
-whole restructured block merges into a single change that displays, accepts, and reverts
-as a unit, and a block that was reworded *and* restructured merges into that same one.
+**Inline review is for edits WITHIN a block.** A proposal that changes the shape of the
+document — a wrap, an unwrap, a block added or removed, a styled-block attribute — is not
+shown inline at all. `sameBlockShape` (`editor/blockShape.ts`) is the gate, and everything
+that puts a document on the overlay goes through `inlineSpec` / `inlineDocContent`, so the
+editor's content and the plugin's chain can never disagree about which links are on screen.
 
-The merge works from a single alignment of the two documents' top-level blocks
-(`alignTopLevel`), not from one side's block boundaries plus arithmetic on the other's.
-Deriving one range from the other is what made this the most-revised code in the app: a
-wrap gathers several original blocks into one and an unwrap does the reverse, so every fix
-in that shape cured one direction and broke the other. Segments are ordered and disjoint
-on both sides, which makes overlapping replacements — two restructured blocks side by side
-claiming each other's text — impossible rather than guarded against.
+This is the one design decision here that came from failing rather than reasoning. Five
+review rounds ran aground on the same product: block-alignment ambiguity multiplied by
+author edits landing on top. Deciding a suggestion means SPLICING the original back over
+the proposal's range, so a mis-paired block is not a display glitch — it is prose gone
+from the saved document. And pairing blocks between two documents holding different
+numbers of them is genuinely ambiguous: a wrap gathers N into one, an unwrap splits one
+into N, an inserted paragraph shifts everything after it, and the author is typing into
+the result the whole time. Every fix was locally correct and broke a neighbour. Cutting
+structural proposals out of the inline path deletes the class instead of the symptom, and
+took `alignTopLevel`, `pairRun`, `mergeBlockStructuralChanges` and the whole-block
+replacement path in `revert()` with it. **`savableDoc` now only ever reverts text spans.**
 
-**The aligned block is the unit of decision, not the change.** `Change.merge` fuses the
-touching whole-node ranges of consecutive restructured blocks into a single change, so the
-change is the wrong unit at both ends: twenty wrapped paragraphs arrived as one ✓/✕, and
-one keystroke in the first of them read as interference with all twenty. The merge is
-seeded from blocks whose two sides say the same words — restructuring does not change the
-words — plus any block holding a token change with no text at all, then closed over
-whatever the fused changes reach.
+The test is deliberately strict — attribute changes count, so does a trailing empty
+paragraph — because a false negative is the data loss and a false positive only costs the
+author finer-grained review of a document the AI restructured anyway. A chain stops at its
+first structural link and everything after it waits: later links were folded on top of it,
+so their content assumes it, and once the earlier ones are decided the fold re-anchors and
+the structural one comes back as the first.
 
-Pairing blocks inside an uneven run is where this has gone wrong most often. A run of
-unequal length is not automatically one restructuring: two paragraphs becoming a list is,
-but so is a run that came out uneven because the editor appended a trailing empty
-paragraph — which it does the moment the author edits a document ending in a blockquote or
-a list. Emitting one segment for such a run made the ENTIRE document a single segment
-whenever the diff found no block in common, and one keystroke then dropped every
-suggestion in it. `pairRun` gathers blocks from whichever side is behind until the two
-sides say the same thing; when they will not, two heads still pair if nothing was
-restructured between them (same kind of block, the same words with one run of characters
-inserted or removed, or an equal number of blocks left on both sides). Only a remainder
-that satisfies none of those becomes one segment, bounded to the run.
-
-A group that cannot be merged **drops** its members rather than leaving them. An
-unmergeable restructuring is not revertible at all, and both ways of leaving one behind
-were worse than letting it stand: raw token spans splice individually and corrupt the save
-(a duplicated paragraph, an empty list item), and they render as ✓/✕ over no text —
-buttons that do nothing when read and damage when clicked.
-
-That is also how author typing inside a restructured block is handled: the container's own
-tokens fuse with the first keystroke into one change, so the block becomes the author's,
-chunks and all. It is the adjacent-typing trade above at block scale, and it errs the same
-way — and being scoped to the block, it cannot reach a suggestion the author never went
-near. A block counts as theirs only when its two sides read differently AND a change over
-it carries their tag; changeset re-attributes spans as it merges, so an author tag alone
-turns up on the closing token of a wrap in a block they never touched.
-
-The test matrix types one character in an untouched block for every wrap and unwrap shape,
-in the first block, the middle and the last. That axis is permanent: four review rounds
-running, this function regressed its neighbour handling and the suite stayed green because
-nothing typed anywhere.
+Such a proposal is still reachable and still decidable — it is set aside like one that will
+not re-anchor, and decided whole against a word diff. The permanent test axis is now the
+simple statement of the rule: for any proposal that changes block structure, the inline
+chunk count is zero and the saved document is the author's, whatever they type.
 
 Accepting is metadata-only, so it is not undoable; rejecting mutates the document and is.
 

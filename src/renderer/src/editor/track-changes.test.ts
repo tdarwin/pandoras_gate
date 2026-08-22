@@ -4,6 +4,7 @@ import { Editor, getSchema } from '@tiptap/core'
 import { baseExtensions } from './extensions'
 import { markdownToDoc, docToMarkdown } from './markdown'
 import {
+  inlineDocContent,
   TrackChanges,
   pendingChanges,
   pendingChangeCount,
@@ -17,15 +18,14 @@ beforeAll(polyfillEditorDom)
 
 function makeReviewEditor(original: string, proposal: string): Editor {
   const schema = getSchema(baseExtensions())
+  const suggestion = { original, chain: [{ proposalId: 'p1', content: proposal }] }
   return new Editor({
     element: document.createElement('div'),
-    extensions: [
-      ...baseExtensions(),
-      TrackChanges.configure({
-        suggestion: { original, chain: [{ proposalId: 'p1', content: proposal }] }
-      })
-    ],
-    content: markdownToDoc(schema, proposal).toJSON() as object
+    extensions: [...baseExtensions(), TrackChanges.configure({ suggestion })],
+    // What the workspace puts in the editor: the last link that can be shown
+    // INLINE. A proposal that changes the shape of the document is decided
+    // whole and never reaches the overlay, so the editor holds the file.
+    content: markdownToDoc(schema, inlineDocContent(schema, suggestion)).toJSON() as object
   })
 }
 
@@ -189,163 +189,6 @@ describe('TrackChanges', () => {
     editor.destroy()
   })
 
-  it('reverts every wrap and unwrap shape, alone and with a neighbour', () => {
-    // Wrapping and unwrapping produce chunks whose endpoints sit at different
-    // depths; Node.replace rejects those outright, and the throw escaped
-    // through onUpdate, stopping autosave for the session.
-    //
-    // The shapes with a trailing paragraph are the ones that matter most: an
-    // unwrap's closing token sits exactly on the seam between the block it
-    // closes and the next one, and pairing it with the neighbour spliced the
-    // unwrapped block straight over the following prose.
-    for (const [original, proposal] of [
-      ['Hello there.\n', '> Hello there.\n'],
-      ['One.\n\nTwo.\n', '- One.\n- Two.\n'],
-      ['> Quoted.\n', 'Quoted.\n'],
-      ['> Q.\n\nAfter.\n', 'Q.\n\nAfter.\n'],
-      ['Before.\n\n> Q.\n\nAfter.\n', 'Before.\n\nQ.\n\nAfter.\n'],
-      ['- A\n- B\n\nAfter.\n', 'A\n\nB\n\nAfter.\n'],
-      ['A\n\nB\n\nAfter.\n', '- A\n- B\n\nAfter.\n'],
-      ['Q.\n\nAfter.\n', '> Q.\n\nAfter.\n'],
-      // Two restructured blocks side by side. Deciding which block a token
-      // belongs to by position alone put a second block's OPENING token in the
-      // first block's group, and the two replacements then overlapped on the B
-      // side and spliced over each other — an unapproved wrap reaching disk
-      // and surviving Reject All.
-      ['A.\n\nB.\n\nAfter.\n', '> A.\n\n> B.\n\nAfter.\n'],
-      ['A.\n\nB.\n', '> A.\n\n> B.\n'],
-      ['> A.\n\n> B.\n\nAfter.\n', 'A.\n\nB.\n\nAfter.\n'],
-      ['> A.\n\n> B.\n', 'A.\n\nB.\n'],
-      ['> A.\n\nB.\n\nAfter.\n', 'A.\n\n> B.\n\nAfter.\n'],
-      ['A.\n\n> B.\n\nAfter.\n', '> A.\n\nB.\n\nAfter.\n'],
-      ['> A.\n\n- X\n- Y\n\nAfter.\n', 'A.\n\nX\n\nY\n\nAfter.\n'],
-      ['A.\n\nX\n\nY\n\nAfter.\n', '> A.\n\n- X\n- Y\n\nAfter.\n'],
-      ['> P one.\n>\n> P two.\n\nAfter.\n', 'P one.\n\nP two.\n\nAfter.\n']
-    ] as const) {
-      const editor = makeReviewEditor(original, proposal)
-      expect(pendingChangeCount(editor.state)).toBeGreaterThan(0)
-      expect(() => savableDoc(editor.state)).not.toThrow()
-      expect(docToMarkdown(savableDoc(editor.state))).toBe(original)
-      // Rejecting has to agree with what a save would have written.
-      editor.commands.rejectAllChanges()
-      expect(docToMarkdown(editor.state.doc)).toBe(original)
-      editor.destroy()
-    }
-  })
-
-  it('a keystroke in a block the proposal never touched decides nothing', () => {
-    // The matrix, not three point tests: this function has regressed its
-    // neighbour handling once per review round, and every time the suite
-    // stayed green because no wrap/unwrap test typed anywhere in the document.
-    //
-    // What broke last was the alignment collapsing to ONE segment for the
-    // whole document whenever the top-level block counts did not pair — which
-    // the editor causes by itself, appending a trailing empty paragraph the
-    // moment the author edits a document ending in a blockquote or a list.
-    // One keystroke then counted as interference with every suggestion in the
-    // document: the ✓/✕ vanished, the restructuring went to disk, and Reject
-    // All could not bring it back.
-    const blocks = ['Para zero.', 'Middle one.', 'Para two.']
-    const norm = (md: string): string =>
-      docToMarkdown(markdownToDoc(getSchema(baseExtensions()), md))
-    for (const wrap of [(t: string) => `> ${t}`, (t: string) => `- ${t}`]) {
-      for (const mask of [1, 2, 4, 3, 5, 6]) {
-        const plain = blocks.join('\n\n') + '\n'
-        const wrapped = blocks.map((t, i) => ((mask >> i) & 1 ? wrap(t) : t)).join('\n\n') + '\n'
-        for (const [original, proposal] of [
-          [plain, wrapped],
-          [wrapped, plain]
-        ] as const) {
-          for (let u = 0; u < blocks.length; u++) {
-            if ((mask >> u) & 1) continue // only blocks the proposal left alone
-            const editor = makeReviewEditor(original, proposal)
-            const before = pendingChangeCount(editor.state)
-            let caret = -1
-            editor.state.doc.descendants((node, pos) => {
-              if (caret < 0 && node.isText && node.text === blocks[u]) caret = pos
-            })
-            editor.commands.setTextSelection(caret)
-            editor.commands.insertContent('X')
-            expect(docToMarkdown(savableDoc(editor.state))).toBe(
-              norm(original.replace(blocks[u]!, `X${blocks[u]!}`))
-            )
-            expect(pendingChangeCount(editor.state)).toBe(before)
-            editor.destroy()
-          }
-        }
-      }
-    }
-  })
-
-  it('a run of adjacent wraps is decidable block by block', () => {
-    // `Change.merge` fuses the touching whole-node ranges of consecutive
-    // restructured blocks into one change. Deciding at that granularity gave
-    // twenty wrapped paragraphs a single ✓/✕ between them — and made one
-    // keystroke in the first of the twenty an acceptance of all of them.
-    const paras = Array.from({ length: 20 }, (_, i) => `Paragraph ${i}.`)
-    const original = paras.join('\n\n') + '\n'
-    const editor = makeReviewEditor(original, paras.map((p) => `> ${p}`).join('\n\n') + '\n')
-    expect(pendingChangeCount(editor.state)).toBe(20)
-
-    let caret = -1
-    editor.state.doc.descendants((node, pos) => {
-      if (caret < 0 && node.isText && node.text === 'Paragraph 0.') caret = pos
-    })
-    editor.commands.setTextSelection(caret)
-    editor.commands.insertContent('X')
-    expect(pendingChangeCount(editor.state)).toBe(19)
-    expect(docToMarkdown(savableDoc(editor.state))).toBe(
-      ['> XParagraph 0.', ...paras.slice(1)].join('\n\n') + '\n'
-    )
-    editor.destroy()
-  })
-
-  it('never renders a chunk with nothing to show', () => {
-    // A structural chunk that could not be merged used to reach the
-    // decorations as a zero-width token span: a ✓/✕ pair floating over
-    // unmarked text, doing nothing when read and splicing half a wrap when
-    // clicked. Unmergeable now means dropped, so this cannot arise.
-    for (const [original, proposal, caret] of [
-      ['- A\n- B\n\nAfter.\n', 'A\n\nB\n\nAfter.\n', 1],
-      ['- A\n- B\n\nAfter.\n', 'A\n\nB\n\nAfter.\n', 5],
-      ['> P one.\n>\n> P two.\n\nAfter.\n', 'P one.\n\nP two.\n\nAfter.\n', 11],
-      ['A.\n\nB.\n\nAfter.\n', '> A.\n\n> B.\n\nAfter.\n', 0]
-    ] as const) {
-      const editor = makeReviewEditor(original, proposal)
-      if (caret > 0) {
-        editor.commands.setTextSelection(caret)
-        editor.commands.insertContent('x')
-      }
-      const dom = editor.view.dom
-      const marks =
-        dom.querySelectorAll('.tc-ins').length +
-        dom.querySelectorAll('.tc-del').length +
-        dom.querySelectorAll('.tc-attr').length
-      if (dom.querySelectorAll('.tc-ctrl').length > 0) expect(marks).toBeGreaterThan(0)
-      editor.destroy()
-    }
-  })
-
-  it('typing inside a multi-paragraph block being unwrapped adopts it whole', () => {
-    // The container's own tokens fuse with the first keystroke into one
-    // change, so there is no separating the two. Splicing them individually
-    // duplicated the paragraph and left an empty list item behind, in the
-    // saved document and in Reject All alike.
-    for (const [original, proposal, caret] of [
-      ['- A\n- B\n\nAfter.\n', 'A\n\nB\n\nAfter.\n', 1],
-      ['- A\n- B\n\nAfter.\n', 'A\n\nB\n\nAfter.\n', 5],
-      ['> P one.\n>\n> P two.\n\nAfter.\n', 'P one.\n\nP two.\n\nAfter.\n', 11]
-    ] as const) {
-      const editor = makeReviewEditor(original, proposal)
-      editor.commands.setTextSelection(caret)
-      editor.commands.insertContent('x')
-      const visible = docToMarkdown(editor.state.doc)
-      expect(docToMarkdown(savableDoc(editor.state))).toBe(visible)
-      expect(pendingChangeCount(editor.state)).toBe(0)
-      editor.destroy()
-    }
-  })
-
   it('attaching an empty chain leaves the document alone', () => {
     // Every proposal for the document was set aside as un-combinable. There
     // is nothing to overlay, and replacing the document with "the last link"
@@ -357,18 +200,6 @@ describe('TrackChanges', () => {
     editor.commands.attachSuggestions({ original: standing, chain: [] })
     expect(docToMarkdown(editor.state.doc)).toBe(standing)
     expect(pendingChangeCount(editor.state)).toBe(0)
-    editor.destroy()
-  })
-
-  it('a block both reworded and restructured is one chunk', () => {
-    // Two token changes and a text change over the same block cannot be
-    // decided separately — rejecting the wrap alone leaves prose that was
-    // never approved — so they travel together.
-    const editor = makeReviewEditor('A quiet night.\n\nAfter.\n', '> A loud night.\n\nAfter.\n')
-    expect(pendingChangeCount(editor.state)).toBe(1)
-    expect(docToMarkdown(savableDoc(editor.state))).toBe('A quiet night.\n\nAfter.\n')
-    editor.commands.acceptAllChanges()
-    expect(docToMarkdown(savableDoc(editor.state))).toBe('> A loud night.\n\nAfter.\n')
     editor.destroy()
   })
 
@@ -407,42 +238,6 @@ describe('TrackChanges', () => {
     const changes = pendingChanges(editor.state)
     editor.commands.acceptChangeAt(changes[0]!.fromB)
     expect(pendingChangeCount(editor.state)).toBe(changes.length - 1)
-    editor.destroy()
-  })
-
-  it('typing inside a wrapped block adopts the wrap, leaving nothing unactionable', () => {
-    const editor = makeReviewEditor('Hello there.\n', '> Hello there.\n')
-    expect(pendingChangeCount(editor.state)).toBe(1)
-    editor.commands.setTextSelection(3)
-    editor.commands.insertContent('Oh ')
-    // What used to stay behind was a pair of zero-width token chunks with ✓/✕
-    // that did nothing when clicked, over a wrap the save wrote regardless.
-    expect(pendingChangeCount(editor.state)).toBe(0)
-    expect(docToMarkdown(savableDoc(editor.state))).toBe(docToMarkdown(editor.state.doc))
-    editor.destroy()
-  })
-
-  it('a wrap of the last block survives a keystroke elsewhere', () => {
-    // Typing anywhere appends a doc-changing transaction that fuses an AUTHOR
-    // span into the wrap's closing-token change. Deriving the A range from the
-    // B-side margins then shrank it, the revert spliced the original over more
-    // than it replaced, and the final paragraph vanished from what autosave
-    // writes while the editor still showed it.
-    for (const proposal of ['A\n\nB\n\n- C\n', 'A\n\nB\n\n> C\n']) {
-      const editor = makeReviewEditor('A\n\nB\n\nC\n', proposal)
-      editor.commands.setTextSelection(1)
-      editor.commands.insertContent('x')
-      const saved = docToMarkdown(savableDoc(editor.state))
-      expect(saved).toContain('C')
-      expect(saved).toBe('xA\n\nB\n\nC\n')
-      editor.destroy()
-    }
-  })
-
-  it('an unwrap is one chunk, not one plus a stray token at the end', () => {
-    const editor = makeReviewEditor('> Quoted.\n', 'Quoted.\n')
-    expect(pendingChangeCount(editor.state)).toBe(1)
-    expect(docToMarkdown(savableDoc(editor.state))).toBe('> Quoted.\n')
     editor.destroy()
   })
 
@@ -535,24 +330,6 @@ describe('TrackChanges', () => {
     editor.destroy()
   })
 
-  it('an attribute-only change shows as a formatting chunk, not a fake text diff', () => {
-    const editor = makeReviewEditor(
-      'An epigraph line.\n',
-      '::: {align=center}\nAn epigraph line.\n:::\n'
-    )
-    expect(pendingChangeCount(editor.state)).toBeGreaterThanOrEqual(1)
-    const dom = editor.view.dom
-    // The text is identical on both sides: outlined as a formatting change,
-    // with controls but WITHOUT a struck-through copy of the same words.
-    expect(dom.querySelectorAll('.tc-attr').length).toBeGreaterThanOrEqual(1)
-    expect(dom.querySelectorAll('.tc-del').length).toBe(0)
-    expect(dom.querySelectorAll('.tc-ctrl').length).toBeGreaterThanOrEqual(1)
-    // Rejecting restores the unwrapped original.
-    editor.commands.rejectAllChanges()
-    expect(docToMarkdown(editor.state.doc)).toBe('An epigraph line.\n')
-    editor.destroy()
-  })
-
   it('review works on chapters using the dialect, and accepts keep it intact', () => {
     const original = '::: {bg=note}\nSystem: level up.\n:::\n\nProse follows.\n'
     const proposal = '::: {bg=note}\nSystem: level up twice.\n:::\n\nProse follows.\n'
@@ -573,14 +350,96 @@ describe('TrackChanges', () => {
     editor.destroy()
   })
 
-  it('handles pure insertions and pure deletions across paragraphs', () => {
-    const editor = makeReviewEditor(
-      'First paragraph.\n\nThird paragraph.\n',
-      'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n'
-    )
-    expect(pendingChangeCount(editor.state)).toBeGreaterThanOrEqual(1)
-    editor.commands.rejectAllChanges()
-    expect(docToMarkdown(editor.state.doc)).toBe('First paragraph.\n\nThird paragraph.\n')
+  it('a proposal that changes the shape of the document never goes inline', () => {
+    // The rule this file is built around: per-chunk ✓/✕ is for edits WITHIN a
+    // block. Deciding a suggestion means splicing the original back over the
+    // proposal's range, so a mis-paired block is not a display glitch, it is
+    // prose gone from the saved document — and pairing blocks between two
+    // documents holding different numbers of them is ambiguous in ways no
+    // amount of care resolves. Five review rounds said so.
+    //
+    // So the editor holds the author's document, nothing renders, and
+    // whatever they type is what gets saved. The proposal is decided whole,
+    // against a word diff, elsewhere.
+    for (const [original, proposal] of [
+      ['Hello there.\n', '> Hello there.\n'],
+      ['One.\n\nTwo.\n', '- One.\n- Two.\n'],
+      ['> Quoted.\n', 'Quoted.\n'],
+      ['> Q.\n\nAfter.\n', 'Q.\n\nAfter.\n'],
+      ['A.\n\nB.\n\nAfter.\n', '> A.\n\n> B.\n\nAfter.\n'],
+      ['- A\n- B\n\nAfter.\n', 'A\n\nB\n\nAfter.\n'],
+      ['First.\n\nThird.\n', 'First.\n\nSecond.\n\nThird.\n'],
+      ['First.\n\nSecond.\n\nThird.\n', 'First.\n\nThird.\n'],
+      ['An epigraph line.\n', '::: {align=center}\nAn epigraph line.\n:::\n'],
+      ['A quiet night.\n\nAfter.\n', '> A loud night.\n\nAfter.\n']
+    ] as const) {
+      const editor = makeReviewEditor(original, proposal)
+      expect(pendingChangeCount(editor.state)).toBe(0)
+      expect(docToMarkdown(editor.state.doc)).toBe(original)
+      expect(docToMarkdown(savableDoc(editor.state))).toBe(original)
+      editor.destroy()
+    }
+  })
+
+  it('and whatever the author types on top of one is theirs, wherever they type it', () => {
+    // The permanent keystroke axis, now asserting something with no moving
+    // parts: nothing was ever attached, so nothing can be dropped, and the
+    // saved document is exactly what the author is looking at.
+    for (const [original, proposal] of [
+      ['Para zero.\n\nMiddle one.\n\nPara two.\n', '> Para zero.\n\nMiddle one.\n\nPara two.\n'],
+      ['Para zero.\n\nMiddle one.\n\nPara two.\n', 'Para zero.\n\n- Middle one.\n\nPara two.\n'],
+      ['Para zero.\n\nMiddle one.\n\nPara two.\n', '> Para zero.\n\n> Middle one.\n\n> Para two.\n'],
+      ['- Para zero.\n- Middle one.\n\nPara two.\n', 'Para zero.\n\nMiddle one.\n\nPara two.\n'],
+      ['Para zero.\n\nPara two.\n', 'Para zero.\n\nMiddle one.\n\nPara two.\n']
+    ] as const) {
+      for (const where of ['Para zero.', 'Middle one.', 'Para two.']) {
+        const editor = makeReviewEditor(original, proposal)
+        let caret = -1
+        editor.state.doc.descendants((node, pos) => {
+          if (caret < 0 && node.isText && node.text === where) caret = pos
+        })
+        if (caret < 0) {
+          editor.destroy()
+          continue
+        }
+        editor.commands.setTextSelection(caret)
+        editor.commands.insertContent('X')
+        expect(pendingChangeCount(editor.state)).toBe(0)
+        expect(docToMarkdown(savableDoc(editor.state))).toBe(docToMarkdown(editor.state.doc))
+        expect(docToMarkdown(savableDoc(editor.state))).toContain(`X${where}`)
+        editor.destroy()
+      }
+    }
+  })
+
+  it('a chain stops at its first structural link, and the rest waits', () => {
+    // Later links were folded ON TOP of the structural one, so their content
+    // assumes it. Once the text-only ones are decided the fold re-anchors and
+    // the structural one comes back as the first.
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [
+        ...baseExtensions(),
+        TrackChanges.configure({
+          suggestion: {
+            original: 'Alpha.\n\nBeta.\n',
+            chain: [
+              { proposalId: 'p1', content: 'Alpha edited.\n\nBeta.\n' },
+              { proposalId: 'p2', content: 'Alpha edited.\n\n> Beta.\n' },
+              { proposalId: 'p3', content: 'Alpha edited.\n\n> Beta edited.\n' }
+            ]
+          }
+        })
+      ],
+      content: markdownToDoc(
+        getSchema(baseExtensions()),
+        'Alpha edited.\n\nBeta.\n'
+      ).toJSON() as object
+    })
+    const chunks = pendingChanges(editor.state)
+    expect(chunks).toHaveLength(1)
+    expect(chunks[0]!.sources).toEqual(['p1'])
+    expect(docToMarkdown(savableDoc(editor.state))).toBe('Alpha.\n\nBeta.\n')
     editor.destroy()
   })
 })

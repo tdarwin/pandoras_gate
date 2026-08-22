@@ -5,6 +5,7 @@ import { TextSelection } from '@tiptap/pm/state'
 import { baseExtensions } from './extensions'
 import { markdownToDoc } from './markdown'
 import {
+  inlineDocContent,
   TrackChanges,
   pendingChangeCount,
   savableMarkdown,
@@ -171,7 +172,9 @@ export default function MarkdownEditor({
   const initialContent = useMemo(() => {
     lastValueRef.current = valueRef.current
     const spec = suggestionRef.current
-    const body = spec?.chain[spec.chain.length - 1]?.content ?? valueRef.current
+    // The last link that can be shown INLINE: a proposal that changes the
+    // shape of the document is decided whole and never becomes chunks.
+    const body = spec ? inlineDocContent(getSchema(baseExtensions()), spec) : valueRef.current
     return markdownToDoc(getSchema(baseExtensions()), body).toJSON() as object
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId])
