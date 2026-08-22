@@ -44,6 +44,22 @@ function resetForNovelChange(): void {
   for (const fn of novelResets) fn()
 }
 
+/**
+ * Marks the buffer saved — but only the buffer that was actually written.
+ *
+ * A save is asynchronous, and anything typed while it was in flight is still
+ * unsaved. Clearing the flag regardless left those keystrokes behind a "saved"
+ * indicator with no autosave scheduled, since the quiet 5 s write only runs on
+ * a dirty buffer: exactly the crash window autosave exists to close.
+ */
+function settle(
+  set: (partial: Partial<ProjectStore>) => void,
+  get: () => ProjectStore,
+  written: string
+): void {
+  if (get().content === written) set({ dirty: false })
+}
+
 interface ProjectStore {
   /** One-time event subscriptions (manifest changes made in main). */
   init: () => void
@@ -153,7 +169,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const { novel, activeFile, content, dirty } = get()
     if (!novel || !activeFile || !dirty) return
     if (await suggestionWriter?.(activeFile, content, false)) {
-      set({ dirty: false })
+      settle(set, get, content)
       return
     }
     const result = await window.pandora.invoke('chapter:write', {
@@ -162,7 +178,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       content
     })
     if (result.ok) {
-      set({ dirty: false })
+      settle(set, get, content)
       currentSink?.(activeFile, content)
     } else set({ lastError: result.error.message })
   },
@@ -171,7 +187,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const { novel, activeFile, content } = get()
     if (!novel || !activeFile) return
     if (await suggestionWriter?.(activeFile, content, true)) {
-      set({ dirty: false })
+      settle(set, get, content)
       return
     }
     // Always write+snapshot: commits are no-ops when nothing changed, and
@@ -183,7 +199,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       snapshot: true
     })
     if (result.ok) {
-      set({ dirty: false })
+      settle(set, get, content)
       currentSink?.(activeFile, content)
     } else set({ lastError: result.error.message })
   },

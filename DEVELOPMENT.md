@@ -283,6 +283,14 @@ Two separate places, and the distinction matters:
   looking at and a crash mid-review leaves nothing to reconcile. `baseContent` advances
   as hunks are accepted; the item resolves when nothing is left to suggest.
 
+  A refused apply means the file moved under the author. If a plain write is coming after
+  it, that write re-anchors the overlay; a write-less refusal has no fallback, so it
+  re-folds AND re-reads the buffer — which was a copy of the anchor main just called
+  stale, and would otherwise have been written back over the external edit on the next
+  snapshot, silently. Both are conditional on the buffer still being what was sent:
+  keystrokes typed during the round trip win, ride the next save, and keep the buffer
+  dirty so autosave still has a reason to fire.
+
   Concurrency: every read-modify-write of `.pandora/state.json`, of the proposal JSON,
   and of a git index runs through `withLock` (`src/main/locks.ts`) — nothing in Electron
   serializes IPC handlers, and a pipeline run holds state across a minutes-long model

@@ -299,6 +299,51 @@ describe('saving a document with suggestions', () => {
     expect(project.useProjectStore.getState().content).toContain('Still typing…')
   })
 
+  it('re-reads the file a write-less refusal proved stale', async () => {
+    const { proposals, project } = await setUp()
+    const external = '---\nname: Kael\n---\nSomeone else wrote this.\n'
+    proposals.setSuggestionHandle(fakeHandle(CURRENT, { p1: CURRENT }))
+    ;(window as unknown as { pandora: { invoke: unknown } }).pandora.invoke = vi.fn(
+      async (channel: string, payload: Record<string, unknown>) => {
+        invokes.push({ channel, payload })
+        if (channel === 'proposals:apply') {
+          return { ok: false, error: { message: 'This file changed while you were reviewing' } }
+        }
+        if (channel === 'chapter:read') return { ok: true, data: { content: external } }
+        return { ok: true, data: responses[channel] ?? {} }
+      }
+    )
+    project.useProjectStore.getState().setSavedContent(CURRENT)
+    await proposals.useProposalsStore.getState().persistDecisions()
+
+    // Re-anchoring `current` alone left the buffer holding the pre-change text
+    // with nothing to say it was stale — and the next snapshot wrote it back
+    // over the external edit, silently and without a toast.
+    expect(project.useProjectStore.getState().content).toBe(external)
+  })
+
+  it('leaves a buffer that moved during the save dirty, so autosave still carries it', async () => {
+    const { proposals, project } = await setUp()
+    const written = '---\nname: Kael\n---\nAlpha edited.\n\nBeta.\n'
+    proposals.setSuggestionHandle(fakeHandle('Alpha edited.\n\nBeta.\n', { p1: written }))
+    ;(window as unknown as { pandora: { invoke: unknown } }).pandora.invoke = vi.fn(
+      async (channel: string, payload: Record<string, unknown>) => {
+        invokes.push({ channel, payload })
+        if (channel === 'proposals:apply') {
+          project.useProjectStore.getState().setContent('---\nname: Kael\n---\nStill typing…\n')
+          return { ok: true, data: { content: written, remaining: 1 } }
+        }
+        return { ok: true, data: responses[channel] ?? {} }
+      }
+    )
+    project.useProjectStore.getState().setContent('---\nname: Kael\n---\nAlpha edited.\n\nBeta.\n')
+    await project.useProjectStore.getState().saveActiveChapter()
+
+    // The quiet 5 s write only runs on a dirty buffer, so clearing the flag
+    // here left those keystrokes in memory behind a "saved" indicator.
+    expect(project.useProjectStore.getState().dirty).toBe(true)
+  })
+
   it('leaves documents without suggestions on the ordinary write path', async () => {
     const { proposals, project } = await setUp()
     proposals.useProposalsStore.setState({ active: null })

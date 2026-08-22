@@ -562,6 +562,15 @@ async function writeDecisions(
     // as far as the caller knows, so nothing else runs and `current` would
     // stay stale forever, refusing every reject after it with the same toast.
     if (writeArg === null && useProposalsStore.getState().active?.path === active.path) {
+      // The buffer is a copy of `current`, which main has just told us is out
+      // of date — so the buffer is out of date too, and the next save would
+      // put it back over whatever changed the file. Re-reading is safe HERE
+      // precisely because nothing was typed over it; if something was, that
+      // typing wins and rides the next save instead.
+      const stale = useProjectStore.getState()
+      if (stale.activeFile === active.path && stale.content === content) {
+        await stale.reloadActiveChapter()
+      }
       await useProposalsStore.getState().loadFor(active.path)
     }
     return false
