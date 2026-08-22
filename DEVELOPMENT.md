@@ -328,6 +328,36 @@ rather than raw token spans: a wrap suggestion (paragraph → blockquote, paragr
 has endpoints at different depths, which `Node.replace` rejects outright — and the throw
 escaped through `onUpdate`, stopping autosave for the rest of the session.
 
+A restructuring — a wrap, an unwrap, a styled-block attribute — arrives as token changes
+carrying no text at all, and one of those on its own is not a decision anybody can make:
+rejecting an opening token alone splices half a wrap, which is not a document. So the
+whole restructured block merges into a single change that displays, accepts, and reverts
+as a unit, and a block that was reworded *and* restructured merges into that same one.
+
+The merge works from a single alignment of the two documents' top-level blocks
+(`alignTopLevel`), not from one side's block boundaries plus arithmetic on the other's.
+Deriving one range from the other is what made this the most-revised code in the app: a
+wrap gathers several original blocks into one and an unwrap does the reverse, so every fix
+in that shape cured one direction and broke the other. Segments are ordered and disjoint
+on both sides, which makes overlapping replacements — two restructured blocks side by side
+claiming each other's text — impossible rather than guarded against. A token is assigned
+to the last segment starting at or before it on **both** sides, which is what tells an
+unwrap's closing token (on the seam, but deleted from the block before it) apart from the
+next block's opening token (on that same seam, but inserted into the block after it).
+
+A group that cannot be merged **drops** its members rather than leaving them. An
+unmergeable restructuring is not revertible at all, and both ways of leaving one behind
+were worse than letting it stand: raw token spans splice individually and corrupt the save
+(a duplicated paragraph, an empty list item), and they render as ✓/✕ over no text —
+buttons that do nothing when read and damage when clicked.
+
+That is also how author typing inside a restructured block is handled: the container's own
+tokens fuse with the first keystroke into one change, so the block becomes the author's,
+chunks and all. It is the adjacent-typing trade above at block scale, and it errs the same
+way. Only a change carrying *text* counts as evidence of typing — changeset re-attributes
+spans as it merges, and an author tag turns up on the closing token of a wrap three blocks
+from anything the author touched.
+
 Accepting is metadata-only, so it is not undoable; rejecting mutates the document and is.
 
 The overlay attaches and detaches through plugin metadata, never by recreating the editor:
