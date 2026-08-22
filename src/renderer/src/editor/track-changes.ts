@@ -343,42 +343,117 @@ export function changeSource(chunk: Chunk): string | null {
 }
 
 /**
- * The block a structural change belongs to, as [from, to]: the styled block
- * that encloses it, or failing that the top-level block.
+ * The top-level blocks of `original` paired with those of `doc`, in order and
+ * covering both documents completely.
  *
- * Top-level is the fallback rather than the nearest ancestor because these
- * ranges have to splice: a wrap (paragraph → blockquote, paragraphs → list)
- * has endpoints at different depths, and only a whole-block replacement is
- * guaranteed to fit.
+ * This is the frame the structural merge works in. Earlier rounds derived a
+ * wrap's two ranges from each other — a block range on one side plus
+ * arithmetic on the other's margins, or growth until the two sides said the
+ * same words — and every fix in that shape cured one direction and broke the
+ * other, because a wrap gathers several blocks into one and an unwrap does the
+ * reverse. Aligning both documents ONCE makes the pairing a fact rather than a
+ * derivation: segments are ordered and disjoint on both sides, so two
+ * restructured blocks side by side can no longer claim each other's text.
  */
-function structuralBlockRangeAt(doc: PMNode, pos: number): [number, number] | null {
-  const clamped = Math.min(pos, doc.content.size)
-  const $pos = doc.resolve(clamped)
-  for (let d = $pos.depth; d > 0; d--) {
-    if ($pos.node(d).type.name === 'styledBlock') return [$pos.before(d), $pos.after(d)]
+interface Segment {
+  aFrom: number
+  aTo: number
+  bFrom: number
+  bTo: number
+}
+
+function alignTopLevel(a: PMNode, b: PMNode): Segment[] {
+  const kidsA: PMNode[] = []
+  const kidsB: PMNode[] = []
+  a.forEach((n) => kidsA.push(n))
+  b.forEach((n) => kidsB.push(n))
+
+  const startsA: number[] = []
+  let p = 0
+  for (const n of kidsA) {
+    startsA.push(p)
+    p += n.nodeSize
   }
-  const node = clamped < doc.content.size ? doc.nodeAt(clamped) : null
-  if (node?.type.name === 'styledBlock') return [clamped, clamped + node.nodeSize]
-  if ($pos.depth > 0) return [$pos.before(1), $pos.after(1)]
-  if (node?.isBlock) return [clamped, clamped + node.nodeSize]
-  // At the very end of the document depth is 0 and there is no node here —
-  // an unwrap's closing token landed exactly there and stayed an unactionable
-  // zero-width chunk of its own. Look at the block that ends here instead.
-  if (clamped > 0) {
-    const $before = doc.resolve(clamped - 1)
-    if ($before.depth > 0) return [$before.before(1), $before.after(1)]
+  const endA = p
+  const startsB: number[] = []
+  p = 0
+  for (const n of kidsB) {
+    startsB.push(p)
+    p += n.nodeSize
   }
-  return null
+  const endB = p
+
+  const out: Segment[] = []
+  const push = (ia: number, na: number, ib: number, nb: number): void => {
+    const aFrom = na > 0 ? startsA[ia]! : startsA[ia] ?? endA
+    const aTo = na > 0 ? startsA[ia + na - 1]! + kidsA[ia + na - 1]!.nodeSize : aFrom
+    const bFrom = nb > 0 ? startsB[ib]! : startsB[ib] ?? endB
+    const bTo = nb > 0 ? startsB[ib + nb - 1]! + kidsB[ib + nb - 1]!.nodeSize : bFrom
+    out.push({ aFrom, aTo, bFrom, bTo })
+  }
+
+  const parts = diffArrays(kidsA.map(blockKey), kidsB.map(blockKey))
+  let ia = 0
+  let ib = 0
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!
+    const n = part.count ?? part.value.length
+    if (!part.added && !part.removed) {
+      for (let k = 0; k < n; k++) push(ia + k, 1, ib + k, 1)
+      ia += n
+      ib += n
+      continue
+    }
+    const next = parts[i + 1]
+    if (part.removed && next?.added) {
+      const m = next.count ?? next.value.length
+      // Same 1:1 split as the alignment used for diffing: a run of equal
+      // length is a block-for-block rewrite, so each pair gets its own
+      // segment and two adjacent wraps stay two chunks.
+      if (n === m) for (let k = 0; k < n; k++) push(ia + k, 1, ib + k, 1)
+      else push(ia, n, ib, m)
+      ia += n
+      ib += m
+      i += 1
+      continue
+    }
+    if (part.removed) {
+      push(ia, n, ib, 0)
+      ia += n
+    } else {
+      push(ia, 0, ib, n)
+      ib += n
+    }
+  }
+  return out
+}
+
+/** Spans totalling `length`, one per source, so a fused chunk keeps its attribution. */
+function sourceSpans(length: number, sources: string[]): { length: number; data: string }[] {
+  if (length <= 0) return []
+  if (sources.length === 1 || length < sources.length) return [{ length, data: sources[0]! }]
+  const each = Math.floor(length / sources.length)
+  return sources.map((data, i) => ({
+    length: i === sources.length - 1 ? length - each * (sources.length - 1) : each,
+    data
+  }))
 }
 
 /**
- * A styled-block wrap, unwrap, or attribute change surfaces as token-level
- * changes carrying no text (the open/close tokens themselves). Individually
- * those are unactionable — rejecting just an open token would splice half a
- * wrap — so all structural changes belonging to one styled block merge into
- * a single change spanning the whole block, which then displays, accepts,
- * and rejects as a unit. Blocks that also contain text changes are left
- * alone; their chunks already carry the story.
+ * A wrap, unwrap, or attribute change surfaces as token-level changes carrying
+ * no text — the open and close tokens themselves. Individually those are
+ * unactionable: rejecting an open token alone splices half a wrap, which is
+ * not a document. So every structural change belonging to one restructured
+ * block is merged into a single change spanning the whole block, which then
+ * displays, accepts, and reverts as a unit.
+ *
+ * A group that cannot be merged DROPS its members rather than leaving them
+ * behind. An unmergeable wrap is not revertible at all, and the two ways of
+ * leaving it were both worse than letting it stand: raw token spans splice
+ * individually and corrupt the saved document (a duplicated paragraph, an
+ * empty list item), and they render as ✓/✕ over no text at all — buttons that
+ * do damage when clicked and nothing when read. Dropping degrades to the rule
+ * author interference already follows: the block is the author's.
  */
 function mergeBlockStructuralChanges(
   changes: Change<string>[],
@@ -388,109 +463,180 @@ function mergeBlockStructuralChanges(
   const structural = (c: Change<string>): boolean =>
     doc.textBetween(c.fromB, c.toB, ' ') === '' && original.textBetween(c.fromA, c.toA, ' ') === ''
 
-  /**
-   * Structural members grouped by the block being restructured.
-   *
-   * Keyed on the current document, because a wrap turns several blocks into
-   * one and only the B side holds them together. The exception is a member
-   * sitting exactly on a block boundary — an unwrap's closing token is at the
-   * seam between the block it closes and the next one — which the document
-   * hands to the FOLLOWING block. Left there, the merge spliced the unwrapped
-   * block over whatever came after it.
-   */
-  const groups: { range: [number, number]; members: Change<string>[] }[] = []
-  for (const change of changes) {
-    if (!structural(change)) continue
-    const range = structuralBlockRangeAt(doc, change.fromB)
-    if (!range) continue
-    const previous = groups[groups.length - 1]
-    const sameBlock = previous?.range[0] === range[0]
-    // A member reported against the FOLLOWING block because it sits on the
-    // seam, or against the block that merely ends here (a closing token at the
-    // very end of the document).
-    const onSeam =
-      previous !== undefined &&
-      (previous.range[1] === change.fromB || range[1] <= previous.range[1])
-    if (previous && (sameBlock || onSeam)) {
-      previous.members.push(change)
-      continue
-    }
-    groups.push({ range, members: [change] })
+  const members = changes.filter(structural)
+  if (members.length === 0) return changes
+
+  let segments: Segment[]
+  try {
+    segments = alignTopLevel(original, doc)
+  } catch {
+    segments = []
   }
 
-  const out: Change<string>[] = []
-  const merged = new Set<Change<string>>()
-  const replacements: Change<string>[] = []
-  /** No two replacements may claim the same original text. */
-  const claimedA: [number, number][] = []
-  for (const { range, members } of groups) {
-    const interfering = changes.filter(
-      (c) => !structural(c) && c.fromB < range[1] && c.toB > range[0]
-    )
-    // The author typed inside the wrapped block, and nothing else changed in
-    // it: they have taken the wrap over with everything else. Dropping the
-    // structural members leaves no chunk at all, which is right — what stayed
-    // behind before was a pair of zero-width token chunks with ✓/✕ that did
-    // nothing when clicked, over a wrap the save then wrote anyway.
-    if (interfering.length > 0 && interfering.every((c) => narrow(c) === null)) {
-      for (const m of members) merged.add(m)
+  /**
+   * The segment a change belongs to: the last one starting at or before it on
+   * BOTH sides. An unwrap's closing token sits on the seam between the block
+   * it closes and the next, and the document hands it to the following block —
+   * but its deletion is still inside the previous block in the original, so
+   * the A side pins it. The mirror case is the opening token of a second
+   * restructured block, whose insertion is at that same seam and whose A
+   * position is the start of the next original block: there the B side pins
+   * it. Requiring both is what tells the two apart.
+   */
+  const indexOf = (c: Change<string>): number => {
+    let found = -1
+    for (let i = 0; i < segments.length; i++) {
+      const s = segments[i]!
+      if (s.aFrom <= c.fromA && s.bFrom <= c.fromB) found = i
+      else break
+    }
+    return found
+  }
+
+  // Segment spans, one per structural change, widened until the change fits.
+  const spans: [number, number][] = []
+  const unplaced = new Set<Change<string>>()
+  for (const change of members) {
+    const lo = indexOf(change)
+    if (lo < 0) {
+      unplaced.add(change)
       continue
     }
-    if (interfering.length > 0) continue
-
-    const first = members[0]!
-    const fromB = range[0]
-    const aStart =
-      structuralBlockRangeAt(original, first.fromA) ??
-      structuralBlockRangeAt(original, Math.max(0, first.fromA - 1))
-    if (!aStart) continue
-    const fromA = aStart[0]
-
-    // Restructuring is not rewriting: whatever else moved, both sides say the
-    // same words. Grow whichever end is behind until they agree — a wrap
-    // gathers several original blocks into one, an unwrap does the reverse —
-    // and give up rather than splice ranges that were paired wrong. Deriving
-    // either end by arithmetic on the other's margins is what dropped a
-    // paragraph when an author keystroke stretched a change.
-    let toA = aStart[1]
-    let toB = range[1]
-    for (let guard = 0; guard < 16; guard++) {
-      const aText = original.textBetween(fromA, toA, ' ')
-      const bText = doc.textBetween(fromB, toB, ' ')
-      if (aText === bText) break
-      if (aText.length < bText.length && toA < original.content.size) {
-        const next = structuralBlockRangeAt(original, toA)
-        if (!next || next[1] <= toA) break
-        toA = next[1]
-      } else if (bText.length < aText.length && toB < doc.content.size) {
-        const next = structuralBlockRangeAt(doc, toB)
-        if (!next || next[1] <= toB) break
-        toB = next[1]
-      } else break
+    let hi = lo
+    while (
+      hi + 1 < segments.length &&
+      (change.toA > segments[hi]!.aTo || change.toB > segments[hi]!.bTo)
+    )
+      hi++
+    if (change.toA > segments[hi]!.aTo || change.toB > segments[hi]!.bTo) {
+      unplaced.add(change)
+      continue
     }
-    if (original.textBetween(fromA, toA, ' ') !== doc.textBetween(fromB, toB, ' ')) continue
-    if (claimedA.some(([f, t]) => fromA < t && toA > f)) continue
-    claimedA.push([fromA, toA])
+    spans.push([lo, hi])
+  }
 
-    const data = first.inserted[0]?.data ?? first.deleted[0]?.data ?? null
-    for (const m of members) merged.add(m)
+  /**
+   * The changes a replacement over these segments would swallow. A zero-width
+   * change counts only when it is STRICTLY inside, so a deletion written at a
+   * block boundary belongs to the block it was written against rather than to
+   * both of them.
+   */
+  const covering = (lo: number, hi: number): Change<string>[] => {
+    const aFrom = segments[lo]!.aFrom
+    const aTo = segments[hi]!.aTo
+    const bFrom = segments[lo]!.bFrom
+    const bTo = segments[hi]!.bTo
+    return changes.filter((c) => {
+      const aHit =
+        c.toA > c.fromA ? c.fromA < aTo && c.toA > aFrom : c.fromA > aFrom && c.fromA < aTo
+      const bHit =
+        c.toB > c.fromB ? c.fromB < bTo && c.toB > bFrom : c.fromB > bFrom && c.fromB < bTo
+      return aHit || bHit
+    })
+  }
+  const holds = (lo: number, hi: number, c: Change<string>): boolean =>
+    c.fromA >= segments[lo]!.aFrom &&
+    c.toA <= segments[hi]!.aTo &&
+    c.fromB >= segments[lo]!.bFrom &&
+    c.toB <= segments[hi]!.bTo
+
+  // Overlapping spans are one restructuring seen from several tokens. Groups
+  // then grow to hold every change they touch — a rewrite that crosses a block
+  // boundary has to travel with the restructuring, not be spliced across it —
+  // and growing can make two groups meet, so this settles rather than passes.
+  const groups: [number, number][] = []
+  spans.sort((x, y) => x[0] - y[0] || x[1] - y[1])
+  for (const [lo, hi] of spans) {
+    const last = groups[groups.length - 1]
+    if (last && lo <= last[1]) last[1] = Math.max(last[1], hi)
+    else groups.push([lo, hi])
+  }
+  for (let pass = 0; pass < 8; pass++) {
+    let grew = false
+    for (const g of groups) {
+      for (const c of covering(g[0], g[1])) {
+        while (
+          g[0] > 0 &&
+          (c.fromA < segments[g[0]]!.aFrom || c.fromB < segments[g[0]]!.bFrom)
+        ) {
+          g[0]--
+          grew = true
+        }
+        while (
+          g[1] + 1 < segments.length &&
+          (c.toA > segments[g[1]]!.aTo || c.toB > segments[g[1]]!.bTo)
+        ) {
+          g[1]++
+          grew = true
+        }
+      }
+    }
+    if (!grew) break
+    for (let i = groups.length - 1; i > 0; i--) {
+      if (groups[i]![0] <= groups[i - 1]![1]) {
+        groups[i - 1]![1] = Math.max(groups[i - 1]![1], groups[i]![1])
+        groups.splice(i, 1)
+      }
+    }
+  }
+
+  const dropped = new Set<Change<string>>(unplaced)
+  const replacements: Change<string>[] = []
+  for (const [lo, hi] of groups) {
+    const aFrom = segments[lo]!.aFrom
+    const aTo = segments[hi]!.aTo
+    const fromB = segments[lo]!.bFrom
+    const toB = segments[hi]!.bTo
+    const inside = covering(lo, hi)
+
+    /**
+     * The author typed in the block being restructured.
+     *
+     * Their keystroke fuses into the token change itself — the list-open
+     * deletion and the first character arrive as one change — so there is no
+     * separating the two, and the whole block becomes theirs, chunks and all.
+     * That is the adjacent-typing rule at block scale, and it errs the same
+     * way: a wrap they did not ask for is a smaller harm than a save that eats
+     * the sentence they just wrote.
+     *
+     * Only a change carrying TEXT can be theirs. Changeset re-attributes spans
+     * as it merges, so an author tag turns up on the closing token of a wrap
+     * three blocks away from anything they touched; a token change is never
+     * evidence of typing.
+     */
+    const authored = inside.some((c) => !structural(c) && sourcesOf(c).includes(AUTHOR))
+    const sources: string[] = []
+    for (const c of inside)
+      for (const s of sourcesOf(c)) if (s !== AUTHOR && !sources.includes(s)) sources.push(s)
+
+    // Nothing of a proposal left to propose, a change that still will not fit,
+    // or a block the author has taken over: drop, never splice.
+    if (authored || sources.length === 0 || inside.some((c) => !holds(lo, hi, c))) {
+      for (const c of inside) dropped.add(c)
+      continue
+    }
+
+    for (const c of inside) dropped.add(c)
     replacements.push(
       Change.fromJSON<string>({
-        fromA,
-        toA,
+        fromA: aFrom,
+        toA: aTo,
         fromB,
         toB,
-        deleted: toA > fromA ? [{ length: toA - fromA, data }] : [],
-        inserted: toB > fromB ? [{ length: toB - fromB, data }] : []
+        deleted: sourceSpans(aTo - aFrom, sources),
+        inserted: sourceSpans(toB - fromB, sources)
       })
     )
   }
-  // `merged` can be non-empty with no replacements — an adopted wrap drops its
-  // members and puts nothing back. Returning early on replacements alone left
-  // them in the list.
-  if (replacements.length === 0 && merged.size === 0) return changes
+
+  const out: Change<string>[] = []
   for (const change of changes) {
-    if (!merged.has(change)) out.push(change)
+    if (dropped.has(change)) continue
+    // Belt and braces: a change with nothing to insert and no original text to
+    // show as deleted can only render as ✓/✕ over nothing.
+    if (change.fromB === change.toB && original.textBetween(change.fromA, change.toA, ' ') === '')
+      continue
+    out.push(change)
   }
   out.push(...replacements)
   return out.sort((a, b) => a.fromB - b.fromB)

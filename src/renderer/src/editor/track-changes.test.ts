@@ -206,7 +206,21 @@ describe('TrackChanges', () => {
       ['Before.\n\n> Q.\n\nAfter.\n', 'Before.\n\nQ.\n\nAfter.\n'],
       ['- A\n- B\n\nAfter.\n', 'A\n\nB\n\nAfter.\n'],
       ['A\n\nB\n\nAfter.\n', '- A\n- B\n\nAfter.\n'],
-      ['Q.\n\nAfter.\n', '> Q.\n\nAfter.\n']
+      ['Q.\n\nAfter.\n', '> Q.\n\nAfter.\n'],
+      // Two restructured blocks side by side. Deciding which block a token
+      // belongs to by position alone put a second block's OPENING token in the
+      // first block's group, and the two replacements then overlapped on the B
+      // side and spliced over each other — an unapproved wrap reaching disk
+      // and surviving Reject All.
+      ['A.\n\nB.\n\nAfter.\n', '> A.\n\n> B.\n\nAfter.\n'],
+      ['A.\n\nB.\n', '> A.\n\n> B.\n'],
+      ['> A.\n\n> B.\n\nAfter.\n', 'A.\n\nB.\n\nAfter.\n'],
+      ['> A.\n\n> B.\n', 'A.\n\nB.\n'],
+      ['> A.\n\nB.\n\nAfter.\n', 'A.\n\n> B.\n\nAfter.\n'],
+      ['A.\n\n> B.\n\nAfter.\n', '> A.\n\nB.\n\nAfter.\n'],
+      ['> A.\n\n- X\n- Y\n\nAfter.\n', 'A.\n\nX\n\nY\n\nAfter.\n'],
+      ['A.\n\nX\n\nY\n\nAfter.\n', '> A.\n\n- X\n- Y\n\nAfter.\n'],
+      ['> P one.\n>\n> P two.\n\nAfter.\n', 'P one.\n\nP two.\n\nAfter.\n']
     ] as const) {
       const editor = makeReviewEditor(original, proposal)
       expect(pendingChangeCount(editor.state)).toBeGreaterThan(0)
@@ -217,6 +231,64 @@ describe('TrackChanges', () => {
       expect(docToMarkdown(editor.state.doc)).toBe(original)
       editor.destroy()
     }
+  })
+
+  it('never renders a chunk with nothing to show', () => {
+    // A structural chunk that could not be merged used to reach the
+    // decorations as a zero-width token span: a ✓/✕ pair floating over
+    // unmarked text, doing nothing when read and splicing half a wrap when
+    // clicked. Unmergeable now means dropped, so this cannot arise.
+    for (const [original, proposal, caret] of [
+      ['- A\n- B\n\nAfter.\n', 'A\n\nB\n\nAfter.\n', 1],
+      ['- A\n- B\n\nAfter.\n', 'A\n\nB\n\nAfter.\n', 5],
+      ['> P one.\n>\n> P two.\n\nAfter.\n', 'P one.\n\nP two.\n\nAfter.\n', 11],
+      ['A.\n\nB.\n\nAfter.\n', '> A.\n\n> B.\n\nAfter.\n', 0]
+    ] as const) {
+      const editor = makeReviewEditor(original, proposal)
+      if (caret > 0) {
+        editor.commands.setTextSelection(caret)
+        editor.commands.insertContent('x')
+      }
+      const dom = editor.view.dom
+      const marks =
+        dom.querySelectorAll('.tc-ins').length +
+        dom.querySelectorAll('.tc-del').length +
+        dom.querySelectorAll('.tc-attr').length
+      if (dom.querySelectorAll('.tc-ctrl').length > 0) expect(marks).toBeGreaterThan(0)
+      editor.destroy()
+    }
+  })
+
+  it('typing inside a multi-paragraph block being unwrapped adopts it whole', () => {
+    // The container's own tokens fuse with the first keystroke into one
+    // change, so there is no separating the two. Splicing them individually
+    // duplicated the paragraph and left an empty list item behind, in the
+    // saved document and in Reject All alike.
+    for (const [original, proposal, caret] of [
+      ['- A\n- B\n\nAfter.\n', 'A\n\nB\n\nAfter.\n', 1],
+      ['- A\n- B\n\nAfter.\n', 'A\n\nB\n\nAfter.\n', 5],
+      ['> P one.\n>\n> P two.\n\nAfter.\n', 'P one.\n\nP two.\n\nAfter.\n', 11]
+    ] as const) {
+      const editor = makeReviewEditor(original, proposal)
+      editor.commands.setTextSelection(caret)
+      editor.commands.insertContent('x')
+      const visible = docToMarkdown(editor.state.doc)
+      expect(docToMarkdown(savableDoc(editor.state))).toBe(visible)
+      expect(pendingChangeCount(editor.state)).toBe(0)
+      editor.destroy()
+    }
+  })
+
+  it('a block both reworded and restructured is one chunk', () => {
+    // Two token changes and a text change over the same block cannot be
+    // decided separately — rejecting the wrap alone leaves prose that was
+    // never approved — so they travel together.
+    const editor = makeReviewEditor('A quiet night.\n\nAfter.\n', '> A loud night.\n\nAfter.\n')
+    expect(pendingChangeCount(editor.state)).toBe(1)
+    expect(docToMarkdown(savableDoc(editor.state))).toBe('A quiet night.\n\nAfter.\n')
+    editor.commands.acceptAllChanges()
+    expect(docToMarkdown(savableDoc(editor.state))).toBe('> A loud night.\n\nAfter.\n')
+    editor.destroy()
   })
 
   it('savableDoc keeps accepted chunks and drops undecided ones', () => {
