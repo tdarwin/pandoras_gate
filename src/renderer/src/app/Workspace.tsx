@@ -310,12 +310,17 @@ export default function Workspace(): React.JSX.Element {
   // The overlay attaches to the LIVE editor rather than remounting it —
   // recreating the editor steals focus and resets the caret.
   const shownKey = suggestionSpec ? suggestionsHere?.chain.map((l) => l.proposalId).join() : null
+  // The baseline counts as much as the chain does: re-anchoring after someone
+  // else wrote the file changes what the same suggestions MEAN, and an overlay
+  // left on the old baseline would have the next save quietly undo the
+  // external edit.
+  const baseline = suggestionSpec ? suggestionsHere?.current : null
   useEffect(() => {
     if (!editorHandle) return
     if (suggestionSpec) editorHandle.attachSuggestions(suggestionSpec)
     else if (editorHandle.suggestionCount() > 0) editorHandle.detachSuggestions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editorHandle, shownKey, activeFile])
+  }, [editorHandle, shownKey, baseline, activeFile])
 
   // The store asks the editor what each proposal still proposes, at save time.
   useEffect(() => {
