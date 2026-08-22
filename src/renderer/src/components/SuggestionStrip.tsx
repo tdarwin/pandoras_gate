@@ -28,6 +28,7 @@ export default function SuggestionStrip({
 }): React.JSX.Element {
   const setFmChoice = useProposalsStore((s) => s.setFmChoice)
   const showOnly = useProposalsStore((s) => s.showOnly)
+  const reviewStructural = useProposalsStore((s) => s.reviewStructural)
   const resolveDoc = useProposalsStore((s) => s.resolveDoc)
   const [openRationale, setOpenRationale] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -35,6 +36,11 @@ export default function SuggestionStrip({
   // Before the overlay is on, the only number available is how many proposals
   // are waiting; once it is on, count what the author can actually click.
   const count = active.shown && chunkCount > 0 ? chunkCount : active.chain.length
+  // Two different reasons a proposal is set aside, and two different ways out:
+  // one that will not re-anchor is shown on its own, one that changes the
+  // shape of the document is decided whole against a diff.
+  const structural = active.blocked.filter((b) => b.structural)
+  const unfoldable = active.blocked.filter((b) => !b.structural)
   const sources = [...new Set(active.chain.map((l) => l.sourceTitle))].join(', ')
   const isNew = active.current === ''
 
@@ -69,13 +75,22 @@ export default function SuggestionStrip({
           >
             why {openRationale ? '▾' : '▸'}
           </button>
-          {active.blocked.length > 0 && (
+          {structural.length > 0 && (
             <button
-              onClick={() => void showOnly(active.blocked[0]!.proposalId)}
-              title={active.blocked[0]!.reason}
+              onClick={() => reviewStructural(structural[0]!.proposalId)}
+              title={`${structural[0]!.sourceTitle} — ${structural[0]!.reason}`}
               className="shrink-0 rounded px-1.5 text-xs text-amber-300 hover:bg-raised"
             >
-              {active.blocked.length} can&rsquo;t be combined · next ›
+              {structural.length} change{structural.length === 1 ? 's' : ''} the shape · review ›
+            </button>
+          )}
+          {unfoldable.length > 0 && (
+            <button
+              onClick={() => void showOnly(unfoldable[0]!.proposalId)}
+              title={unfoldable[0]!.reason}
+              className="shrink-0 rounded px-1.5 text-xs text-amber-300 hover:bg-raised"
+            >
+              {unfoldable.length} can&rsquo;t be combined · next ›
             </button>
           )}
         </span>

@@ -57,7 +57,8 @@ function fakeHandle(savableBody: string, proposedBody: Record<string, string>): 
     rejectAllSuggestions: vi.fn(),
     goToNextSuggestion: () => false,
     attachSuggestions: vi.fn(),
-    detachSuggestions: vi.fn()
+    detachSuggestions: vi.fn(),
+    suggestionsAttached: () => true
   } as unknown as EditorHandle
 }
 
@@ -382,6 +383,107 @@ describe('saving a document with suggestions', () => {
     // against the chain that was just folded.
     await proposals.useProposalsStore.getState().loadFor(PATH)
     expect(proposals.useProposalsStore.getState().active?.shown).toBe(false)
+  })
+
+  it('sets a proposal that changes the shape aside, with everything after it', async () => {
+    const stores = await loadStores()
+    stores.project.useProjectStore.setState({ novel: NOVEL, activeFile: PATH })
+    responses['proposals:pending'] = {
+      docs: [{ path: PATH, action: 'update', count: 3, sources: ['Codex update'], blocked: 0 }]
+    }
+    responses['proposals:forPath'] = {
+      current: CURRENT,
+      chain: [
+        { proposalId: 'p1', sourceTitle: 'A', rationale: 'r', content: '---\nname: Kael\n---\nAlpha edited.\n\nBeta.\n' },
+        { proposalId: 'p2', sourceTitle: 'B', rationale: 'r', content: '---\nname: Kael\n---\nAlpha edited.\n\n> Beta.\n' },
+        { proposalId: 'p3', sourceTitle: 'C', rationale: 'r', content: '---\nname: Kael\n---\nAlpha edited.\n\n> Beta edited.\n' }
+      ],
+      blocked: []
+    }
+    stores.proposals.useProposalsStore.getState().init()
+    await stores.proposals.useProposalsStore.getState().refresh()
+
+    const active = stores.proposals.useProposalsStore.getState().active!
+    // Only the reword can be spliced back safely. The wrap changes the shape,
+    // and the link after it was folded on top of the wrap.
+    expect(active.chain.map((l) => l.proposalId)).toEqual(['p1'])
+    expect(active.blocked.map((b) => b.proposalId)).toEqual(['p2', 'p3'])
+    expect(active.blocked.every((b) => b.structural)).toBe(true)
+    expect(active.blocked[0]!.content).toContain('> Beta.')
+  })
+
+  it('decides a structural proposal whole, saving the author’s work first', async () => {
+    const stores = await loadStores()
+    const PROPOSED = '---\nname: Kael\n---\n> Alpha.\n\nBeta.\n'
+    stores.project.useProjectStore.setState({ novel: NOVEL, activeFile: PATH })
+    responses['proposals:pending'] = {
+      docs: [{ path: PATH, action: 'update', count: 1, sources: ['Codex update'], blocked: 0 }]
+    }
+    responses['proposals:forPath'] = {
+      current: CURRENT,
+      chain: [{ proposalId: 'p1', sourceTitle: 'Codex update', rationale: 'r', content: PROPOSED }],
+      blocked: []
+    }
+    responses['proposals:apply'] = { content: PROPOSED, remaining: 0 }
+    stores.proposals.useProposalsStore.getState().init()
+    await stores.proposals.useProposalsStore.getState().refresh()
+    stores.project.useProjectStore.getState().setSavedContent(CURRENT)
+    invokes.length = 0
+
+    await stores.proposals.useProposalsStore.getState().decideStructural('p1', 'accept')
+
+    const apply = invokes.find((i) => i.channel === 'proposals:apply')!
+    expect(apply.payload.write).toBe(PROPOSED)
+    expect(apply.payload.decisions).toEqual([{ proposalId: 'p1', newContent: PROPOSED }])
+    // Whatever the author had typed goes to disk before the proposal replaces
+    // the document, and the fold re-anchors onto it.
+    expect(invokes.findIndex((i) => i.channel === 'proposals:forPath')).toBeLessThan(
+      invokes.findIndex((i) => i.channel === 'proposals:apply')
+    )
+  })
+
+  it('refuses a structural proposal without writing anything', async () => {
+    const stores = await loadStores()
+    const PROPOSED = '---\nname: Kael\n---\n> Alpha.\n\nBeta.\n'
+    stores.project.useProjectStore.setState({ novel: NOVEL, activeFile: PATH })
+    responses['proposals:pending'] = {
+      docs: [{ path: PATH, action: 'update', count: 1, sources: ['Codex update'], blocked: 0 }]
+    }
+    responses['proposals:forPath'] = {
+      current: CURRENT,
+      chain: [{ proposalId: 'p1', sourceTitle: 'Codex update', rationale: 'r', content: PROPOSED }],
+      blocked: []
+    }
+    responses['proposals:apply'] = { content: null, remaining: 0 }
+    stores.proposals.useProposalsStore.getState().init()
+    await stores.proposals.useProposalsStore.getState().refresh()
+    stores.project.useProjectStore.getState().setSavedContent(CURRENT)
+    invokes.length = 0
+
+    await stores.proposals.useProposalsStore.getState().decideStructural('p1', 'reject')
+
+    const apply = invokes.find((i) => i.channel === 'proposals:apply')!
+    // write:null is the branch main records a refusal in, so it stays refused.
+    expect(apply.payload.write).toBeNull()
+    expect(apply.payload.decisions).toEqual([{ proposalId: 'p1', newContent: CURRENT }])
+  })
+
+  it('records nothing while the overlay is off the document', async () => {
+    const { proposals, project } = await setUp()
+    // A detach drops the chunk count to zero exactly like deciding everything
+    // does. Reading it as a decision resolved suggestions from a plugin that
+    // was not showing them — which is what clicking through to a set-aside
+    // proposal used to do to the proposal it was about to show.
+    proposals.setSuggestionHandle({
+      ...fakeHandle(CURRENT, { p1: CURRENT }),
+      suggestionsAttached: () => false
+    } as unknown as EditorHandle)
+    project.useProjectStore.getState().setContent('---\nname: Kael\n---\nTyped.\n')
+    await project.useProjectStore.getState().saveActiveChapter()
+
+    const apply = invokes.find((i) => i.channel === 'proposals:apply')!
+    expect((apply.payload as { decisions: unknown[] }).decisions).toEqual([])
+    expect((apply.payload as { write: string }).write).toContain('Typed.')
   })
 
   it('leaves documents without suggestions on the ordinary write path', async () => {

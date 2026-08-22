@@ -4,6 +4,9 @@ import { onIpcEvent } from '../lib/events'
 import { useProjectStore, setSuggestionWriter, setCurrentSink, onNovelChange } from './project'
 import { useChatStore } from './chat'
 import { useDraftStore } from './draft'
+import { getSchema } from '@tiptap/core'
+import { baseExtensions } from '../editor/extensions'
+import { splitChainAtStructural } from '../editor/blockShape'
 import type { EditorHandle } from '../editor/MarkdownEditor'
 
 /** A document with suggestions waiting. Bodies are fetched per document, on demand. */
@@ -32,6 +35,14 @@ export interface BlockedProposal {
   sourceTitle: string
   rationale: string
   reason: string
+  /**
+   * Set aside because it changes the SHAPE of the document, not because it
+   * would not re-anchor. Decided whole against a word diff rather than shown
+   * inline — see `editor/blockShape.ts`.
+   */
+  structural?: boolean
+  /** What it proposes, whole. Only structural entries carry it. */
+  content?: string
 }
 
 /**
@@ -48,6 +59,8 @@ export interface ActiveSuggestions {
   fmChoice: 'proposed' | 'current'
   /** True once the overlay is actually on the editor. */
   shown: boolean
+  /** The structural proposal whose whole-document diff is open, if any. */
+  reviewing: string | null
 }
 
 interface ProposalsStore {
@@ -77,6 +90,11 @@ interface ProposalsStore {
   setFmChoice: (choice: 'proposed' | 'current') => void
   /** Steps to a proposal that would not fold in with the others. */
   showOnly: (proposalId: string) => Promise<void>
+  /** Opens the whole-document diff for a proposal that changes the shape. */
+  reviewStructural: (proposalId: string) => void
+  closeStructuralReview: () => void
+  /** Accepts or refuses a structural proposal, whole. */
+  decideStructural: (proposalId: string, resolution: 'accept' | 'reject') => Promise<boolean>
   /**
    * Records decisions that left the text unchanged — a reject reverts to what
    * the buffer already said, so nothing goes dirty and autosave never runs.
@@ -101,6 +119,45 @@ interface ProposalsStore {
     scope: 'chapter' | 'novel',
     guidance?: string
   ) => Promise<void>
+}
+
+/**
+ * Splits a fold into what can be reviewed inline and what cannot.
+ *
+ * Per-chunk ✓/✕ decides a suggestion by splicing the original back over the
+ * proposal's range, which is only unambiguous when the two documents hold the
+ * same blocks. A proposal that changes the shape of the document is set aside
+ * like one that will not re-anchor, and decided whole against a word diff.
+ */
+let cachedSchema: ReturnType<typeof getSchema> | null = null
+
+function partitionChain(
+  current: string,
+  chain: FoldLink[],
+  blocked: BlockedProposal[]
+): { chain: FoldLink[]; blocked: BlockedProposal[] } {
+  const schema = (cachedSchema ??= getSchema(baseExtensions()))
+  const bodies = chain.map((link) => parseFrontmatter(link.content).body)
+  const { inline } = splitChainAtStructural(
+    schema,
+    parseFrontmatter(current).body,
+    bodies.map((content) => ({ content }))
+  )
+  if (inline.length === chain.length) return { chain, blocked }
+  return {
+    chain: chain.slice(0, inline.length),
+    blocked: [
+      ...blocked,
+      ...chain.slice(inline.length).map((link) => ({
+        proposalId: link.proposalId,
+        sourceTitle: link.sourceTitle,
+        rationale: link.rationale,
+        reason: 'changes the shape of the document',
+        structural: true,
+        content: link.content
+      }))
+    ]
+  }
 }
 
 /** Accepting into the chapter an AI draft is streaming into would race the
@@ -230,10 +287,10 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       active: {
         path,
         current: result.data.current,
-        chain: result.data.chain,
-        blocked: result.data.blocked,
+        ...partitionChain(result.data.current, result.data.chain, result.data.blocked),
         fmChoice: 'current',
-        shown: false
+        shown: false,
+        reviewing: null
       }
     })
   },
@@ -246,21 +303,91 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     const novel = useProjectStore.getState().novel
     const { active } = get()
     if (!novel || !active) return
+    // One that changes the document's shape is never shown inline. It gets
+    // the whole-document diff instead.
+    if (active.blocked.some((b) => b.proposalId === proposalId && b.structural)) {
+      set({ active: { ...active, reviewing: proposalId } })
+      return
+    }
     const result = await window.pandora.invoke('proposals:forPath', {
       novelDir: novel.dir,
       path: active.path,
       only: proposalId
     })
     if (!result.ok || result.data.chain.length === 0) return
+    const next = partitionChain(result.data.current, result.data.chain, [])
     set({
       active: {
         ...active,
         current: result.data.current,
-        chain: result.data.chain,
-        blocked: [],
-        shown: false
+        ...next,
+        // Deliberately NOT turning the overlay off first. The attach effect is
+        // keyed on the chain, so a new chain re-attaches directly; setting
+        // `shown` false and letting the auto-show effect turn it back on left
+        // a render in between where the overlay DETACHED — which dropped the
+        // chunk count to zero, and the save that followed read that as the
+        // author having decided everything, deleting the very suggestion this
+        // was about to show.
+        shown: active.shown,
+        reviewing: next.chain.length === 0 ? proposalId : null
       }
     })
+  },
+
+  reviewStructural: (proposalId) => {
+    const { active } = get()
+    if (active) set({ active: { ...active, reviewing: proposalId } })
+  },
+
+  closeStructuralReview: () => {
+    const { active } = get()
+    if (active) set({ active: { ...active, reviewing: null } })
+  },
+
+  decideStructural: async (proposalId, resolution) => {
+    const project = useProjectStore.getState()
+    const novel = project.novel
+    const { active } = get()
+    if (!novel || !active) return false
+    if (resolution === 'accept' && draftBlocks(active.path)) {
+      fail('The AI is drafting into this chapter — stop the draft first.')
+      return false
+    }
+    // The author's own typing goes to disk first, and the fold re-anchors the
+    // proposal onto it — accepting must not silently discard what they wrote
+    // while the diff was open.
+    await project.snapshotActiveChapter()
+    await get().loadFor(active.path)
+    const fresh = get().active
+    const item = fresh?.blocked.find((b) => b.proposalId === proposalId && b.structural)
+    if (!fresh || !item?.content) {
+      // It resolved or re-anchored out from under the panel.
+      get().closeStructuralReview()
+      return false
+    }
+    const write = resolution === 'accept' ? item.content : null
+    const result = await window.pandora.invoke('proposals:apply', {
+      novelDir: novel.dir,
+      path: fresh.path,
+      expectedCurrent: fresh.current,
+      write,
+      // Either way the proposal is done: accepted, its content becomes the
+      // file and nothing is left to suggest; refused, what it proposes is what
+      // the file already says. Main records the refusal on the write-less
+      // branch, so it stays refused.
+      decisions: [{ proposalId, newContent: resolution === 'accept' ? item.content : fresh.current }]
+    })
+    if (!result.ok) {
+      fail(result.error.message)
+      await get().loadFor(fresh.path)
+      return false
+    }
+    if (result.data.content !== null && useProjectStore.getState().activeFile === fresh.path) {
+      useProjectStore.getState().setSavedContent(result.data.content)
+    }
+    get().closeStructuralReview()
+    await get().refresh()
+    return true
   },
 
   setCurrent: (path, content) =>
@@ -514,7 +641,12 @@ async function writeDecisions(
    * likewise not on screen.
    */
   const decisions =
-    active.shown && handle
+    // `suggestionsAttached` and not just a count: a count of zero means either
+    // "everything decided" or "no overlay on the document", and reading a
+    // DETACH as a decision resolved suggestions from a plugin that was not
+    // showing them — deleting the one the author was about to look at and
+    // recording it as refused.
+    active.shown && handle?.suggestionsAttached()
       ? active.chain.map((link) => ({
           proposalId: link.proposalId,
           newContent: serializeFrontmatter({

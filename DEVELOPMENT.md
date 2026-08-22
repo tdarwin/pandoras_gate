@@ -396,8 +396,14 @@ first structural link and everything after it waits: later links were folded on 
 so their content assumes it, and once the earlier ones are decided the fold re-anchors and
 the structural one comes back as the first.
 
-Such a proposal is still reachable and still decidable — it is set aside like one that will
-not re-anchor, and decided whole against a word diff. The permanent test axis is now the
+Such a proposal is still reachable and still decidable. The store partitions the fold on
+load (`partitionChain`), so it lands in `blocked` beside the ones that will not re-anchor —
+two reasons to be set aside, two ways out: the strip offers `N can't be combined · next ›`
+for one and `N changes the shape · review ›` for the other. The second opens
+`StructuralReview`, a panel in the editor column (not a modal — the author can leave it by
+opening another document) with the source, the rationale, a `WordDiff` of the whole body,
+and Accept / Reject. Accepting saves the author's own typing first and re-folds, so the
+proposal is re-anchored onto what they wrote rather than replacing it. The permanent test axis is now the
 simple statement of the rule: for any proposal that changes block structure, the inline
 chunk count is zero and the saved document is the author's, whatever they type.
 

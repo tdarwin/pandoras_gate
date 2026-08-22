@@ -6,6 +6,7 @@ import { baseExtensions } from './extensions'
 import { markdownToDoc } from './markdown'
 import {
   inlineDocContent,
+  suggestionsAttached,
   TrackChanges,
   pendingChangeCount,
   savableMarkdown,
@@ -71,6 +72,12 @@ export interface EditorHandle {
   attachSuggestions: (spec: AttachSpec) => void
   /** Drops the overlay, leaving the savable document behind. */
   detachSuggestions: () => void
+  /**
+   * Whether an overlay is actually on the document. A count of zero means
+   * either "all decided" or "nothing attached", and only one of those is a
+   * decision worth recording.
+   */
+  suggestionsAttached: () => boolean
 }
 
 /** Asset-import callbacks the workspace wires to main (null = no novel). */
@@ -234,6 +241,11 @@ export default function MarkdownEditor({
         // the editor holds AI text the author has not agreed to, and autosave
         // must not write it.
         emit(editor.state)
+      },
+      onTransaction({ editor, transaction }) {
+        // Accepting a chunk is metadata-only — the document does not change,
+        // so `onUpdate` never fires — but what should be SAVED just did.
+        if (!transaction.docChanged) emit(editor.state)
       }
     },
     // Recreate (fresh undo history) only when switching documents.
@@ -322,7 +334,8 @@ export default function MarkdownEditor({
       detachSuggestions: () => {
         if (editor.isDestroyed) return
         editor.chain().detachSuggestions().run()
-      }
+      },
+      suggestionsAttached: () => !editor.isDestroyed && suggestionsAttached(editor.state)
     })
     return () => onReadyRef.current?.(null)
   }, [editor])

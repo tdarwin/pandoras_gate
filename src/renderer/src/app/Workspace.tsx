@@ -9,6 +9,7 @@ import ChapterSidebar from '../components/ChapterSidebar'
 import ChatPanel from '../components/ChatPanel'
 import HistoryPanel from '../components/HistoryPanel'
 import SuggestionStrip from '../components/SuggestionStrip'
+import StructuralReview from '../components/StructuralReview'
 import AiPromptModal from '../components/AiPromptModal'
 import ReviewModal from '../components/ReviewModal'
 import ChapterDetails from '../components/ChapterDetails'
@@ -250,6 +251,14 @@ export default function Workspace(): React.JSX.Element {
   const suggestionsHere =
     activeSuggestions && activeSuggestions.path === activeFile ? activeSuggestions : null
 
+  // A proposal that changes the shape of the document takes over the column
+  // while it is being decided — it replaces the whole document, so editing
+  // underneath it would only be thrown away.
+  const reviewingItem =
+    suggestionsHere?.reviewing != null
+      ? (suggestionsHere.blocked.find((b) => b.proposalId === suggestionsHere.reviewing) ?? null)
+      : null
+
   const suggestionSpec = useMemo(() => {
     // A chain with no links means every proposal for this document was set
     // aside as un-combinable — there is nothing to overlay, and the strip's
@@ -478,6 +487,8 @@ export default function Workspace(): React.JSX.Element {
                   onChange={setContent}
                   onSave={() => void snapshotActiveChapter()}
                 />
+              ) : reviewingItem ? (
+                <StructuralReview item={reviewingItem} current={suggestionsHere!.current} />
               ) : (
                 <>
                   {suggestionsHere && (
