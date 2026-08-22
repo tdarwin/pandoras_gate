@@ -279,6 +279,20 @@ describe('TrackChanges', () => {
     }
   })
 
+  it('attaching an empty chain leaves the document alone', () => {
+    // Every proposal for the document was set aside as un-combinable. There
+    // is nothing to overlay, and replacing the document with "the last link"
+    // emptied it — the author watched their prose disappear while the file
+    // still had it.
+    const editor = makeReviewEditor('Kept.\n', 'Kept edited.\n')
+    editor.commands.detachSuggestions()
+    const standing = docToMarkdown(editor.state.doc)
+    editor.commands.attachSuggestions({ original: standing, chain: [] })
+    expect(docToMarkdown(editor.state.doc)).toBe(standing)
+    expect(pendingChangeCount(editor.state)).toBe(0)
+    editor.destroy()
+  })
+
   it('a block both reworded and restructured is one chunk', () => {
     // Two token changes and a text change over the same block cannot be
     // decided separately — rejecting the wrap alone leaves prose that was
