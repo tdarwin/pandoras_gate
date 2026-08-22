@@ -49,10 +49,10 @@ The design goals that follow from that:
 - **Codex**: the novel's canon reference — synopsis, per-chapter summaries, character
   profiles, world/system rules (LitRPG-friendly structured frontmatter), glossary,
   timeline — browsable and editable in-app.
-- **AI metadata pipeline**: on chapter save, the AI proposes full-document updates to the
-  Codex; you review as tracked changes right in the editor (✓/✕ on each suggestion, keep
-  typing while you decide) or as word-level diffs in the queue. Rejected suggestions stay
-  rejected.
+- **AI metadata pipeline**: on chapter save, the AI proposes updates to the Codex.
+  Suggestions live **in the document** — open a chapter or Codex entry and they are there
+  as tracked changes, ✓/✕ on each, while you keep writing. Nothing you have not agreed to
+  reaches the file, decisions survive a restart, and rejected suggestions stay rejected.
 - **Context-aware chat**: the chat assembles story context (chapter, synopsis, world
   rules, matched characters, summaries, glossary) within the model's token budget, with a
   visible context inspector. See [docs/context-assembly.md](docs/context-assembly.md) for
@@ -128,7 +128,7 @@ target is configured in `electron-builder.yml` and can be built locally.
    you want help with and download one of the local models it suggests, or paste an
    OpenRouter API key (stored in the OS keychain, never in a file) to use hosted models.
 3. Write a chapter and save. The Codex pipeline proposes summary, character, and world
-   updates; review them in the proposals queue.
+   updates; open the marked documents and accept or reject each change in place.
 
 ## Novel folder format
 

@@ -264,6 +264,16 @@ Two separate places, and the distinction matters:
   compose instead of the last silently reverting the first two. A proposal that will not
   re-anchor is set aside with its reason rather than poisoning the fold.
 
+  Suggestions are reviewed **inline**, in the ordinary editor — there is no queue and no
+  review mode. Two rules keep the save path honest: only proposals the author can actually
+  SEE are decided (the overlay must be attached, and the fold's set-aside proposals are not
+  on screen), and frontmatter defaults to the author's own, never the proposal's. The document the editor holds is the file plus every pending suggestion;
+  what gets saved is `savableDoc` (see below), so an undecided suggestion never reaches
+  disk. Every save path in `stores/project.ts` routes through the injected
+  `suggestionWriter` when the open document has suggestions, so autosave, blur, the
+  interval snapshot, ⌘S, switching chapters and closing the novel all record decisions
+  rather than writing the buffer over them.
+
   A decision is recorded by `applyProposalDecisions`: what the file should say now, and
   what is still proposed — for the proposals the author actually saw. Anything not named
   in `decisions` is left untouched, `baseContent` included, because the fold re-anchors it

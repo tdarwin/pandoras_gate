@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { onIpcEvent } from '../lib/events'
-import { useProjectStore } from './project'
+import { useProjectStore, onNovelChange } from './project'
 import { useChatStore } from './chat'
 
 /**
@@ -100,6 +100,9 @@ export const useDraftStore = create<DraftStore>((set, get) => ({
   init: () => {
     if (initialized) return
     initialized = true
+    // Drafting into a chapter of a novel that is no longer open would write
+    // into a file the workspace has left behind.
+    onNovelChange(() => void useDraftStore.getState().stop())
     // The chat agent's draft_chapter tool: begin once its reply finishes.
     // Only ONE pending request is kept (latest wins) and only one idle-watcher
     // runs — a runaway agent calling draft_chapter repeatedly must not queue

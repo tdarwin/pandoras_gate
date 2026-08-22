@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useProjectStore } from '../stores/project'
-import { useProposalsStore } from '../stores/proposals'
+import { useProposalsStore, setSuggestionHandle } from '../stores/proposals'
 import { useDraftStore } from '../stores/draft'
 import { usePrefsStore } from '../stores/prefs'
 import { useChatStore } from '../stores/chat'
@@ -8,7 +8,7 @@ import { useUiStore } from '../stores/ui'
 import ChapterSidebar from '../components/ChapterSidebar'
 import ChatPanel from '../components/ChatPanel'
 import HistoryPanel from '../components/HistoryPanel'
-import ProposalsPanel, { WordDiff } from '../components/ProposalsPanel'
+import SuggestionStrip from '../components/SuggestionStrip'
 import AiPromptModal from '../components/AiPromptModal'
 import ReviewModal from '../components/ReviewModal'
 import ChapterDetails from '../components/ChapterDetails'
@@ -16,12 +16,8 @@ import MarkdownEditor, { type EditorHandle, type ImageImporter } from '../editor
 import EditorToolbar from '../editor/EditorToolbar'
 import PlainEditor from '../editor/PlainEditor'
 import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
-import { stringify as stringifyYaml } from 'yaml'
 
 const AUTO_METADATA_DELAY_MS = 15_000
-
-/** The single-proposal id the "Review in editor" flow attributes chunks to. */
-const REVIEW_PROPOSAL = 'review'
 
 function wordCount(body: string): { words: number; readMinutes: number } {
   const words = body.split(/\s+/).filter((w) => /\w/.test(w)).length
@@ -45,7 +41,6 @@ export default function Workspace(): React.JSX.Element {
   const setError = useProjectStore((s) => s.setError)
   const [showHistory, setShowHistory] = useState(false)
   const [showChat, setShowChat] = useState(true)
-  const [showProposals, setShowProposals] = useState(false)
   const [modal, setModal] = useState<'draft' | 'outline-chapter' | 'review' | null>(null)
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
 
@@ -88,14 +83,11 @@ export default function Workspace(): React.JSX.Element {
     }
   }, [novel.dir])
   const lastRunStatus = useProposalsStore((s) => s.lastRunStatus)
-  const review = useProposalsStore((s) => s.review)
-  const setReviewFmChoice = useProposalsStore((s) => s.setReviewFmChoice)
-  const applyReview = useProposalsStore((s) => s.applyReview)
-  const rejectReview = useProposalsStore((s) => s.rejectReview)
-  const exitReview = useProposalsStore((s) => s.exitReview)
   const [editorHandle, setEditorHandle] = useState<EditorHandle | null>(null)
-  const [reviewHandle, setReviewHandle] = useState<EditorHandle | null>(null)
-  const pendingCount = useProposalsStore((s) => s.pendingTotal)
+  const activeSuggestions = useProposalsStore((s) => s.active)
+  const loadSuggestionsFor = useProposalsStore((s) => s.loadFor)
+  const setSuggestionsShown = useProposalsStore((s) => s.setShown)
+  const persistDecisions = useProposalsStore((s) => s.persistDecisions)
   const runProposals = useProposalsStore((s) => s.runForActiveChapter)
   const generateOutline = useProposalsStore((s) => s.generateOutline)
   const refreshProposals = useProposalsStore((s) => s.refresh)
@@ -245,106 +237,94 @@ export default function Workspace(): React.JSX.Element {
   }
 
   const doc = useMemo(() => parseFrontmatter(content), [content])
+  // The editor and details callbacks re-serialize the whole file around the
+  // part they changed, so they must read the CURRENT frontmatter, not whatever
+  // was parsed when the callback was created. Accepting a suggestion can write
+  // frontmatter the buffer never had, and a stale closure then wrote the
+  // document straight back without it.
+  const docRef = useRef(doc)
+  docRef.current = doc
+
+  // Suggestions for the document that is actually open. Anything pending for
+  // another document shows as a dot in the navigation, not here.
+  const suggestionsHere =
+    activeSuggestions && activeSuggestions.path === activeFile ? activeSuggestions : null
+
+  const suggestionSpec = useMemo(() => {
+    if (!suggestionsHere || !suggestionsHere.shown) return null
+    return {
+      original: parseFrontmatter(suggestionsHere.current).body,
+      chain: suggestionsHere.chain.map((link) => ({
+        proposalId: link.proposalId,
+        content: parseFrontmatter(link.content).body
+      }))
+    }
+  }, [suggestionsHere])
+
+  const suggestionTitles = useMemo(() => {
+    const out: Record<string, string> = {}
+    for (const link of suggestionsHere?.chain ?? []) {
+      out[link.proposalId] = `${link.sourceTitle} — ${link.rationale}`
+    }
+    return out
+  }, [suggestionsHere])
+
+  const showSuggestions = useCallback(() => {
+    setSuggestionsShown(true)
+  }, [setSuggestionsShown])
+
+  // What the READER sees is chunks, not proposals — one Codex run routinely
+  // suggests half a dozen changes to one document.
+  const [chunkCount, setChunkCount] = useState(0)
+  // A reject leaves the savable text unchanged, so the buffer never goes dirty
+  // and autosave never fires — the decision would sit in memory until the next
+  // blur or quit. Persist it the moment the count drops.
+  const lastChunkCountRef = useRef(0)
+  const onChunkCountChange = useCallback(
+    (n: number) => {
+      setChunkCount(n)
+      const fell = n < lastChunkCountRef.current
+      lastChunkCountRef.current = n
+      if (fell) void persistDecisions()
+    },
+    [persistDecisions]
+  )
+
+  // Fold the suggestions for whichever document is open.
+  useEffect(() => {
+    // A new document starts from no chunks; without this the drop from the
+    // previous one's count reads as a decision.
+    lastChunkCountRef.current = 0
+    void loadSuggestionsFor(activeFile)
+  }, [activeFile, loadSuggestionsFor])
+
+  // Put them on the editor as soon as it is safe to. A clean buffer means the
+  // author is not mid-sentence, so nothing moves under their cursor; while
+  // they are typing the strip offers "Show" instead, because AI text appearing
+  // under a moving caret is the one thing this feature must never do.
+  useEffect(() => {
+    if (!suggestionsHere || suggestionsHere.shown || dirty || drafting) return
+    setSuggestionsShown(true)
+  }, [suggestionsHere, dirty, drafting, setSuggestionsShown])
+
+  // The overlay attaches to the LIVE editor rather than remounting it —
+  // recreating the editor steals focus and resets the caret.
+  const shownKey = suggestionSpec ? suggestionsHere?.chain.map((l) => l.proposalId).join() : null
+  useEffect(() => {
+    if (!editorHandle) return
+    if (suggestionSpec) editorHandle.attachSuggestions(suggestionSpec)
+    else if (editorHandle.suggestionCount() > 0) editorHandle.detachSuggestions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorHandle, shownKey, activeFile])
+
+  // The store asks the editor what each proposal still proposes, at save time.
+  useEffect(() => {
+    setSuggestionHandle(editorHandle)
+    return () => setSuggestionHandle(null)
+  }, [editorHandle])
+
   const isYamlFile = /\.ya?ml$/.test(activeFile ?? '')
   const stats = isChapter ? wordCount(doc.body) : null
-
-  // Tracked-changes review takes over the editor column.
-  if (review) {
-    const original = parseFrontmatter(review.originalRaw)
-    const proposed = parseFrontmatter(review.proposedRaw)
-    // An unreadable block is written back verbatim, so it has to be shown and
-    // compared as itself — labelling it "(none)" hid a real difference and
-    // could leave the radio off while the two choices write different files.
-    const fmText = (doc: ReturnType<typeof parseFrontmatter>): string =>
-      doc.rawFrontmatter !== null
-        ? doc.rawFrontmatter
-        : Object.keys(doc.data).length > 0
-          ? stringifyYaml(doc.data).trimEnd()
-          : '(none)'
-    const fmDiffers = fmText(original) !== fmText(proposed)
-    return (
-      <div className="flex min-h-0 flex-1">
-        <ChapterSidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-amber-900 bg-amber-950/40 px-4 py-2">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium text-amber-200">
-                Reviewing suggestion for {review.path}
-              </div>
-              <div className="truncate text-xs text-amber-200/70">
-                {review.sourceTitle} — {review.rationale}. Use ✓/✕ on each change (you can keep
-                typing), then Apply.
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                onClick={() => void rejectReview()}
-                className="rounded-lg border border-amber-800 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-900"
-              >
-                Reject all
-              </button>
-              <button
-                onClick={exitReview}
-                className="rounded-lg border border-amber-800 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-900"
-              >
-                Later
-              </button>
-              <button
-                onClick={() =>
-                  void applyReview(reviewHandle?.proposedBody(REVIEW_PROPOSAL) ?? proposed.body)
-                }
-                className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600"
-              >
-                Apply
-              </button>
-            </div>
-          </div>
-          {fmDiffers && (
-            <div className="shrink-0 border-b border-line px-4 py-2">
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <span className="text-xs font-medium text-ink-muted">Details (frontmatter)</span>
-                <span className="flex shrink-0 gap-3 text-xs text-ink-muted">
-                  <label className="flex cursor-pointer items-center gap-1">
-                    <input
-                      type="radio"
-                      checked={review.fmChoice === 'proposed'}
-                      onChange={() => setReviewFmChoice('proposed')}
-                    />
-                    Use proposed
-                  </label>
-                  <label className="flex cursor-pointer items-center gap-1">
-                    <input
-                      type="radio"
-                      checked={review.fmChoice === 'current'}
-                      onChange={() => setReviewFmChoice('current')}
-                    />
-                    Keep current
-                  </label>
-                </span>
-              </div>
-              <WordDiff oldText={fmText(original)} newText={fmText(proposed)} />
-            </div>
-          )}
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <MarkdownEditor
-              docId={`review:${review.path}`}
-              // `value` is the SAVABLE body — the file as it stands. The doc
-              // the editor shows is the folded proposal on top of it.
-              value={original.body}
-              onChange={() => {}}
-              suggestion={{
-                original: original.body,
-                chain: [{ proposalId: REVIEW_PROPOSAL, content: proposed.body }]
-              }}
-              onReady={setReviewHandle}
-              importImage={importImage}
-            />
-          </div>
-        </div>
-        {showChat && <ChatPanel onClose={() => setShowChat(false)} />}
-      </div>
-    )
-  }
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -404,14 +384,6 @@ export default function Workspace(): React.JSX.Element {
                         : (lastRunStatus ?? 'Update Codex')}
                     </button>
                   </>
-                )}
-                {pendingCount > 0 && (
-                  <button
-                    onClick={() => setShowProposals(true)}
-                    className="rounded-full bg-amber-900/70 px-2.5 py-0.5 text-xs font-medium text-amber-200 hover:bg-amber-800"
-                  >
-                    {pendingCount} suggestion{pendingCount === 1 ? '' : 's'}
-                  </button>
                 )}
                 <button
                   onClick={() => setShowHistory((v) => !v)}
@@ -493,6 +465,14 @@ export default function Workspace(): React.JSX.Element {
                 />
               ) : (
                 <>
+                  {suggestionsHere && (
+                    <SuggestionStrip
+                      active={suggestionsHere}
+                      chunkCount={chunkCount}
+                      currentRaw={content}
+                      onShow={showSuggestions}
+                    />
+                  )}
                   <ChapterDetails
                     key={activeFile}
                     data={doc.data}
@@ -502,8 +482,8 @@ export default function Workspace(): React.JSX.Element {
                       setContent(
                         serializeFrontmatter({
                           data,
-                          body: doc.body,
-                          rawFrontmatter: doc.rawFrontmatter
+                          body: docRef.current.body,
+                          rawFrontmatter: docRef.current.rawFrontmatter
                         })
                       )
                     }
@@ -524,12 +504,15 @@ export default function Workspace(): React.JSX.Element {
                     <MarkdownEditor
                       docId={activeFile}
                       value={doc.body}
+                      suggestion={suggestionSpec}
+                      suggestionTitles={suggestionTitles}
+                      onSuggestionsChange={onChunkCountChange}
                       onChange={(body) =>
                         setContent(
                           serializeFrontmatter({
-                            data: doc.data,
+                            data: docRef.current.data,
                             body,
-                            rawFrontmatter: doc.rawFrontmatter
+                            rawFrontmatter: docRef.current.rawFrontmatter
                           })
                         )
                       }
@@ -554,7 +537,6 @@ export default function Workspace(): React.JSX.Element {
       </div>
       {showHistory && activeFile && <HistoryPanel onClose={() => setShowHistory(false)} />}
       {showChat && <ChatPanel onClose={() => setShowChat(false)} />}
-      {showProposals && <ProposalsPanel onClose={() => setShowProposals(false)} />}
 
       {modal === 'draft' && (
         <AiPromptModal
