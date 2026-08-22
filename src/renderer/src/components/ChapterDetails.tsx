@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
 /**
@@ -6,6 +6,11 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
  * Scalar fields edit as plain inputs; structured fields (lists, maps) edit as
  * YAML in a textarea with validation. The document on disk keeps its
  * frontmatter — writers just never have to look at fences.
+ *
+ * The exception is a block the app could not read at all (hand-edited in
+ * another editor, an unquoted colon, a stray tab). That one block IS shown, as
+ * raw text with a notice, because the alternative is worse: it would otherwise
+ * render as prose in the writing surface and be rewritten as prose on save.
  */
 
 const isScalar = (v: unknown): boolean =>
@@ -80,16 +85,68 @@ function YamlField({
   )
 }
 
+/**
+ * The one place raw YAML is deliberately visible. Commits on blur like the
+ * other fields; an edit that parses clears the notice on the next render
+ * because the document re-parses into `data`.
+ */
+function RawFrontmatterField({
+  value,
+  onCommit
+}: {
+  value: string
+  onCommit: (text: string) => void
+}): React.JSX.Element {
+  const [text, setText] = useState(value)
+  const [invalid, setInvalid] = useState(false)
+  return (
+    <textarea
+      value={text}
+      rows={Math.min(12, Math.max(3, text.split('\n').length))}
+      spellCheck={false}
+      autoCorrect="off"
+      onChange={(e) => setText(e.target.value)}
+      onBlur={() => {
+        try {
+          const parsed: unknown = parseYaml(text)
+          // Only a mapping (or an emptied block) is worth writing back — a list
+          // or a bare scalar would just fail to parse again on the next open.
+          const ok =
+            !text.trim() ||
+            (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed))
+          setInvalid(!ok)
+          if (ok) onCommit(text)
+        } catch {
+          setInvalid(true)
+        }
+      }}
+      className={`w-full resize-y rounded border bg-surface px-2 py-1 font-mono text-xs leading-relaxed text-ink outline-none ${
+        invalid ? 'border-red-700' : 'border-line focus:border-indigo-500'
+      }`}
+    />
+  )
+}
+
 export default function ChapterDetails({
   data,
+  rawFrontmatter,
   lockedKeys = [],
-  onChange
+  onChange,
+  onRawChange
 }: {
   data: Record<string, unknown>
+  /** Set when the `---` block is not readable YAML; `data` is {} in that case. */
+  rawFrontmatter: string | null
   lockedKeys?: string[]
   onChange: (data: Record<string, unknown>) => void
+  onRawChange: (rawFrontmatter: string) => void
 }): React.JSX.Element | null {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(rawFrontmatter !== null)
+  // The block can become unreadable while the document is open — an external
+  // edit picked up by a reload. The amber summary line alone is easy to miss.
+  useEffect(() => {
+    if (rawFrontmatter !== null) setOpen(true)
+  }, [rawFrontmatter])
   const [newKey, setNewKey] = useState('')
   const keys = Object.keys(data)
 
@@ -118,12 +175,30 @@ export default function ChapterDetails({
         className="flex w-full items-center justify-between px-4 py-1.5 text-left"
         title={open ? 'Hide chapter details' : 'Show chapter details'}
       >
-        <span className="min-w-0 truncate text-xs text-ink-faint">
-          {summary || (keys.length > 0 ? 'Details' : 'No details yet — add fields like POV or location')}
+        <span
+          className={`min-w-0 truncate text-xs ${
+            rawFrontmatter !== null ? 'text-amber-300' : 'text-ink-faint'
+          }`}
+        >
+          {rawFrontmatter !== null
+            ? "Details couldn't be read — needs a fix"
+            : summary ||
+              (keys.length > 0 ? 'Details' : 'No details yet — add fields like POV or location')}
         </span>
         <span className="shrink-0 pl-2 text-xs text-ink-faint">{open ? '▾' : '▸'}</span>
       </button>
-      {open && (
+      {open && rawFrontmatter !== null && (
+        <div className="border-t border-line/60 px-4 py-2">
+          <p className="mb-2 text-xs text-amber-300">
+            This document&rsquo;s details block isn&rsquo;t valid YAML, so the app can&rsquo;t show
+            it as fields — and won&rsquo;t change it. A common cause is an unquoted colon:
+            write <code className="text-ink-muted">title: &quot;Chapter 1: The Gate&quot;</code>.
+            Fix it here and the fields come back.
+          </p>
+          <RawFrontmatterField value={rawFrontmatter} onCommit={onRawChange} />
+        </div>
+      )}
+      {open && rawFrontmatter === null && (
         <div className="border-t border-line/60 px-4 py-2">
           {keys.map((key) => (
             <div key={key} className="flex items-start gap-2 py-0.5">

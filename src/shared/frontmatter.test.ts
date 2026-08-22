@@ -13,12 +13,72 @@ describe('parseFrontmatter', () => {
     const doc = parseFrontmatter('Just prose.')
     expect(doc.data).toEqual({})
     expect(doc.body).toBe('Just prose.')
+    expect(doc.rawFrontmatter).toBeNull()
   })
 
-  it('keeps malformed YAML in the body instead of dropping it', () => {
-    const raw = '---\n: not [valid yaml\n  ]: {\n---\nBody.'
+  it('keeps an unreadable block out of the body and round-trips it verbatim', () => {
+    const inner = ': not [valid yaml\n  ]: {'
+    const raw = `---\n${inner}\n---\nBody.`
     const doc = parseFrontmatter(raw)
-    expect(doc.body).toBe(raw)
+    expect(doc.data).toEqual({})
+    expect(doc.rawFrontmatter).toBe(inner)
+    // The block must not reach the writing surface as prose...
+    expect(doc.body).toBe('Body.')
+    // ...and must come back exactly as the author left it.
+    expect(serializeFrontmatter(doc)).toBe(raw)
+  })
+
+  it('treats an unquoted colon as unreadable rather than as prose', () => {
+    const doc = parseFrontmatter('---\ntitle: Chapter 1: The Gate\nstatus: draft\n---\nBody.')
+    expect(doc.data).toEqual({})
+    expect(doc.rawFrontmatter).toBe('title: Chapter 1: The Gate\nstatus: draft')
+    expect(doc.body).toBe('Body.')
+  })
+
+  it('treats a list block as unreadable, not as frontmatter', () => {
+    const doc = parseFrontmatter('---\n- one\n- two\n---\nBody.')
+    expect(doc.data).toEqual({})
+    expect(doc.rawFrontmatter).toBe('- one\n- two')
+  })
+
+  it('reads frontmatter behind a UTF-8 BOM, and drops the BOM', () => {
+    const doc = parseFrontmatter('\uFEFF---\ntitle: Hi\n---\nBody.')
+    expect(doc.data).toEqual({ title: 'Hi' })
+    expect(doc.rawFrontmatter).toBeNull()
+    expect(doc.body).toBe('Body.')
+    expect(serializeFrontmatter(doc)).toBe('---\ntitle: Hi\n---\nBody.')
+  })
+
+  it('drops a BOM on a file with no frontmatter', () => {
+    expect(parseFrontmatter('\uFEFFJust prose.').body).toBe('Just prose.')
+  })
+
+  it('re-reads a fixed block as fields', () => {
+    const broken = parseFrontmatter('---\ntitle: Chapter 1: The Gate\n---\nBody.')
+    const fixed = serializeFrontmatter({
+      data: {},
+      body: broken.body,
+      rawFrontmatter: 'title: "Chapter 1: The Gate"'
+    })
+    const doc = parseFrontmatter(fixed)
+    expect(doc.rawFrontmatter).toBeNull()
+    expect(doc.data).toEqual({ title: 'Chapter 1: The Gate' })
+  })
+
+  it('treats an empty block as no details, not as an unreadable one', () => {
+    const doc = parseFrontmatter('---\n\n---\nBody.')
+    expect(doc.data).toEqual({})
+    expect(doc.rawFrontmatter).toBeNull()
+    expect(doc.body).toBe('Body.')
+    // …and it drops out on write rather than round-tripping bare fences.
+    expect(serializeFrontmatter(doc)).toBe('Body.')
+  })
+
+  it('recognizes tight empty fences as a block, not as prose', () => {
+    const doc = parseFrontmatter('---\n---\nBody.')
+    expect(doc.data).toEqual({})
+    expect(doc.rawFrontmatter).toBeNull()
+    expect(doc.body).toBe('Body.')
   })
 
   it('roundtrips through serialize', () => {

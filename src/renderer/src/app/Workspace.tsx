@@ -249,9 +249,16 @@ export default function Workspace(): React.JSX.Element {
   if (review) {
     const original = parseFrontmatter(review.originalRaw)
     const proposed = parseFrontmatter(review.proposedRaw)
-    const fmDiffers = JSON.stringify(original.data) !== JSON.stringify(proposed.data)
-    const fmText = (data: Record<string, unknown>): string =>
-      Object.keys(data).length > 0 ? stringifyYaml(data).trimEnd() : '(none)'
+    // An unreadable block is written back verbatim, so it has to be shown and
+    // compared as itself — labelling it "(none)" hid a real difference and
+    // could leave the radio off while the two choices write different files.
+    const fmText = (doc: ReturnType<typeof parseFrontmatter>): string =>
+      doc.rawFrontmatter !== null
+        ? doc.rawFrontmatter
+        : Object.keys(doc.data).length > 0
+          ? stringifyYaml(doc.data).trimEnd()
+          : '(none)'
+    const fmDiffers = fmText(original) !== fmText(proposed)
     return (
       <div className="flex min-h-0 flex-1">
         <ChapterSidebar />
@@ -310,7 +317,7 @@ export default function Workspace(): React.JSX.Element {
                   </label>
                 </span>
               </div>
-              <WordDiff oldText={fmText(original.data)} newText={fmText(proposed.data)} />
+              <WordDiff oldText={fmText(original)} newText={fmText(proposed)} />
             </div>
           )}
           <div className="min-h-0 flex-1 overflow-hidden">
@@ -478,8 +485,28 @@ export default function Workspace(): React.JSX.Element {
                   <ChapterDetails
                     key={activeFile}
                     data={doc.data}
+                    rawFrontmatter={doc.rawFrontmatter}
                     lockedKeys={isChapter ? ['title', 'status'] : []}
-                    onChange={(data) => setContent(serializeFrontmatter({ data, body: doc.body }))}
+                    onChange={(data) =>
+                      setContent(
+                        serializeFrontmatter({
+                          data,
+                          body: doc.body,
+                          rawFrontmatter: doc.rawFrontmatter
+                        })
+                      )
+                    }
+                    onRawChange={(raw) =>
+                      setContent(
+                        serializeFrontmatter({
+                          data: {},
+                          body: doc.body,
+                          // An emptied block drops out entirely rather than
+                          // round-tripping as an unreadable pair of fences.
+                          rawFrontmatter: raw.trim() ? raw : null
+                        })
+                      )
+                    }
                   />
                   <EditorToolbar handle={draftingHere ? null : editorHandle} />
                   <div className="min-h-0 flex-1 overflow-hidden">
@@ -487,7 +514,13 @@ export default function Workspace(): React.JSX.Element {
                       docId={activeFile}
                       value={doc.body}
                       onChange={(body) =>
-                        setContent(serializeFrontmatter({ data: doc.data, body }))
+                        setContent(
+                          serializeFrontmatter({
+                            data: doc.data,
+                            body,
+                            rawFrontmatter: doc.rawFrontmatter
+                          })
+                        )
                       }
                       forceSync={draftingHere}
                       editable={!draftingHere}
