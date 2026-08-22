@@ -3,7 +3,8 @@ import { describe, it, expect } from 'vitest'
 import { getSchema } from '@tiptap/core'
 import { baseExtensions } from './extensions'
 import { markdownToDoc } from './markdown'
-import { sameBlockShape, splitChainAtStructural } from './blockShape'
+import { sameBlockShape } from './blockShape'
+import { splitInlineChain } from './track-changes'
 
 const schema = getSchema(baseExtensions())
 const shape = (a: string, b: string): boolean =>
@@ -36,7 +37,7 @@ describe('sameBlockShape', () => {
   })
 })
 
-describe('splitChainAtStructural', () => {
+describe('splitInlineChain', () => {
   const link = (id: string, content: string): { proposalId: string; content: string } => ({
     proposalId: id,
     content
@@ -44,7 +45,7 @@ describe('splitChainAtStructural', () => {
 
   it('keeps a chain that only rewords', () => {
     const chain = [link('p1', 'A one.\n\nB.\n'), link('p2', 'A one.\n\nB two.\n')]
-    const split = splitChainAtStructural(schema, 'A.\n\nB.\n', chain)
+    const split = splitInlineChain(schema, 'A.\n\nB.\n', chain)
     expect(split.inline).toHaveLength(2)
     expect(split.structural).toHaveLength(0)
   })
@@ -56,14 +57,38 @@ describe('splitChainAtStructural', () => {
       link('p2', 'A one.\n\n> B.\n'),
       link('p3', 'A one.\n\n> B two.\n')
     ]
-    const split = splitChainAtStructural(schema, 'A.\n\nB.\n', chain)
+    const split = splitInlineChain(schema, 'A.\n\nB.\n', chain)
     expect(split.inline.map((l) => l.proposalId)).toEqual(['p1'])
     expect(split.structural.map((l) => l.proposalId)).toEqual(['p2', 'p3'])
   })
 
   it('sets the whole chain aside when the first link restructures', () => {
-    const split = splitChainAtStructural(schema, 'A.\n', [link('p1', '> A.\n')])
+    const split = splitInlineChain(schema, 'A.\n', [link('p1', '> A.\n')])
     expect(split.inline).toHaveLength(0)
     expect(split.structural).toHaveLength(1)
+  })
+
+  it('routes out a change that would render nothing at all', () => {
+    // The changeset's character encoder is mark-blind, so a proposal that only
+    // adds emphasis or a link produces ZERO chunks while still differing from
+    // the file. Left inline it renders nothing, offers nothing to refuse, and
+    // autosave writes the AI's formatting the author never saw.
+    for (const proposal of [
+      'The gate *opened*.\n',
+      'The gate **opened**.\n',
+      'The [gate](https://x) opened.\n',
+      'The `gate` opened.\n'
+    ]) {
+      const split = splitInlineChain(schema, 'The gate opened.\n', [link('p1', proposal)])
+      expect(split.inline).toHaveLength(0)
+      expect(split.structural).toHaveLength(1)
+    }
+  })
+
+  it('keeps a rewording, which does produce chunks', () => {
+    const split = splitInlineChain(schema, 'The gate opened.\n', [
+      link('p1', 'The gate swung open.\n')
+    ])
+    expect(split.inline).toHaveLength(1)
   })
 })

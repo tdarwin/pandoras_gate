@@ -274,16 +274,24 @@ export default function MarkdownEditor({
         }
       },
 
-      suggestionCount: () => pendingChangeCount(editor.state),
-      savableBody: () => savableMarkdown(editor.state),
-      proposedBody: (proposalId) => proposedMarkdown(editor.state, proposalId),
+      // Guarded, all of them: these are driven by EFFECTS rather than clicks,
+      // and an effect can hold a handle whose editor React destroyed in the
+      // same commit — switching chapters does exactly that. `editor.chain()`
+      // on a destroyed editor throws out of a passive effect, which lands on
+      // the error boundary and costs the author the last few seconds of typing.
+      suggestionCount: () => (editor.isDestroyed ? 0 : pendingChangeCount(editor.state)),
+      savableBody: () => (editor.isDestroyed ? valueRef.current : savableMarkdown(editor.state)),
+      proposedBody: (proposalId) =>
+        editor.isDestroyed ? valueRef.current : proposedMarkdown(editor.state, proposalId),
       acceptAllSuggestions: () => {
+        if (editor.isDestroyed) return
         editor.chain().acceptAllChanges().run()
       },
       rejectAllSuggestions: () => {
+        if (editor.isDestroyed) return
         editor.chain().rejectAllChanges().run()
       },
-      goToNextSuggestion: () => editor.chain().goToNextSuggestion().run()
+      goToNextSuggestion: () => !editor.isDestroyed && editor.chain().goToNextSuggestion().run()
     })
     return () => onReadyRef.current?.(null)
   }, [editor])

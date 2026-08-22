@@ -6,7 +6,7 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import { diffArrays } from 'diff'
 import { Change, ChangeSet, simplifyChanges, type TokenEncoder } from 'prosemirror-changeset'
 import { markdownToDoc, docToMarkdown } from './markdown'
-import { splitChainAtStructural } from './blockShape'
+import { sameBlockShape } from './blockShape'
 
 /**
  * Suggestions inside the WYSIWYG editor. The document being edited is the
@@ -577,6 +577,44 @@ declare module '@tiptap/core' {
 }
 
 /**
+ * The links of a chain that may be reviewed inline, and the first one that may
+ * not — with everything after it, since later links were folded ON TOP of it
+ * and their content assumes it. Once the earlier ones are decided the fold
+ * re-anchors and the structural one comes back as the first.
+ *
+ * Two ways a link fails. It changes the SHAPE of the document, which makes
+ * splicing the original back over its range ambiguous (`blockShape.ts`). Or it
+ * produces no chunks at all while still differing from what came before —
+ * which sounds impossible and is not: the changeset's character encoder is
+ * mark-blind, so a proposal that only adds emphasis, a link, inline code or a
+ * font span is invisible to it. Left inline, that renders nothing, ✓/✕ nothing,
+ * and autosave writes the AI's formatting the author never saw. Routing it out
+ * restores the invariant the overlay depends on: attached means every
+ * difference is a chunk.
+ */
+export function splitInlineChain<T extends { content: string }>(
+  schema: PMNode['type']['schema'],
+  original: string,
+  chain: T[]
+): { inline: T[]; structural: T[] } {
+  let previous = markdownToDoc(schema, original)
+  for (let i = 0; i < chain.length; i++) {
+    const next = markdownToDoc(schema, chain[i]!.content)
+    const reviewable =
+      sameBlockShape(previous, next) &&
+      (previous.eq(next) ||
+        ChangeSet.create<string>(previous, undefined, attrsAwareEncoder).addSteps(
+          next,
+          blockStepMaps(previous, next),
+          'probe'
+        ).changes.length > 0)
+    if (!reviewable) return { inline: chain.slice(0, i), structural: chain.slice(i) }
+    previous = next
+  }
+  return { inline: chain, structural: [] }
+}
+
+/**
  * The part of a spec that may be reviewed inline.
  *
  * A proposal that changes the shape of the document is decided whole, against
@@ -588,7 +626,7 @@ declare module '@tiptap/core' {
 export function inlineSpec(schema: PMNode['type']['schema'], spec: AttachSpec): AttachSpec {
   return {
     original: spec.original,
-    chain: splitChainAtStructural(schema, spec.original, spec.chain).inline
+    chain: splitInlineChain(schema, spec.original, spec.chain).inline
   }
 }
 
