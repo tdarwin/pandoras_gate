@@ -9,7 +9,6 @@ import {
   suggestionsAttached,
   trackChangesKey,
   TrackChanges,
-  trackChangesKey,
   pendingChangeCount,
   savableMarkdown,
   proposedMarkdown,
@@ -239,18 +238,6 @@ export default function MarkdownEditor({
           class: 'prose-editor',
           spellcheck: 'true'
         }
-      },
-      // Accepting a suggestion is metadata-only — the document does not
-      // change, but what should be SAVED does, so `onUpdate` never fires.
-      // Without this, clicking ✓ leaves the parent's buffer (and the word
-      // count, and the next save) holding the pre-accept text.
-      onTransaction({ editor, transaction }) {
-        if (!transaction.getMeta(trackChangesKey)) return
-        const md = savableMarkdown(editor.state)
-        if (md === lastValueRef.current) return
-        lastValueRef.current = md
-        onChangeRef.current(md)
-        onSuggestionsChangeRef.current?.(pendingChangeCount(editor.state))
       },
       onUpdate({ editor }) {
         // The SAVABLE document, not the visible one: with suggestions shown
