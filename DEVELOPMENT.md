@@ -394,6 +394,20 @@ and the maps are applied in descending order as separate single-range maps, beca
 changeset's `addSteps` carries only the previous range's delta between ranges of one map,
 so a three-range map comes out mis-positioned.
 
+Not every document is prose. Frontmatter suggestions are decided field by field in the
+details strip, and `metadata/timeline.yaml` renders as event cards with per-entry
+decisions (`TimelineEditor`, falling back to the byte-preserving `PlainEditor` when the
+file is not a list of records). Both answer the same question the prose editor does — `proposedBody`: what does this
+proposal still propose? — so the save path does not know the difference.
+Accepting a field is an ordinary edit to the document; rejecting is *recorded*, because
+"proposed still differs from current" cannot tell a refusal from an open question.
+
+Note that the timeline's structured view normalizes the file when an entry is **accepted**
+(a plain save or a rejection leaves it byte-for-byte): comments and key order are lost. That is a deliberate trade for a machine-maintained document. Accepting a
+suggestion also re-serializes the whole markdown document through the TipTap round trip,
+so a hand-edited Codex doc the author has never typed in will reformat in git the first
+time a suggestion lands in it.
+
 Navigation answers "where do I need to look?": every chapter row and Codex row with
 something pending carries a count, collapsed sections and the sidebar tabs carry the
 rolled-up total, and the status bar carries the novel's. A document that exists only as a

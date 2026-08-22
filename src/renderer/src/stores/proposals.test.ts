@@ -50,7 +50,6 @@ async function loadStores(): Promise<{
 /** An editor that has decided the first hunk and left the second pending. */
 function fakeHandle(savableBody: string, proposedBody: Record<string, string>): EditorHandle {
   return {
-    savableBody: () => savableBody,
     proposedBody: (id: string) => proposedBody[id] ?? savableBody,
     suggestionCount: () => Object.keys(proposedBody).length,
     acceptAllSuggestions: vi.fn(),
@@ -502,6 +501,20 @@ describe('saving a document with suggestions', () => {
     await stores.project.useProjectStore.getState().snapshotActiveChapter()
     const write = invokes.find((i) => i.channel === 'chapter:write')
     expect(write?.payload.content).toBe('')
+  })
+
+  it('decides nothing when no editor can speak for the proposals', async () => {
+    const { proposals, project } = await setUp()
+    // The timeline falls back to a plain textarea when its YAML is not a list
+    // of records, and registers no source. Saving used to report every
+    // proposal as proposing what the file already said — and delete the lot.
+    proposals.setSuggestionHandle(null)
+    project.useProjectStore.getState().setContent('---\nname: Kael\n---\nHand edited.\n')
+    await project.useProjectStore.getState().saveActiveChapter()
+
+    const apply = invokes.find((i) => i.channel === 'proposals:apply')!
+    expect((apply.payload as { decisions: unknown[] }).decisions).toEqual([])
+    expect((apply.payload as { write: string }).write).toContain('Hand edited.')
   })
 
   it('leaves documents without suggestions on the ordinary write path', async () => {

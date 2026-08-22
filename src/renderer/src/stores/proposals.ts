@@ -1,10 +1,22 @@
 import { create } from 'zustand'
 import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
+import { remainingData } from '../lib/frontmatterEdit'
 import { onIpcEvent } from '../lib/events'
 import { useProjectStore, setSuggestionWriter, setCurrentSink, onNovelChange } from './project'
 import { useChatStore } from './chat'
 import { useDraftStore } from './draft'
-import type { EditorHandle } from '../editor/MarkdownEditor'
+/**
+ * What the store needs from whatever is showing the document: the two
+ * projections. `EditorHandle` satisfies it, and so does the timeline editor,
+ * which has no ProseMirror doc at all.
+ */
+export interface SuggestionSource {
+  /** What one proposal still proposes. */
+  proposedBody: (proposalId: string) => string
+  /** Decide every suggestion in the document at once. */
+  acceptAllSuggestions: () => void
+  rejectAllSuggestions: () => void
+}
 
 /** A document with suggestions waiting. Bodies are fetched per document, on demand. */
 export interface PendingMark {
@@ -46,10 +58,20 @@ export interface ActiveSuggestions {
   current: string
   chain: FoldLink[]
   blocked: BlockedProposal[]
-  /** Whole-block frontmatter choice, until per-field decisions land. */
-  fmChoice: 'proposed' | 'current'
+  /**
+   * Frontmatter fields the author turned down. Accepting a field is an
+   * ordinary edit to the buffer; rejecting has to be recorded, or "proposed
+   * still differs from current" would keep offering it forever.
+   */
+  rejectedFields: string[]
   /** True once the overlay is actually on the editor. */
   shown: boolean
+  /**
+   * True when these were folded because the author opened the document — they
+   * went there to look. False when they arrived into a document already open,
+   * where the strip offers "Show" instead of putting AI text under the caret.
+   */
+  loadedByNavigation: boolean
 }
 
 interface ProposalsStore {
@@ -73,10 +95,11 @@ interface ProposalsStore {
   reset: () => void
   refresh: () => Promise<void>
   /** Folds the pending suggestions for a document so the editor can show them. */
-  loadFor: (path: string | null) => Promise<void>
+  loadFor: (path: string | null, opts?: { byNavigation?: boolean }) => Promise<void>
   /** The editor is now showing them (or the author dismissed the offer). */
   setShown: (shown: boolean) => void
-  setFmChoice: (choice: 'proposed' | 'current') => void
+  /** Records a frontmatter field the author turned down. */
+  rejectField: (key: string) => void
   /** Steps to a proposal that would not fold in with the others. */
   showOnly: (proposalId: string) => Promise<void>
   /**
@@ -119,8 +142,8 @@ let subscribed = false
  * ask what each proposal still proposes; deliberately not state, because
  * nothing renders from it.
  */
-let activeHandle: EditorHandle | null = null
-export function setSuggestionHandle(handle: EditorHandle | null): void {
+let activeHandle: SuggestionSource | null = null
+export function setSuggestionHandle(handle: SuggestionSource | null): void {
   activeHandle = handle
 }
 
@@ -217,7 +240,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     }
   },
 
-  loadFor: async (path) => {
+  loadFor: async (path, opts) => {
     const novel = useProjectStore.getState().novel
     if (!novel || !path || !get().pendingByPath.has(path)) {
       set({ active: null })
@@ -237,15 +260,30 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
         current: result.data.current,
         chain: result.data.chain,
         blocked: result.data.blocked,
-        fmChoice: 'current',
-        shown: false
+        rejectedFields: [],
+        shown: false,
+        // Never downgraded: a refresh triggered by the save that navigation
+        // itself performs can land either side of the navigation's own load,
+        // and losing the flag left the author staring at a document whose
+        // suggestions were folded but never shown.
+        loadedByNavigation:
+          opts?.byNavigation ??
+          (get().active?.path === path ? get().active!.loadedByNavigation : false)
       }
     })
   },
 
   setShown: (shown) => set((s) => (s.active ? { active: { ...s.active, shown } } : {})),
 
-  setFmChoice: (fmChoice) => set((s) => (s.active ? { active: { ...s.active, fmChoice } } : {})),
+  rejectField: (key) => {
+    const { active } = get()
+    if (!active || active.rejectedFields.includes(key)) return
+    set({ active: { ...active, rejectedFields: [...active.rejectedFields, key] } })
+    // Nothing in the document changed, so nothing goes dirty and autosave
+    // never runs — without this the refusal lived in memory until the next
+    // snapshot, and a quit lost it while the badge still said pending.
+    void get().persistDecisions()
+  },
 
   showOnly: async (proposalId) => {
     const novel = useProjectStore.getState().novel
@@ -263,7 +301,9 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
         current: result.data.current,
         chain: result.data.chain,
         blocked: [],
-        shown: false
+        // Stepping to a proposal is an explicit request to look at it.
+        shown: false,
+        loadedByNavigation: true
       }
     })
   },
@@ -495,23 +535,26 @@ async function writeDecisions(
 ): Promise<boolean> {
   const novel = useProjectStore.getState().novel
   if (!novel) return false
+  // The buffer already holds the decided document: the body with undecided
+  // suggestions reverted, and whatever frontmatter fields the author accepted
+  // (accepting a field is an ordinary edit).
   const savable = parseFrontmatter(content)
-  const proposedFm = parseFrontmatter(active.chain[active.chain.length - 1]?.content ?? content)
-  // Frontmatter is decided as a block until the details strip does it per
-  // field, and the default is the author's OWN data. Defaulting to the
-  // proposal meant every autosave wrote AI frontmatter nobody had agreed to —
-  // and threw away whatever the author had just changed in the details panel.
+  // The buffer already holds the decided document: the body with undecided
+  // suggestions reverted, and whatever frontmatter fields the author accepted
+  // (accepting a field is an ordinary edit).
   //
   // A document that does not exist yet is the exception: there is no author
   // frontmatter to protect, and using the empty buffer's would strip the
   // proposal's own details the first time the row was opened.
   const isCreate = active.action === 'create'
-  const data = active.fmChoice === 'proposed' || isCreate ? proposedFm.data : savable.data
-  const write = serializeFrontmatter({
-    data,
-    body: savable.body,
-    rawFrontmatter: savable.rawFrontmatter
-  })
+  const proposedFm = parseFrontmatter(active.chain[active.chain.length - 1]?.content ?? content)
+  const write = isCreate
+    ? serializeFrontmatter({
+        data: proposedFm.data,
+        body: savable.body,
+        rawFrontmatter: savable.rawFrontmatter
+      })
+    : content
 
   const handle = activeHandle
   /**
@@ -521,22 +564,35 @@ async function writeDecisions(
    * has nothing attached, so the editor would report every proposal as
    * "proposes exactly what the file already says" — and main would resolve the
    * lot. Proposals the fold set aside, and any that arrived after it, are
-   * likewise not on screen.
+   * likewise not on screen. A source that cannot represent a proposal at all
+   * (the plain-text fallback for a timeline that is not a list of records) is
+   * in the same position.
    */
   const decisions =
     active.shown && handle
-      ? active.chain.map((link) => ({
-          proposalId: link.proposalId,
-          newContent: serializeFrontmatter({
-            // What this proposal STILL proposes keeps its own frontmatter
-            // until the author picks a side. Storing the author's data here
-            // meant the first save with the overlay up erased the frontmatter
-            // suggestion — the "Proposed" radio had nothing left to offer.
-            data: parseFrontmatter(link.content).data,
-            body: handle.proposedBody(link.proposalId),
-            rawFrontmatter: savable.rawFrontmatter
-          })
-        }))
+      ? active.chain.map((link) => {
+          const linkFm = parseFrontmatter(link.content)
+          return {
+            proposalId: link.proposalId,
+            // What this proposal STILL proposes: everything already decided,
+            // plus its own fields the author has neither accepted nor turned
+            // down. Storing the decided data alone erased the frontmatter
+            // suggestion on the first save.
+            newContent: serializeFrontmatter({
+              data: remainingData(
+                parseFrontmatter(write).data,
+                linkFm.data,
+                // A chapter's title and status belong to the manifest, so they
+                // are never offered — and must not keep the item pending.
+                active.path.startsWith('chapters/')
+                  ? [...active.rejectedFields, 'title', 'status']
+                  : active.rejectedFields
+              ),
+              body: handle.proposedBody(link.proposalId),
+              rawFrontmatter: savable.rawFrontmatter
+            })
+          }
+        })
       : []
 
   // Nothing to record and nothing to change: the interval snapshot fires on
@@ -567,7 +623,7 @@ async function writeDecisions(
   // apply as an "Empty document" and the author would get a toast for having
   // selected all and pressed delete. Fall through to the ordinary write, which
   // saves what they did; the decisions catch up on the next non-empty save.
-  if (active.current !== '' && write.trim() === '') return false
+  if (!isCreate && write.trim() === '') return false
 
   // A save that changes nothing writes nothing — and a write-less apply is
   // what lets main remember a clean reject. A document nobody has decided on

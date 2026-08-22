@@ -9,14 +9,15 @@ import ChapterSidebar from '../components/ChapterSidebar'
 import ChatPanel from '../components/ChatPanel'
 import HistoryPanel from '../components/HistoryPanel'
 import SuggestionStrip from '../components/SuggestionStrip'
+import TimelineEditor from '../components/TimelineEditor'
 import AiPromptModal from '../components/AiPromptModal'
 import ReviewModal from '../components/ReviewModal'
 import ChapterDetails from '../components/ChapterDetails'
 import MarkdownEditor, { type EditorHandle, type ImageImporter } from '../editor/MarkdownEditor'
 import EditorToolbar from '../editor/EditorToolbar'
-import PlainEditor from '../editor/PlainEditor'
 import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
 import { novelOrder, nextPendingPath, codexSection } from '../lib/codexPaths'
+import { fieldSuggestions, withField } from '../lib/frontmatterEdit'
 
 const AUTO_METADATA_DELAY_MS = 15_000
 
@@ -89,6 +90,7 @@ export default function Workspace(): React.JSX.Element {
   const loadSuggestionsFor = useProposalsStore((s) => s.loadFor)
   const setSuggestionsShown = useProposalsStore((s) => s.setShown)
   const persistDecisions = useProposalsStore((s) => s.persistDecisions)
+  const rejectField = useProposalsStore((s) => s.rejectField)
   const runProposals = useProposalsStore((s) => s.runForActiveChapter)
   const generateOutline = useProposalsStore((s) => s.generateOutline)
   const refreshProposals = useProposalsStore((s) => s.refresh)
@@ -245,6 +247,7 @@ export default function Workspace(): React.JSX.Element {
   // document straight back without it.
   const docRef = useRef(doc)
   docRef.current = doc
+  const isYamlFile = /\.ya?ml$/.test(activeFile ?? '')
 
   // Suggestions for the document that is actually open. Anything pending for
   // another document shows as a dot in the navigation, not here.
@@ -264,6 +267,24 @@ export default function Workspace(): React.JSX.Element {
       }))
     }
   }, [suggestionsHere])
+
+  // Frontmatter suggestions for the open document, field by field.
+  const fieldSuggestionsHere = useMemo(() => {
+    // Only once the overlay is on, like the body chunks and the timeline
+    // cards. Offering ✓/✕ while the strip still says "Show" meant a ✕
+    // recorded nothing: the apply carries no decisions until something can
+    // speak for the proposals.
+    const last = suggestionsHere?.shown
+      ? suggestionsHere.chain[suggestionsHere.chain.length - 1]
+      : undefined
+    if (!last) return []
+    return fieldSuggestions(
+      doc.data,
+      parseFrontmatter(last.content).data,
+      suggestionsHere!.rejectedFields,
+      `${last.sourceTitle} — ${last.rationale}`
+    )
+  }, [suggestionsHere, doc.data])
 
   const suggestionTitles = useMemo(() => {
     const out: Record<string, string> = {}
@@ -299,17 +320,22 @@ export default function Workspace(): React.JSX.Element {
     // A new document starts from no chunks; without this the drop from the
     // previous one's count reads as a decision.
     lastChunkCountRef.current = 0
-    void loadSuggestionsFor(activeFile)
+    void loadSuggestionsFor(activeFile, { byNavigation: true })
   }, [activeFile, loadSuggestionsFor])
 
-  // Put them on the editor as soon as it is safe to. A clean buffer means the
-  // author is not mid-sentence, so nothing moves under their cursor; while
-  // they are typing the strip offers "Show" instead, because AI text appearing
-  // under a moving caret is the one thing this feature must never do.
+  // Show them once per document, when the author navigates to it — they went
+  // there to look. Suggestions arriving into a document already open get the
+  // strip's "Show" instead: AI text appearing under a moving caret is the one
+  // thing this feature must never do.
   useEffect(() => {
-    if (!suggestionsHere || suggestionsHere.shown || dirty || drafting) return
+    if (!suggestionsHere || suggestionsHere.shown || drafting) return
+    // Only what the author navigated to. Suggestions arriving into a document
+    // they already have open — a chat-deferred edit, a copy-edit run finishing
+    // — wait behind "Show", because AI text appearing under a moving caret is
+    // the one thing this must never do.
+    if (!suggestionsHere.loadedByNavigation) return
     setSuggestionsShown(true)
-  }, [suggestionsHere, dirty, drafting, setSuggestionsShown])
+  }, [suggestionsHere, drafting, setSuggestionsShown])
 
   // The overlay attaches to the LIVE editor rather than remounting it —
   // recreating the editor steals focus and resets the caret.
@@ -372,11 +398,12 @@ export default function Workspace(): React.JSX.Element {
 
   // The store asks the editor what each proposal still proposes, at save time.
   useEffect(() => {
+    // The timeline editor registers its own; only one document is open.
+    if (isYamlFile) return
     setSuggestionHandle(editorHandle)
     return () => setSuggestionHandle(null)
-  }, [editorHandle])
+  }, [editorHandle, isYamlFile])
 
-  const isYamlFile = /\.ya?ml$/.test(activeFile ?? '')
   const stats = isChapter ? wordCount(doc.body) : null
 
   return (
@@ -511,18 +538,29 @@ export default function Workspace(): React.JSX.Element {
               className={`flex min-h-0 flex-1 flex-col overflow-hidden ${draftingHere ? 'pointer-events-none opacity-95' : ''}`}
             >
               {isYamlFile ? (
-                <PlainEditor
-                  value={content}
-                  onChange={setContent}
-                  onSave={() => void snapshotActiveChapter()}
-                />
+                <>
+                  {suggestionsHere && (
+                    <SuggestionStrip
+                      active={suggestionsHere}
+                      chunkCount={0}
+                      onShow={showSuggestions}
+                    />
+                  )}
+                  <div className="min-h-0 flex-1 overflow-hidden">
+                    <TimelineEditor
+                      value={content}
+                      onChange={setContent}
+                      onSave={() => void snapshotActiveChapter()}
+                      active={suggestionsHere}
+                    />
+                  </div>
+                </>
               ) : (
                 <>
                   {suggestionsHere && (
                     <SuggestionStrip
                       active={suggestionsHere}
                       chunkCount={chunkCount}
-                      currentRaw={content}
                       onShow={showSuggestions}
                     />
                   )}
@@ -540,6 +578,17 @@ export default function Workspace(): React.JSX.Element {
                         })
                       )
                     }
+                    suggestions={fieldSuggestionsHere}
+                    onAcceptField={(key, value) =>
+                      setContent(
+                        serializeFrontmatter({
+                          data: withField(doc.data, key, value),
+                          body: doc.body,
+                          rawFrontmatter: doc.rawFrontmatter
+                        })
+                      )
+                    }
+                    onRejectField={rejectField}
                     onRawChange={(raw) =>
                       setContent(
                         serializeFrontmatter({
