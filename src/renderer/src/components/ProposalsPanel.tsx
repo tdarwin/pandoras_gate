@@ -1,281 +1,191 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { diffWords } from 'diff'
-import { useProposalsStore, type ReviewItem } from '../stores/proposals'
+import { useProposalsStore, type PendingDoc } from '../stores/proposals'
+import { useProjectStore } from '../stores/project'
 
-export function WordDiff({ oldText, newText }: { oldText: string; newText: string }): React.JSX.Element {
-  const parts = diffWords(oldText, newText)
+/** Word-level diff of two documents. */
+export function WordDiff({
+  oldText,
+  newText
+}: {
+  oldText: string
+  newText: string
+}): React.JSX.Element {
+  // Whole-document diffs run into hundreds of milliseconds on a long chapter;
+  // recomputing one per render (and once per remaining card after every
+  // accept) is what made this panel stall.
+  const parts = useMemo(() => diffWords(oldText, newText), [oldText, newText])
   return (
-    <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-surface p-3 font-mono text-[11.5px] leading-relaxed">
-      {parts.map((p, i) =>
-        p.added ? (
-          <span key={i} className="rounded bg-emerald-950 text-emerald-300">
-            {p.value}
-          </span>
-        ) : p.removed ? (
-          <span key={i} className="rounded bg-red-950 text-red-400 line-through decoration-red-700">
-            {p.value}
-          </span>
-        ) : (
-          <span key={i} className="text-ink-faint">
-            {p.value}
-          </span>
-        )
-      )}
+    <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded border border-line bg-surface p-2 text-xs leading-relaxed">
+      {parts.map((part, i) => (
+        <span
+          key={i}
+          className={
+            part.added
+              ? 'bg-emerald-950 text-emerald-300'
+              : part.removed
+                ? 'bg-red-950 text-red-400 line-through'
+                : 'text-ink-faint'
+          }
+        >
+          {part.value}
+        </span>
+      ))}
     </pre>
   )
 }
 
-function ItemCard({
-  proposalId,
-  item,
-  onReview
-}: {
-  proposalId: string
-  item: ReviewItem
-  /** Present only for markdown docs — opens tracked-changes review. */
-  onReview?: () => void
-}): React.JSX.Element {
-  const resolve = useProposalsStore((s) => s.resolve)
-  const [editing, setEditing] = useState(false)
-  const [edited, setEdited] = useState(item.newContent)
+/**
+ * One card per document with suggestions waiting. The diff is fetched only
+ * when the card is expanded: the fold needs whole document bodies, and a
+ * whole-novel copy edit queues one per chapter.
+ */
+function DocCard({ doc, onClose }: { doc: PendingDoc; onClose: () => void }): React.JSX.Element {
+  const novelDir = useProjectStore((s) => s.novel?.dir)
+  const resolveDoc = useProposalsStore((s) => s.resolveDoc)
+  const enterReview = useProposalsStore((s) => s.enterReview)
+  const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [preview, setPreview] = useState<{ current: string; proposed: string } | null>(null)
 
-  const act = async (resolution: 'accept' | 'reject', content?: string): Promise<void> => {
+  useEffect(() => {
+    if (!open || preview || !novelDir) return
+    let live = true
+    void window.pandora
+      .invoke('proposals:forPath', { novelDir, path: doc.path })
+      .then((r) => {
+        if (!live || !r.ok) return
+        const last = r.data.chain[r.data.chain.length - 1]
+        setPreview({ current: r.data.current, proposed: last?.content ?? r.data.current })
+      })
+    return () => {
+      live = false
+    }
+  }, [open, preview, novelDir, doc.path])
+
+  const act = async (resolution: 'accept' | 'reject'): Promise<void> => {
     setBusy(true)
-    // Edited accepts carry the hash of the version the edit was made against.
-    await resolve(
-      proposalId,
-      item.path,
-      resolution,
-      content,
-      content !== undefined ? item.currentHash : undefined
-    )
+    await resolveDoc(doc.path, resolution)
     setBusy(false)
   }
 
   return (
-    <div className="rounded-lg border border-line bg-panel/60 p-4">
+    <div className="rounded-lg border border-line bg-panel/60 p-3">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate font-mono text-xs text-ink-muted">{item.path}</span>
-            <span
-              className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
-                item.action === 'create'
-                  ? 'bg-emerald-950 text-emerald-300'
-                  : 'bg-indigo-950 text-indigo-300'
-              }`}
-            >
-              {item.action === 'create' ? 'New' : 'Update'}
+        <button onClick={() => setOpen((v) => !v)} className="min-w-0 text-left">
+          <span className="block truncate font-mono text-xs text-ink">{doc.path}</span>
+          <span className="block truncate text-xs text-ink-faint">
+            {doc.count} suggestion{doc.count === 1 ? '' : 's'} · {doc.sources.join(', ')}
+            {doc.blocked > 0 ? ` · ${doc.blocked} needs review` : ''}
+          </span>
+        </button>
+        <span className="flex shrink-0 items-center gap-2">
+          {doc.action === 'create' && (
+            <span className="rounded-full bg-emerald-950 px-2 py-0.5 text-xs text-emerald-300">
+              New
             </span>
-            {item.conflict && (
-              <span
-                className="rounded-full bg-amber-950 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
-                title="The file changed since this suggestion was made and the paragraph it edits no longer lines up. Open it with Review in editor to apply it by hand, edit the suggestion, or reject it."
-              >
-                Needs review — file changed
-              </span>
-            )}
-          </div>
-          <p className="mt-1 text-xs text-ink-faint">{item.rationale}</p>
-        </div>
-      </div>
-
-      <div className="mt-3">
-        {editing ? (
-          <textarea
-            value={edited}
-            onChange={(e) => setEdited(e.target.value)}
-            rows={12}
-            className="w-full resize-y rounded border border-indigo-700 bg-surface p-3 font-mono text-[11.5px] leading-relaxed text-ink outline-none"
-          />
-        ) : item.action === 'create' ? (
-          <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded bg-surface p-3 font-mono text-[11.5px] leading-relaxed text-emerald-300/90">
-            {item.newContent}
-          </pre>
-        ) : (
-          <WordDiff oldText={item.currentContent} newText={item.newContent} />
-        )}
-      </div>
-
-      <div className="mt-3 flex items-center justify-end gap-2">
-        {editing ? (
-          <>
+          )}
+          <button
+            onClick={() => void act('reject')}
+            disabled={busy}
+            className="rounded border border-line-strong px-2 py-1 text-xs text-ink-muted hover:bg-raised disabled:opacity-60"
+          >
+            Reject
+          </button>
+          {doc.path.endsWith('.md') && (
             <button
-              onClick={() => setEditing(false)}
-              className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink-muted hover:bg-raised"
-            >
-              Cancel edit
-            </button>
-            <button
-              disabled={busy}
-              onClick={() => void act('accept', edited)}
-              className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
-            >
-              Save & accept
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              disabled={busy}
-              onClick={() => void act('reject')}
-              className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink-muted hover:bg-raised hover:text-red-300"
-            >
-              Reject
-            </button>
-            <button
-              disabled={busy}
               onClick={() => {
-                setEdited(item.newContent)
-                setEditing(true)
+                void enterReview(doc.path)
+                // Review takes over the editor column; leaving the queue on
+                // top of it just hides what the author came to look at.
+                onClose()
               }}
-              className="rounded-lg border border-line-strong px-3 py-1.5 text-xs text-ink-muted hover:bg-raised"
+              disabled={busy}
+              className="rounded border border-line-strong px-2 py-1 text-xs text-ink-muted hover:bg-raised disabled:opacity-60"
             >
-              Edit
+              Review in editor
             </button>
-            {onReview && (
-              <button
-                disabled={busy}
-                onClick={onReview}
-                title="Open in the editor with tracked changes — accept or reject each suggestion in place"
-                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
-              >
-                Review in editor
-              </button>
-            )}
-            <button
-              disabled={busy || item.conflict}
-              title={
-                item.conflict
-                  ? 'The file changed underneath this suggestion — use Review in editor, Edit, or Reject.'
-                  : undefined
-              }
-              onClick={() => void act('accept')}
-              className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
-            >
-              Accept
-            </button>
-          </>
-        )}
+          )}
+          <button
+            onClick={() => void act('accept')}
+            disabled={busy}
+            className="rounded bg-emerald-700 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-60"
+          >
+            Accept
+          </button>
+        </span>
       </div>
+      {open && (
+        <div className="mt-2">
+          {preview ? (
+            <WordDiff oldText={preview.current} newText={preview.proposed} />
+          ) : (
+            <p className="text-xs text-ink-faint">Loading…</p>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
 export default function ProposalsPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
-  const proposals = useProposalsStore((s) => s.proposals)
+  const docs = useProposalsStore((s) => s.pendingDocs)
+  const total = useProposalsStore((s) => s.pendingTotal)
   const refresh = useProposalsStore((s) => s.refresh)
-  const resolve = useProposalsStore((s) => s.resolve)
-  const enterReview = useProposalsStore((s) => s.enterReview)
   const error = useProposalsStore((s) => s.error)
-  const [busyAll, setBusyAll] = useState(false)
-  const [acceptAllReport, setAcceptAllReport] = useState<string | null>(null)
+  const resolveNovel = useProposalsStore((s) => s.resolveNovel)
+  const [report, setReport] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     void refresh()
   }, [refresh])
 
-  const total = proposals.reduce((n, p) => n + p.items.length, 0)
-
   const acceptAll = async (): Promise<void> => {
-    setBusyAll(true)
-    setAcceptAllReport(null)
-    let applied = 0
-    let skipped = 0
-    for (const p of proposals) {
-      for (const item of p.items) {
-        // Conflicted items need the author's eyes — never bulk-overwrite.
-        if (item.conflict) {
-          skipped += 1
-          continue
-        }
-        // resolve() re-checks against the live file, so an item that became
-        // conflicting after an earlier accept fails safe and counts as skipped.
-        if (await resolve(p.id, item.path, 'accept')) applied += 1
-        else skipped += 1
-      }
-    }
-    setBusyAll(false)
-    setAcceptAllReport(
-      skipped === 0
-        ? `Applied ${applied}.`
-        : `Applied ${applied}; skipped ${skipped} that need review.`
+    setBusy(true)
+    // Through the store, not a bare invoke: it saves the open chapter first and
+    // re-reads it after, without which an autosave overwrites what was applied.
+    const { applied, skipped } = await resolveNovel('accept')
+    setBusy(false)
+    setReport(
+      skipped > 0 ? `Applied ${applied}; skipped ${skipped} that need review.` : `Applied ${applied}.`
     )
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-6">
       <div className="flex max-h-[88vh] w-full max-w-3xl flex-col rounded-xl border border-line bg-panel shadow-2xl">
-        <div className="flex items-center justify-between border-b border-line px-5 py-3">
-          <div>
-            <h2 className="text-sm font-semibold text-ink">Codex suggestions</h2>
-            <p className="text-xs text-ink-faint">
-              Review what the AI learned from your latest writing. Nothing changes until you accept
-              it.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
+          <h2 className="text-sm font-medium text-ink">Codex suggestions</h2>
+          <span className="flex items-center gap-2">
             {total > 1 && (
               <button
-                disabled={busyAll}
                 onClick={() => void acceptAll()}
-                className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
+                disabled={busy}
+                className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-60"
               >
-                {busyAll ? 'Applying…' : `Accept all (${total})`}
+                Accept all ({total})
               </button>
             )}
             <button
               onClick={onClose}
-              className="rounded p-1 text-ink-faint hover:bg-raised hover:text-ink-muted"
+              className="rounded px-2 py-1 text-sm text-ink-faint hover:bg-raised hover:text-ink"
             >
               ✕
             </button>
-          </div>
+          </span>
         </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          {acceptAllReport && (
-            <div className="mb-3 rounded-lg border border-line bg-raised px-3 py-2 text-xs text-ink-muted">
-              {acceptAllReport}
-            </div>
-          )}
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4">
+          {report && <p className="text-xs text-ink-muted">{report}</p>}
           {error && (
-            <div className="mb-3 rounded-lg border border-red-900 bg-red-950/60 px-3 py-2 text-xs text-red-300">
+            <p className="rounded border border-red-900 bg-red-950/40 p-2 text-xs text-red-300">
               {error}
-            </div>
-          )}
-          {total === 0 ? (
-            <p className="py-12 text-center text-sm text-ink-faint">
-              No pending suggestions. Save a chapter and press “Update Codex”, or ask the chat
-              agent to do it.
             </p>
-          ) : (
-            proposals.map((p) => (
-              <div key={p.id} className="mb-5">
-                <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-faint">
-                  From “{p.chapterTitle}”
-                </h3>
-                <div className="flex flex-col gap-3">
-                  {p.items.map((item) => (
-                    <ItemCard
-                      key={item.path}
-                      proposalId={p.id}
-                      item={item}
-                      {...(item.path.endsWith('.md')
-                        ? {
-                            onReview: () => {
-                              void enterReview(p.id, item.path)
-                              onClose()
-                            }
-                          }
-                        : {})}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))
           )}
+          {docs.length === 0 && <p className="text-sm text-ink-faint">Nothing waiting.</p>}
+          {docs.map((doc) => (
+            <DocCard key={doc.path} doc={doc} onClose={onClose} />
+          ))}
         </div>
       </div>
     </div>

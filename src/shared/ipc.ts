@@ -470,7 +470,9 @@ export const ipcContract = {
     response: z.object({
       status: z.enum(['ran', 'skipped-unchanged', 'no-changes']),
       proposalId: z.string().optional(),
-      itemCount: z.number().optional()
+      itemCount: z.number().optional(),
+      /** Suggestions the path allowlist or content validation refused. */
+      dropped: z.array(z.object({ path: z.string(), reason: z.string() })).optional()
     })
   },
   'draft:start': {
@@ -503,7 +505,9 @@ export const ipcContract = {
     response: z.object({
       status: z.enum(['ran', 'skipped-unchanged', 'no-changes']),
       proposalId: z.string().optional(),
-      itemCount: z.number().optional()
+      itemCount: z.number().optional(),
+      /** Suggestions the path allowlist or content validation refused. */
+      dropped: z.array(z.object({ path: z.string(), reason: z.string() })).optional()
     })
   },
   'review:run': {
@@ -519,50 +523,103 @@ export const ipcContract = {
     response: z.object({
       status: z.enum(['ran', 'skipped-unchanged', 'no-changes']),
       proposalId: z.string().optional(),
-      itemCount: z.number().optional()
+      itemCount: z.number().optional(),
+      /** Suggestions the path allowlist or content validation refused. */
+      dropped: z.array(z.object({ path: z.string(), reason: z.string() })).optional()
     })
   },
-  'proposals:review': {
+  /**
+   * Every document with something pending — no bodies, so the navigation can
+   * ask for it on every change without paying for whole documents.
+   */
+  'proposals:pending': {
     request: z.object({ novelDir: z.string() }),
     response: z.object({
-      proposals: z.array(
+      docs: z.array(
         z.object({
-          id: z.string(),
-          chapterFile: z.string(),
-          chapterTitle: z.string(),
-          createdAt: z.number(),
-          items: z.array(
-            z.object({
-              path: z.string(),
-              action: z.enum(['create', 'update']),
-              /** Proposal content REBASED onto the current file where possible. */
-              newContent: z.string(),
-              rationale: z.string(),
-              currentContent: z.string(),
-              /** sha256 of currentContent — echo back when accepting edited content. */
-              currentHash: z.string(),
-              /** True when the change no longer lines up with the current file. */
-              conflict: z.boolean()
-            })
-          )
+          path: z.string(),
+          action: z.enum(['create', 'update']),
+          count: z.number(),
+          /** Proposal titles, for the tooltip and aria-label. */
+          sources: z.array(z.string()),
+          /** How many of `count` could not be folded in with the others. */
+          blocked: z.number(),
+          /** Display name for a document that does not exist yet. */
+          label: z.string().optional()
         })
       )
     })
   },
-  'proposals:resolve': {
+  /** The suggestion overlay for ONE open document. */
+  'proposals:forPath': {
     request: z.object({
       novelDir: z.string(),
-      proposalId: z.string(),
       path: z.string(),
-      resolution: z.enum(['accept', 'reject']),
-      editedContent: z.string().optional(),
-      /**
-       * Required with editedContent: sha256 of the currentContent the author
-       * reviewed against. Refused when the file moved on underneath.
-       */
-      expectedCurrentHash: z.string().optional()
+      /** Fold only this proposal — used to step past one that will not combine. */
+      only: z.string().optional()
     }),
-    response: z.object({ remaining: z.number() })
+    response: z.object({
+      /** The file as it is now; '' when the proposals would create it. */
+      current: z.string(),
+      /** Oldest first; `content[i]` is the document with proposals 0..i applied. */
+      chain: z.array(
+        z.object({
+          proposalId: z.string(),
+          sourceTitle: z.string(),
+          rationale: z.string(),
+          content: z.string()
+        })
+      ),
+      blocked: z.array(
+        z.object({
+          proposalId: z.string(),
+          sourceTitle: z.string(),
+          rationale: z.string(),
+          reason: z.string()
+        })
+      )
+    })
+  },
+  /**
+   * One document's decisions, atomically: what the file should say now, and
+   * what is still proposed. Both sides are recomputed from the editor rather
+   * than patched hunk by hunk, so a crash mid-review loses nothing.
+   */
+  'proposals:apply': {
+    request: z.object({
+      novelDir: z.string(),
+      path: z.string(),
+      /** The file as the renderer believes it to be; refused when disk disagrees. */
+      expectedCurrent: z.string(),
+      /** The document as it should now be on disk; null leaves the file alone. */
+      write: z.string().nullable(),
+      /**
+       * The proposals the author saw and decided, and what each still
+       * proposes; one resolves when its entry equals the file. Anything not
+       * listed is left untouched — the fold sets aside proposals it cannot
+       * combine, and they must survive a save of the ones it could.
+       */
+      decisions: z.array(z.object({ proposalId: z.string(), newContent: z.string() }))
+    }),
+    response: z.object({
+      /** What was actually written, so the renderer needs no re-read. */
+      content: z.string().nullable(),
+      remaining: z.number()
+    })
+  },
+  /** Accept or reject everything pending for a set of paths (or the novel). */
+  'proposals:resolveAll': {
+    request: z.object({
+      novelDir: z.string(),
+      /** Omitted means the whole novel. */
+      paths: z.array(z.string()).optional(),
+      resolution: z.enum(['accept', 'reject'])
+    }),
+    response: z.object({
+      applied: z.number(),
+      skipped: z.number(),
+      conflicts: z.array(z.object({ path: z.string(), reason: z.string() }))
+    })
   },
   'publish:copy': {
     request: z.object({

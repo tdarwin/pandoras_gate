@@ -257,10 +257,29 @@ Two separate places, and the distinction matters:
   and history.
 
   AI edits queue as **proposals** (`.pandora/proposals/`), each storing the full document
-  it was generated against (`baseContent`). Accepting *rebases* the change onto the
-  current file (`rebaseProposal` in `src/main/metadata/pipeline.ts`) rather than
-  overwriting it — items that no longer line up surface as conflicts the author resolves
-  in review.
+  it was generated against (`baseContent`) alongside the content as first proposed
+  (`asProposed`, the fingerprint the rejected-suggestion memory uses). Nothing is ever
+  applied by overwriting: `foldProposalsForPath` chains `rebaseProposal` over every
+  pending proposal for one document, so three section edits generated against one base
+  compose instead of the last silently reverting the first two. A proposal that will not
+  re-anchor is set aside with its reason rather than poisoning the fold.
+
+  A decision is recorded by `applyProposalDecisions`: what the file should say now, and
+  what is still proposed — for the proposals the author actually saw. Anything not named
+  in `decisions` is left untouched, `baseContent` included, because the fold re-anchors it
+  next time; the fold sets aside proposals it cannot combine, and an earlier version
+  deleted those the moment their siblings were accepted. Both sides come recomputed from the editor rather
+  than patched hunk by hunk, so the stored item is a pure function of what the author is
+  looking at and a crash mid-review leaves nothing to reconcile. `baseContent` advances
+  as hunks are accepted; the item resolves when nothing is left to suggest.
+
+  Concurrency: every read-modify-write of `.pandora/state.json`, of the proposal JSON,
+  and of a git index runs through `withLock` (`src/main/locks.ts`) — nothing in Electron
+  serializes IPC handlers, and a pipeline run holds state across a minutes-long model
+  call while the author is clicking. State mutations re-read inside the lock and touch
+  only the fields the caller owns. JSON goes to disk through `writeJsonAtomic`
+  (`src/main/paths.ts`), because the readers skip what they cannot parse — a torn write
+  would be silent data loss.
 - **App state** — `~/Library/Application Support/pandoras-gate/` on macOS
   (`%APPDATA%/pandoras-gate` on Windows): `app-state.json` (recents, preferences, model
   registry), `secrets.json` (encrypted via `safeStorage`), `models/`, `logs/`, and
