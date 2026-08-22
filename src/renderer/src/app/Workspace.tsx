@@ -90,6 +90,7 @@ export default function Workspace(): React.JSX.Element {
   const loadSuggestionsFor = useProposalsStore((s) => s.loadFor)
   const setSuggestionsShown = useProposalsStore((s) => s.setShown)
   const persistDecisions = useProposalsStore((s) => s.persistDecisions)
+  const reviewStructural = useProposalsStore((s) => s.reviewStructural)
   const runProposals = useProposalsStore((s) => s.runForActiveChapter)
   const generateOutline = useProposalsStore((s) => s.generateOutline)
   const refreshProposals = useProposalsStore((s) => s.refresh)
@@ -355,6 +356,15 @@ export default function Workspace(): React.JSX.Element {
   useEffect(() => {
     if (nextSuggestionSignal === 0) return
     if (editorHandle?.goToNextSuggestion()) return
+    // Nothing inline left here, but something on this document still needs
+    // deciding: open the panel that decides it. Without this the walk landed
+    // on a document whose only proposal changes the shape, attached nothing,
+    // and ⌘J did nothing at all — with no message — for as long as it was open.
+    const structuralHere = suggestionsHere?.blocked.find((b) => b.structural)
+    if (structuralHere && !suggestionsHere?.review) {
+      void reviewStructural(structuralHere.proposalId)
+      return
+    }
     void (async () => {
       const listing = await window.pandora.invoke('metadata:list', { novelDir: novel.dir })
       // Every pending path, not only the creates: `metadata:list` has no
@@ -377,8 +387,12 @@ export default function Workspace(): React.JSX.Element {
       } else if (next === activeFile) {
         // The only document with anything pending is this one: start again
         // from the top rather than leaving ⌘J with nothing to say.
-        editorHandle?.goToFirstSuggestion()
+        if (!editorHandle?.goToFirstSuggestion()) jumpOnAttachRef.current = false
       }
+      // Landing somewhere with nothing to attach leaves the flag armed, and
+      // the next unrelated attach then moves the caret unasked — which is
+      // exactly what arming it late was meant to prevent.
+      if (!next) jumpOnAttachRef.current = false
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextSuggestionSignal])
