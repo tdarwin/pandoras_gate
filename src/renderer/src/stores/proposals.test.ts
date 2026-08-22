@@ -344,6 +344,32 @@ describe('saving a document with suggestions', () => {
     expect(project.useProjectStore.getState().dirty).toBe(true)
   })
 
+  it('does not fall back to a plain write after a write-less refusal', async () => {
+    const { proposals, project } = await setUp()
+    const external = '---\nname: Kael\n---\nSomeone else wrote this.\n'
+    proposals.setSuggestionHandle(fakeHandle(CURRENT, { p1: CURRENT }))
+    ;(window as unknown as { pandora: { invoke: unknown } }).pandora.invoke = vi.fn(
+      async (channel: string, payload: Record<string, unknown>) => {
+        invokes.push({ channel, payload })
+        if (channel === 'proposals:apply') {
+          return { ok: false, error: { message: 'This file changed while you were reviewing' } }
+        }
+        if (channel === 'chapter:read') return { ok: true, data: { content: external } }
+        return { ok: true, data: responses[channel] ?? {} }
+      }
+    )
+    project.useProjectStore.getState().setSavedContent(CURRENT)
+
+    // Reject All on the open document drives the editor and then snapshots.
+    await project.useProjectStore.getState().snapshotActiveChapter()
+
+    // The writer had nothing to write, so the fallback could only put the
+    // pre-change text back over the edit main had just objected to — which is
+    // how "Reject all" quietly reverted a change made outside the app.
+    expect(invokes.some((i) => i.channel === 'chapter:write')).toBe(false)
+    expect(project.useProjectStore.getState().content).toBe(external)
+  })
+
   it('leaves documents without suggestions on the ordinary write path', async () => {
     const { proposals, project } = await setUp()
     proposals.useProposalsStore.setState({ active: null })
