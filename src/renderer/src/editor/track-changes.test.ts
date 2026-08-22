@@ -439,19 +439,20 @@ describe('TrackChanges', () => {
     editor.destroy()
   })
 
-  it('walks suggestions in document order and wraps', () => {
+  it('walks suggestions in document order, then hands off', () => {
     const editor = makeReviewEditor(
       'One red fish swam.\n\nTwo blue birds sang.\n',
       'One green fish swam.\n\nTwo blue hawks sang.\n'
     )
     const [a, b] = pendingChanges(editor.state)
     editor.commands.setTextSelection(1)
-    editor.commands.goToNextSuggestion()
+    expect(editor.commands.goToNextSuggestion()).toBe(true)
     expect(editor.state.selection.from).toBe(a!.fromB)
-    editor.commands.goToNextSuggestion()
+    expect(editor.commands.goToNextSuggestion()).toBe(true)
     expect(editor.state.selection.from).toBe(b!.fromB)
-    editor.commands.goToNextSuggestion()
-    expect(editor.state.selection.from).toBe(a!.fromB)
+    // Past the last one it reports false rather than cycling — the caller
+    // moves on to the next document, which is what "next" has to mean.
+    expect(editor.commands.goToNextSuggestion()).toBe(false)
     editor.destroy()
   })
 

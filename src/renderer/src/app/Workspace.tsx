@@ -16,6 +16,7 @@ import MarkdownEditor, { type EditorHandle, type ImageImporter } from '../editor
 import EditorToolbar from '../editor/EditorToolbar'
 import PlainEditor from '../editor/PlainEditor'
 import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
+import { novelOrder, nextPendingPath, codexSection } from '../lib/codexPaths'
 
 const AUTO_METADATA_DELAY_MS = 15_000
 
@@ -320,10 +321,54 @@ export default function Workspace(): React.JSX.Element {
   const baseline = suggestionSpec ? suggestionsHere?.current : null
   useEffect(() => {
     if (!editorHandle) return
-    if (suggestionSpec) editorHandle.attachSuggestions(suggestionSpec)
-    else if (editorHandle.suggestionCount() > 0) editorHandle.detachSuggestions()
+    if (suggestionSpec) {
+      editorHandle.attachSuggestions(suggestionSpec)
+      if (jumpOnAttachRef.current) {
+        jumpOnAttachRef.current = false
+        editorHandle.goToNextSuggestion()
+      }
+    } else if (editorHandle.suggestionCount() > 0) {
+      editorHandle.detachSuggestions()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorHandle, shownKey, baseline, activeFile])
+
+  // "Next suggestion": through the open document first, then on to the next
+  // document that has one. The Codex order comes from the shared helper the
+  // browser also renders from, so the walk cannot disagree with the sidebar.
+  const nextSuggestionSignal = useUiStore((s) => s.nextSuggestionSignal)
+  const jumpOnAttachRef = useRef(false)
+  const pendingByPath = useProposalsStore((s) => s.pendingByPath)
+  useEffect(() => {
+    if (nextSuggestionSignal === 0) return
+    if (editorHandle?.goToNextSuggestion()) return
+    void (async () => {
+      const listing = await window.pandora.invoke('metadata:list', { novelDir: novel.dir })
+      // Every pending path, not only the creates: `metadata:list` has no
+      // bucket for allowed paths outside the named sections, so an update to
+      // one of those is drawn under "Other" and has to be walkable too.
+      const order = novelOrder(
+        novel.manifest.chapters,
+        listing.ok ? listing.data : null,
+        // Codex paths only: the chapters come from the manifest, and passing
+        // them here too walked them twice when the listing failed.
+        [...pendingByPath.keys()].filter((p) => codexSection(p) !== null)
+      )
+      const next = nextPendingPath(order, new Set(pendingByPath.keys()), activeFile)
+      if (next && next !== activeFile) {
+        // Armed only once a jump is actually going to happen: left set, the
+        // next unrelated attach (a Codex run finishing while you read) would
+        // move the caret without being asked.
+        jumpOnAttachRef.current = true
+        await openChapter(next, { allowMissing: pendingByPath.get(next)?.action === 'create' })
+      } else if (next === activeFile) {
+        // The only document with anything pending is this one: start again
+        // from the top rather than leaving ⌘J with nothing to say.
+        editorHandle?.goToFirstSuggestion()
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextSuggestionSignal])
 
   // The store asks the editor what each proposal still proposes, at save time.
   useEffect(() => {

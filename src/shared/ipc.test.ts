@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
-import { ipcContract } from './ipc'
+import { ipcContract, ipcEvents } from './ipc'
 import { MODEL_ROLES } from './llm/catalog'
 
 /**
@@ -59,6 +59,45 @@ describe('models:catalog channel', () => {
       'entries',
       'hardware',
       'hosted'
+    ])
+  })
+})
+
+describe('menu:action contract', () => {
+  /**
+   * The renderer drops events whose payload fails the schema, so an action the
+   * menu sends but the enum does not list vanishes silently — the menu item
+   * simply does nothing. Both sides are checked against one list.
+   */
+  const MENU_ACTIONS = [
+    'about',
+    'preferences',
+    'new-novel',
+    'open-novel',
+    'open-recent',
+    'close-novel',
+    'new-chapter',
+    'save',
+    'copy-for',
+    'suggest-next',
+    'suggest-accept-doc',
+    'suggest-reject-doc',
+    'suggest-accept-novel'
+  ]
+
+  it('lists every action the menu can send', () => {
+    const schema = ipcEvents['menu:action'] as unknown as z.ZodObject<z.ZodRawShape>
+    const actions = (schema.shape.action as unknown as { options: string[] }).options
+    expect([...actions].sort()).toEqual([...MENU_ACTIONS].sort())
+  })
+
+  it('carries the enablement state the Suggestions menu needs', () => {
+    expect(keysOf(ipcContract['menu:setContext'].request)).toEqual([
+      'chapterOpen',
+      'documentHasSuggestions',
+      'documentOpen',
+      'novelOpen',
+      'suggestionsPending'
     ])
   })
 })

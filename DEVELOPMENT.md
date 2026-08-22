@@ -394,6 +394,12 @@ and the maps are applied in descending order as separate single-range maps, beca
 changeset's `addSteps` carries only the previous range's delta between ranges of one map,
 so a three-range map comes out mis-positioned.
 
+Navigation answers "where do I need to look?": every chapter row and Codex row with
+something pending carries a count, collapsed sections and the sidebar tabs carry the
+rolled-up total, and the status bar carries the novel's. A document that exists only as a
+proposal still gets a row (`allowMissing` on `openChapter`), marked NEW. `codexPaths.ts`
+owns Codex ordering so the sidebar and the Suggestions menu's "next" walk cannot disagree.
+
 The app must never crash on a hand-edited novel file. Validation failures degrade — log,
 fall back, surface a readable message — because users are explicitly invited to edit these
 files in any editor.

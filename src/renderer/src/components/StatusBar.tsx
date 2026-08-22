@@ -1,18 +1,31 @@
 import { useDownloadsStore, formatSpeed, formatEta } from '../stores/downloads'
+import { useProposalsStore } from '../stores/proposals'
+import { useUiStore } from '../stores/ui'
 
 function gb(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`
 }
 
-/** Bottom status bar: visible while model downloads are active. */
+/** Bottom status bar: model downloads, and the novel's suggestion total. */
 export default function StatusBar(): React.JSX.Element | null {
   const downloads = useDownloadsStore((s) => s.downloads)
   const dismiss = useDownloadsStore((s) => s.dismiss)
+  const pendingTotal = useProposalsStore((s) => s.pendingTotal)
+  const requestNextSuggestion = useUiStore((s) => s.requestNextSuggestion)
   const entries = Object.values(downloads)
-  if (entries.length === 0) return null
+  if (entries.length === 0 && pendingTotal === 0) return null
 
   return (
     <footer className="flex h-7 shrink-0 items-center gap-4 overflow-x-auto border-t border-line bg-panel/80 px-3">
+      {pendingTotal > 0 && (
+        <button
+          onClick={requestNextSuggestion}
+          title="Jump to the next document with suggestions"
+          className="shrink-0 text-[11px] text-amber-300 hover:text-amber-200"
+        >
+          {pendingTotal} suggestion{pendingTotal === 1 ? '' : 's'} waiting
+        </button>
+      )}
       {entries.map((d) => {
         const pct =
           d.totalBytes > 0 ? Math.min(100, Math.round((d.downloadedBytes / d.totalBytes) * 100)) : 0

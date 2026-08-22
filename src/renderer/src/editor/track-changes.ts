@@ -863,8 +863,10 @@ declare module '@tiptap/core' {
       attachSuggestions: (spec: AttachSpec) => ReturnType
       /** Drops the overlay, leaving the savable document behind. */
       detachSuggestions: () => ReturnType
-      /** Moves the caret to the next suggestion after it, wrapping. */
+      /** Moves the caret to the next suggestion after it; false past the last. */
       goToNextSuggestion: () => ReturnType
+      /** Back to the first one — the walk's wrap, done by the caller. */
+      goToFirstSuggestion: () => ReturnType
     }
   }
 }
@@ -995,15 +997,34 @@ export const TrackChanges = Extension.create<TrackChangesOptions>({
           }
           return true
         },
+      goToFirstSuggestion:
+        () =>
+        ({ state, tr, dispatch }) => {
+          const track = trackChangesKey.getState(state)
+          const first = track ? visibleChanges(track, state.doc)[0] : undefined
+          if (!first) return false
+          if (dispatch) {
+            tr.setSelection(
+              TextSelection.near(tr.doc.resolve(Math.min(first.fromB, tr.doc.content.size)), 1)
+            )
+            tr.scrollIntoView()
+            tr.setMeta('addToHistory', false)
+            dispatch(tr)
+          }
+          return true
+        },
       goToNextSuggestion:
         () =>
         ({ state, tr, dispatch }) => {
           const track = trackChangesKey.getState(state)
           if (!track) return false
           const changes = visibleChanges(track, state.doc)
-          if (changes.length === 0) return false
-          const after = state.selection.to
-          const next = changes.find((c) => c.fromB > after) ?? changes[0]!
+          // Deliberately does NOT wrap: "next" walks the whole novel, and the
+          // caller moves to the next document when this one is done. A command
+          // that wrapped here would cycle forever on a document that has one
+          // suggestion left.
+          const next = changes.find((c) => c.fromB > state.selection.to)
+          if (!next) return false
           if (dispatch) {
             // A whole-block insertion's chunk starts at a depth-0 position,
             // where TextSelection.create yields an invalid caret.

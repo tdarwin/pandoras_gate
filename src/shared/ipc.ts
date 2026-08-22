@@ -380,7 +380,11 @@ export const ipcContract = {
       /** Any editor document open (enables Save). */
       documentOpen: z.boolean(),
       /** A chapters/ file specifically (enables Copy Chapter For). */
-      chapterOpen: z.boolean()
+      chapterOpen: z.boolean(),
+      /** Suggestions waiting anywhere in the novel (enables the Suggestions menu). */
+      suggestionsPending: z.number(),
+      /** …and specifically in the document on screen. */
+      documentHasSuggestions: z.boolean()
     }),
     response: z.object({ updated: z.literal(true) })
   },
@@ -731,7 +735,11 @@ export const ipcEvents = {
       'close-novel',
       'new-chapter',
       'save',
-      'copy-for'
+      'copy-for',
+      'suggest-next',
+      'suggest-accept-doc',
+      'suggest-reject-doc',
+      'suggest-accept-novel'
     ]),
     /** Novel directory for 'open-recent'. */
     dir: z.string().optional(),

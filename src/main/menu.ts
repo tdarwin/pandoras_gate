@@ -19,11 +19,21 @@ export interface MenuContext {
   documentOpen: boolean
   /** A chapters/ file specifically (enables Copy Chapter For). */
   chapterOpen: boolean
+  /** Suggestions waiting anywhere in the novel. */
+  suggestionsPending: number
+  /** …and specifically in the document on screen. */
+  documentHasSuggestions: boolean
 }
 
 const REPO_URL = 'https://github.com/tdarwin/pandoras_gate'
 
-let current: MenuContext = { novelOpen: false, documentOpen: false, chapterOpen: false }
+let current: MenuContext = {
+  novelOpen: false,
+  documentOpen: false,
+  chapterOpen: false,
+  suggestionsPending: 0,
+  documentHasSuggestions: false
+}
 
 function send(
   action: IpcEventPayload<'menu:action'>['action'],
@@ -148,6 +158,36 @@ export async function refreshAppMenu(ctx: MenuContext = current): Promise<void> 
         { role: 'zoomOut' },
         { type: 'separator' },
         { role: 'togglefullscreen' }
+      ]
+    },
+    {
+      label: 'Suggestions',
+      submenu: [
+        {
+          label: 'Next Suggestion',
+          // The only accelerator here: the bulk actions are destructive
+          // enough that a near-miss on ⌘A would be unkind.
+          accelerator: 'CmdOrCtrl+J',
+          enabled: ctx.suggestionsPending > 0,
+          click: (): void => send('suggest-next')
+        },
+        { type: 'separator' },
+        {
+          label: 'Accept All in This Document',
+          enabled: ctx.documentHasSuggestions,
+          click: (): void => send('suggest-accept-doc')
+        },
+        {
+          label: 'Reject All in This Document',
+          enabled: ctx.documentHasSuggestions,
+          click: (): void => send('suggest-reject-doc')
+        },
+        { type: 'separator' },
+        {
+          label: 'Accept All in the Novel…',
+          enabled: ctx.suggestionsPending > 0,
+          click: (): void => send('suggest-accept-novel')
+        }
       ]
     },
     { role: 'windowMenu' },
