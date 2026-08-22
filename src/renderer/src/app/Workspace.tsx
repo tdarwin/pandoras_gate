@@ -251,7 +251,10 @@ export default function Workspace(): React.JSX.Element {
     activeSuggestions && activeSuggestions.path === activeFile ? activeSuggestions : null
 
   const suggestionSpec = useMemo(() => {
-    if (!suggestionsHere || !suggestionsHere.shown) return null
+    // A chain with no links means every proposal for this document was set
+    // aside as un-combinable — there is nothing to overlay, and the strip's
+    // "can't be combined · next" is the only thing left to offer.
+    if (!suggestionsHere || !suggestionsHere.shown || suggestionsHere.chain.length === 0) return null
     return {
       original: parseFrontmatter(suggestionsHere.current).body,
       chain: suggestionsHere.chain.map((link) => ({
