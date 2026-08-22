@@ -6,7 +6,7 @@ import { useChatStore } from './chat'
 import { useDraftStore } from './draft'
 import { getSchema } from '@tiptap/core'
 import { baseExtensions } from '../editor/extensions'
-import { splitChainAtStructural } from '../editor/blockShape'
+import { splitInlineChain } from '../editor/track-changes'
 import type { EditorHandle } from '../editor/MarkdownEditor'
 
 /** A document with suggestions waiting. Bodies are fetched per document, on demand. */
@@ -59,8 +59,23 @@ export interface ActiveSuggestions {
   fmChoice: 'proposed' | 'current'
   /** True once the overlay is actually on the editor. */
   shown: boolean
-  /** The structural proposal whose whole-document diff is open, if any. */
-  reviewing: string | null
+  /**
+   * The structural proposal being decided whole, folded ON ITS OWN.
+   *
+   * Not the entry from `blocked`, whose content is the CUMULATIVE fold and so
+   * carries the undecided inline links before it: accepting that would put
+   * their text on disk under this proposal's name, and leave them pending
+   * against a file that already contains them.
+   */
+  review: {
+    proposalId: string
+    sourceTitle: string
+    rationale: string
+    /** The file this fold is anchored to. */
+    base: string
+    /** The file with this proposal alone applied. */
+    content: string
+  } | null
 }
 
 interface ProposalsStore {
@@ -131,14 +146,27 @@ interface ProposalsStore {
  */
 let cachedSchema: ReturnType<typeof getSchema> | null = null
 
+/** The documents the tracked-changes editor never opens. */
+export function isYamlPath(path: string): boolean {
+  return /\.ya?ml$/.test(path)
+}
+
 function partitionChain(
+  path: string,
   current: string,
   chain: FoldLink[],
   blocked: BlockedProposal[]
 ): { chain: FoldLink[]; blocked: BlockedProposal[] } {
+  // The gate exists because SPLICING the original back over a proposal's range
+  // is ambiguous when the two documents hold different blocks. A YAML document
+  // is not reviewed that way at all — it is decided entry by entry, and
+  // nothing is spliced — so the gate does not apply, and applying it anyway
+  // sent the commonest timeline proposal (a new event) to a raw markdown word
+  // diff of YAML text.
+  if (isYamlPath(path)) return { chain, blocked }
   const schema = (cachedSchema ??= getSchema(baseExtensions()))
   const bodies = chain.map((link) => parseFrontmatter(link.content).body)
-  const { inline } = splitChainAtStructural(
+  const { inline } = splitInlineChain(
     schema,
     parseFrontmatter(current).body,
     bodies.map((content) => ({ content }))
@@ -152,7 +180,7 @@ function partitionChain(
         proposalId: link.proposalId,
         sourceTitle: link.sourceTitle,
         rationale: link.rationale,
-        reason: 'changes the shape of the document',
+        reason: 'has to be decided as a whole',
         structural: true,
         content: link.content
       }))
@@ -287,10 +315,10 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       active: {
         path,
         current: result.data.current,
-        ...partitionChain(result.data.current, result.data.chain, result.data.blocked),
+        ...partitionChain(path, result.data.current, result.data.chain, result.data.blocked),
         fmChoice: 'current',
         shown: false,
-        reviewing: null
+        review: null
       }
     })
   },
@@ -306,7 +334,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     // One that changes the document's shape is never shown inline. It gets
     // the whole-document diff instead.
     if (active.blocked.some((b) => b.proposalId === proposalId && b.structural)) {
-      set({ active: { ...active, reviewing: proposalId } })
+      await get().reviewStructural(proposalId)
       return
     }
     const result = await window.pandora.invoke('proposals:forPath', {
@@ -315,7 +343,15 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       only: proposalId
     })
     if (!result.ok || result.data.chain.length === 0) return
-    const next = partitionChain(result.data.current, result.data.chain, [])
+    // Carry forward the ones NOT being stepped to. Seeding with [] dropped
+    // them from the strip entirely — no button, no rationale — until the
+    // author switched documents and back.
+    const next = partitionChain(
+      active.path,
+      result.data.current,
+      result.data.chain,
+      active.blocked.filter((b) => b.proposalId !== proposalId)
+    )
     set({
       active: {
         ...active,
@@ -328,54 +364,102 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
         // chunk count to zero, and the save that followed read that as the
         // author having decided everything, deleting the very suggestion this
         // was about to show.
-        shown: active.shown,
-        reviewing: next.chain.length === 0 ? proposalId : null
+        shown: active.shown
       }
     })
   },
 
-  reviewStructural: (proposalId) => {
+  reviewStructural: async (proposalId) => {
+    const novel = useProjectStore.getState().novel
     const { active } = get()
-    if (active) set({ active: { ...active, reviewing: proposalId } })
+    if (!novel || !active) return
+    const item = active.blocked.find((b) => b.proposalId === proposalId && b.structural)
+    if (!item) return
+    // Folded ON ITS OWN, against the file as it stands. The entry in `blocked`
+    // carries the CUMULATIVE fold, so accepting that would put the undecided
+    // inline links before it on disk under this proposal's name — and leave
+    // them pending against a file that already contains them.
+    const result = await window.pandora.invoke('proposals:forPath', {
+      novelDir: novel.dir,
+      path: active.path,
+      only: proposalId
+    })
+    if (!result.ok) {
+      fail(result.error.message)
+      return
+    }
+    const alone = result.data.chain[0]
+    if (!alone) {
+      fail(
+        'That suggestion no longer lines up with the document — it will be folded again on the next run.'
+      )
+      return
+    }
+    set({
+      active: {
+        ...get().active!,
+        review: {
+          proposalId,
+          sourceTitle: item.sourceTitle,
+          rationale: item.rationale,
+          base: result.data.current,
+          content: alone.content
+        }
+      }
+    })
   },
 
   closeStructuralReview: () => {
     const { active } = get()
-    if (active) set({ active: { ...active, reviewing: null } })
+    if (active) set({ active: { ...active, review: null } })
   },
 
   decideStructural: async (proposalId, resolution) => {
     const project = useProjectStore.getState()
     const novel = project.novel
     const { active } = get()
-    if (!novel || !active) return false
+    if (!novel || !active || active.review?.proposalId !== proposalId) return false
     if (resolution === 'accept' && draftBlocks(active.path)) {
       fail('The AI is drafting into this chapter — stop the draft first.')
       return false
     }
-    // The author's own typing goes to disk first, and the fold re-anchors the
-    // proposal onto it — accepting must not silently discard what they wrote
-    // while the diff was open.
-    await project.snapshotActiveChapter()
-    await get().loadFor(active.path)
+    // Only when there is something of theirs to save. An unconditional
+    // snapshot on a clean buffer fell through the suggestion writer's
+    // "nothing to record" branch into a plain, unchecked whole-buffer write —
+    // putting the stale buffer over an edit made outside the app before the
+    // staleness check could ever see it.
+    if (project.dirty) {
+      await project.snapshotActiveChapter()
+      await get().reviewStructural(proposalId)
+    }
     const fresh = get().active
-    const item = fresh?.blocked.find((b) => b.proposalId === proposalId && b.structural)
-    if (!fresh || !item?.content) {
-      // It resolved or re-anchored out from under the panel.
+    const target = fresh?.review
+    if (!fresh || !target || target.proposalId !== proposalId) {
       get().closeStructuralReview()
       return false
     }
-    const write = resolution === 'accept' ? item.content : null
+
+    // Frontmatter follows the same rule as every other save: the author's own
+    // unless they choose otherwise. Writing the proposal's file verbatim
+    // replaced fields the body diff never showed.
+    const base = parseFrontmatter(target.base)
+    const proposed = parseFrontmatter(target.content)
+    const content = serializeFrontmatter({
+      data: fresh.fmChoice === 'proposed' ? proposed.data : base.data,
+      body: proposed.body,
+      rawFrontmatter: base.rawFrontmatter
+    })
+
     const result = await window.pandora.invoke('proposals:apply', {
       novelDir: novel.dir,
       path: fresh.path,
-      expectedCurrent: fresh.current,
-      write,
+      expectedCurrent: target.base,
+      write: resolution === 'accept' ? content : null,
       // Either way the proposal is done: accepted, its content becomes the
-      // file and nothing is left to suggest; refused, what it proposes is what
-      // the file already says. Main records the refusal on the write-less
-      // branch, so it stays refused.
-      decisions: [{ proposalId, newContent: resolution === 'accept' ? item.content : fresh.current }]
+      // file and nothing is left to suggest; refused, what it proposes is
+      // what the file already says. Main records the refusal on the
+      // write-less branch, so it stays refused.
+      decisions: [{ proposalId, newContent: resolution === 'accept' ? content : target.base }]
     })
     if (!result.ok) {
       fail(result.error.message)
@@ -385,7 +469,11 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     if (result.data.content !== null && useProjectStore.getState().activeFile === fresh.path) {
       useProjectStore.getState().setSavedContent(result.data.content)
     }
-    get().closeStructuralReview()
+    // `refresh` alone re-folds only a path that CHANGED, so `current` stayed
+    // at the pre-accept text, the resolved proposal kept being offered, and
+    // the next ordinary save was refused as stale — an error the author got
+    // for doing exactly what the panel told them to.
+    await get().loadFor(fresh.path)
     await get().refresh()
     return true
   },
@@ -421,15 +509,39 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       fail('The AI is drafting into this chapter — stop the draft first.')
       return false
     }
-    // When it is the OPEN document, decide from the editor: it holds the
-    // author's typing and their per-chunk decisions. The save that follows
-    // records them.
+    /*
+     * "Accept all" / "Reject all" means EVERYTHING pending on this document,
+     * whichever way each piece has to be decided. Two things could go wrong
+     * with a narrower reading, and both did:
+     *
+     * - Gated only on `shown && activeHandle`, a document whose one proposal
+     *   is structural took the editor branch, decided an overlay that was
+     *   never attached, and returned true. No error, nothing changed, and a
+     *   fresh empty commit in the novel's history for every click.
+     * - And whether a structural proposal got decided at all depended on
+     *   whether the overlay happened to be showing, because the other branch
+     *   goes to main, which has no notion of "structural".
+     */
     const { active } = get()
-    if (path === project.activeFile && active?.shown && activeHandle) {
-      if (resolution === 'accept') activeHandle.acceptAllSuggestions()
-      else activeHandle.rejectAllSuggestions()
-      await project.snapshotActiveChapter()
-      return true
+    if (path === project.activeFile && active) {
+      let acted = false
+      if (active.shown && active.chain.length > 0 && activeHandle) {
+        if (resolution === 'accept') activeHandle.acceptAllSuggestions()
+        else activeHandle.rejectAllSuggestions()
+        await project.snapshotActiveChapter()
+        acted = true
+      }
+      // Each structural one is decided the way the panel decides it — folded
+      // on its own, so accepting one does not put the others on disk.
+      for (let guard = 0; guard < 32; guard++) {
+        const next = get().active?.blocked.find((b) => b.structural)
+        if (!next) break
+        await get().reviewStructural(next.proposalId)
+        if (get().active?.review?.proposalId !== next.proposalId) break
+        if (!(await get().decideStructural(next.proposalId, resolution))) break
+        acted = true
+      }
+      if (acted) return true
     }
     const result = await window.pandora.invoke('proposals:resolveAll', {
       novelDir: novel.dir,
@@ -664,7 +776,23 @@ async function writeDecisions(
   // Nothing to record and nothing to change: the interval snapshot fires on
   // every document with suggestions pending, and this would otherwise rewrite
   // the file, every proposal, and a commit for a document nobody touched.
-  if (write === active.current && decisions.length === 0) return false
+  //
+  // Reported as HANDLED, not declined. Declining sends the caller to a plain
+  // `chapter:write` of the whole buffer, which main does not staleness-check —
+  // so a save with nothing to say would put a stale buffer over an edit made
+  // outside the app. An explicit ⌘S still gets its history entry, written
+  // byte-identically, because main has already proved the buffer matches disk.
+  if (write === active.current && decisions.length === 0) {
+    if (snapshot) {
+      await window.pandora.invoke('chapter:write', {
+        novelDir: novel.dir,
+        file: active.path,
+        content: write,
+        snapshot: true
+      })
+    }
+    return true
+  }
 
   // An emptied existing document is not a decision — main would refuse the
   // apply as an "Empty document" and the author would get a toast for having

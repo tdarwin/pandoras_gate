@@ -412,60 +412,129 @@ describe('saving a document with suggestions', () => {
     expect(active.blocked[0]!.content).toContain('> Beta.')
   })
 
-  it('decides a structural proposal whole, saving the author’s work first', async () => {
+  /** A document whose only proposal wraps a paragraph — structural. */
+  async function setUpStructural(): Promise<Awaited<ReturnType<typeof loadStores>>> {
     const stores = await loadStores()
-    const PROPOSED = '---\nname: Kael\n---\n> Alpha.\n\nBeta.\n'
     stores.project.useProjectStore.setState({ novel: NOVEL, activeFile: PATH })
     responses['proposals:pending'] = {
       docs: [{ path: PATH, action: 'update', count: 1, sources: ['Codex update'], blocked: 0 }]
     }
     responses['proposals:forPath'] = {
       current: CURRENT,
-      chain: [{ proposalId: 'p1', sourceTitle: 'Codex update', rationale: 'r', content: PROPOSED }],
-      blocked: []
-    }
-    responses['proposals:apply'] = { content: PROPOSED, remaining: 0 }
-    stores.proposals.useProposalsStore.getState().init()
-    await stores.proposals.useProposalsStore.getState().refresh()
-    stores.project.useProjectStore.getState().setSavedContent(CURRENT)
-    invokes.length = 0
-
-    await stores.proposals.useProposalsStore.getState().decideStructural('p1', 'accept')
-
-    const apply = invokes.find((i) => i.channel === 'proposals:apply')!
-    expect(apply.payload.write).toBe(PROPOSED)
-    expect(apply.payload.decisions).toEqual([{ proposalId: 'p1', newContent: PROPOSED }])
-    // Whatever the author had typed goes to disk before the proposal replaces
-    // the document, and the fold re-anchors onto it.
-    expect(invokes.findIndex((i) => i.channel === 'proposals:forPath')).toBeLessThan(
-      invokes.findIndex((i) => i.channel === 'proposals:apply')
-    )
-  })
-
-  it('refuses a structural proposal without writing anything', async () => {
-    const stores = await loadStores()
-    const PROPOSED = '---\nname: Kael\n---\n> Alpha.\n\nBeta.\n'
-    stores.project.useProjectStore.setState({ novel: NOVEL, activeFile: PATH })
-    responses['proposals:pending'] = {
-      docs: [{ path: PATH, action: 'update', count: 1, sources: ['Codex update'], blocked: 0 }]
-    }
-    responses['proposals:forPath'] = {
-      current: CURRENT,
-      chain: [{ proposalId: 'p1', sourceTitle: 'Codex update', rationale: 'r', content: PROPOSED }],
+      chain: [
+        {
+          proposalId: 'p1',
+          sourceTitle: 'Codex update',
+          rationale: 'r',
+          content: '---\nname: Kael Voss\n---\n> Alpha.\n\nBeta.\n'
+        }
+      ],
       blocked: []
     }
     responses['proposals:apply'] = { content: null, remaining: 0 }
     stores.proposals.useProposalsStore.getState().init()
     await stores.proposals.useProposalsStore.getState().refresh()
     stores.project.useProjectStore.getState().setSavedContent(CURRENT)
-    invokes.length = 0
+    await stores.proposals.useProposalsStore.getState().reviewStructural('p1')
+    return stores
+  }
 
-    await stores.proposals.useProposalsStore.getState().decideStructural('p1', 'reject')
+  it('folds a structural proposal ON ITS OWN before showing it', async () => {
+    const { proposals } = await setUpStructural()
+    // The entry in `blocked` carries the cumulative fold, so accepting that
+    // would put the undecided inline links before it on disk under this
+    // proposal's name — and leave them pending against a file that already
+    // contains them.
+    const only = invokes.filter((i) => i.channel === 'proposals:forPath' && i.payload.only)
+    expect(only).toHaveLength(1)
+    expect(only[0]!.payload.only).toBe('p1')
+    expect(proposals.useProposalsStore.getState().active?.review?.proposalId).toBe('p1')
+  })
+
+  it('accepts a structural proposal with the author’s own frontmatter', async () => {
+    const { proposals } = await setUpStructural()
+    invokes.length = 0
+    await proposals.useProposalsStore.getState().decideStructural('p1', 'accept')
 
     const apply = invokes.find((i) => i.channel === 'proposals:apply')!
-    // write:null is the branch main records a refusal in, so it stays refused.
-    expect(apply.payload.write).toBeNull()
-    expect(apply.payload.decisions).toEqual([{ proposalId: 'p1', newContent: CURRENT }])
+    // The body is the proposal's; the details are the author's until they say
+    // otherwise. Writing item.content whole replaced fields no diff had shown.
+    expect(apply.payload.write).toContain('> Alpha.')
+    expect(apply.payload.write).toContain('name: Kael\n')
+    expect(apply.payload.write).not.toContain('Kael Voss')
+    // And it re-anchors, or the strip keeps offering a proposal that is gone
+    // and the next ordinary save is refused as stale.
+    expect(invokes.some((i) => i.channel === 'proposals:forPath' && !i.payload.only)).toBe(true)
+  })
+
+  it('does not snapshot a clean buffer on the way into a decision', async () => {
+    const { proposals } = await setUpStructural()
+    invokes.length = 0
+    await proposals.useProposalsStore.getState().decideStructural('p1', 'reject')
+
+    // The snapshot fell through the writer's "nothing to record" branch into a
+    // plain, unchecked whole-buffer write — putting a stale buffer over an
+    // edit made outside the app before the staleness check could see it.
+    expect(invokes.some((i) => i.channel === 'chapter:write')).toBe(false)
+    expect(invokes.find((i) => i.channel === 'proposals:apply')!.payload.write).toBeNull()
+  })
+
+  it('reports a save with nothing to record as handled, not declined', async () => {
+    const { proposals, project } = await setUp()
+    // Declining sends the caller to a plain chapter:write of the whole buffer,
+    // which main does not staleness-check.
+    proposals.setSuggestionHandle(null)
+    proposals.useProposalsStore.setState((st) => ({
+      active: { ...st.active!, chain: [], shown: true }
+    }))
+    project.useProjectStore.getState().setSavedContent(CURRENT)
+    invokes.length = 0
+    await project.useProjectStore.getState().saveActiveChapter()
+
+    expect(invokes.some((i) => i.channel === 'chapter:write')).toBe(false)
+  })
+
+  it('“accept all” decides a structural-only document instead of doing nothing', async () => {
+    const { proposals } = await setUpStructural()
+    proposals.useProposalsStore.getState().setShown(true)
+    invokes.length = 0
+    const ok = await proposals.useProposalsStore.getState().resolveDoc(PATH, 'accept')
+
+    // It used to take the editor branch, decide an overlay that was never
+    // attached, return true, and leave a fresh empty commit behind.
+    expect(ok).toBe(true)
+    expect(invokes.some((i) => i.channel === 'proposals:apply')).toBe(true)
+  })
+
+  it('leaves a YAML document to its own per-entry review', async () => {
+    const stores = await loadStores()
+    const YAML = 'metadata/timeline.yaml'
+    stores.project.useProjectStore.setState({ novel: NOVEL, activeFile: YAML })
+    responses['proposals:pending'] = {
+      docs: [{ path: YAML, action: 'update', count: 1, sources: ['Codex update'], blocked: 0 }]
+    }
+    responses['proposals:forPath'] = {
+      current: '- when: Day 1\n  what: A gate opens.\n',
+      chain: [
+        {
+          proposalId: 'p1',
+          sourceTitle: 'Codex update',
+          rationale: 'r',
+          content: '- when: Day 1\n  what: A gate opens.\n- when: Day 2\n  what: It closes.\n'
+        }
+      ],
+      blocked: []
+    }
+    stores.proposals.useProposalsStore.getState().init()
+    await stores.proposals.useProposalsStore.getState().refresh()
+
+    // The gate exists because SPLICING is ambiguous. YAML is decided entry by
+    // entry and never spliced — and its list syntax parses as a markdown
+    // bullet list, so adding an event read as a shape change and the whole
+    // per-entry review was bypassed.
+    const active = stores.proposals.useProposalsStore.getState().active!
+    expect(active.chain.map((l) => l.proposalId)).toEqual(['p1'])
+    expect(active.blocked).toHaveLength(0)
   })
 
   it('records nothing while the overlay is off the document', async () => {

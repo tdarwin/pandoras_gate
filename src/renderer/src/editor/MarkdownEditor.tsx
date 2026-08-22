@@ -7,6 +7,7 @@ import { markdownToDoc } from './markdown'
 import {
   inlineDocContent,
   suggestionsAttached,
+  trackChangesKey,
   TrackChanges,
   pendingChangeCount,
   savableMarkdown,
@@ -245,7 +246,9 @@ export default function MarkdownEditor({
       onTransaction({ editor, transaction }) {
         // Accepting a chunk is metadata-only — the document does not change,
         // so `onUpdate` never fires — but what should be SAVED just did.
-        if (!transaction.docChanged) emit(editor.state)
+        // Gated on the decision meta: every caret move is a transaction too,
+        // and `emit` reverts and re-serialises the whole document.
+        if (!transaction.docChanged && transaction.getMeta(trackChangesKey)) emit(editor.state)
       }
     },
     // Recreate (fresh undo history) only when switching documents.

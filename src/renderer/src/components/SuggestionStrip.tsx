@@ -35,13 +35,19 @@ export default function SuggestionStrip({
 
   // Before the overlay is on, the only number available is how many proposals
   // are waiting; once it is on, count what the author can actually click.
-  const count = active.shown && chunkCount > 0 ? chunkCount : active.chain.length
+  // Every surface that shows a number has to agree. A structural proposal
+  // lives in `blocked`, so counting the inline chain alone gave a sidebar dot
+  // of 1, a status-bar total of 1, and a strip saying "0 suggestions".
+  const count =
+    (active.shown && chunkCount > 0 ? chunkCount : active.chain.length) + active.blocked.length
   // Two different reasons a proposal is set aside, and two different ways out:
   // one that will not re-anchor is shown on its own, one that changes the
   // shape of the document is decided whole against a diff.
   const structural = active.blocked.filter((b) => b.structural)
   const unfoldable = active.blocked.filter((b) => !b.structural)
-  const sources = [...new Set(active.chain.map((l) => l.sourceTitle))].join(', ')
+  const sources = [
+    ...new Set([...active.chain, ...active.blocked].map((l) => l.sourceTitle))
+  ].join(', ')
   const isNew = active.current === ''
 
   const proposed = parseFrontmatter(active.chain[active.chain.length - 1]?.content ?? '')
@@ -81,7 +87,7 @@ export default function SuggestionStrip({
               title={`${structural[0]!.sourceTitle} — ${structural[0]!.reason}`}
               className="shrink-0 rounded px-1.5 text-xs text-amber-300 hover:bg-raised"
             >
-              {structural.length} change{structural.length === 1 ? 's' : ''} the shape · review ›
+              {structural.length} to decide as a whole · review ›
             </button>
           )}
           {unfoldable.length > 0 && (

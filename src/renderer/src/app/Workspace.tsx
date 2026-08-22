@@ -254,10 +254,7 @@ export default function Workspace(): React.JSX.Element {
   // A proposal that changes the shape of the document takes over the column
   // while it is being decided — it replaces the whole document, so editing
   // underneath it would only be thrown away.
-  const reviewingItem =
-    suggestionsHere?.reviewing != null
-      ? (suggestionsHere.blocked.find((b) => b.proposalId === suggestionsHere.reviewing) ?? null)
-      : null
+  const reviewingItem = suggestionsHere?.review ?? null
 
   const suggestionSpec = useMemo(() => {
     // A chain with no links means every proposal for this document was set
@@ -488,7 +485,7 @@ export default function Workspace(): React.JSX.Element {
                   onSave={() => void snapshotActiveChapter()}
                 />
               ) : reviewingItem ? (
-                <StructuralReview item={reviewingItem} current={suggestionsHere!.current} />
+                <StructuralReview review={reviewingItem} />
               ) : (
                 <>
                   {suggestionsHere && (

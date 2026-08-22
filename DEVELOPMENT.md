@@ -396,14 +396,32 @@ first structural link and everything after it waits: later links were folded on 
 so their content assumes it, and once the earlier ones are decided the fold re-anchors and
 the structural one comes back as the first.
 
+The gate is scoped to documents the tracked-changes editor actually opens. A YAML document
+is decided entry by entry and nothing is ever spliced, so `partitionChain` skips it — and
+must, because YAML list syntax parses as a markdown bullet list, which made adding a
+timeline event read as a change of shape.
+
 Such a proposal is still reachable and still decidable. The store partitions the fold on
 load (`partitionChain`), so it lands in `blocked` beside the ones that will not re-anchor —
 two reasons to be set aside, two ways out: the strip offers `N can't be combined · next ›`
 for one and `N changes the shape · review ›` for the other. The second opens
 `StructuralReview`, a panel in the editor column (not a modal — the author can leave it by
 opening another document) with the source, the rationale, a `WordDiff` of the whole body,
-and Accept / Reject. Accepting saves the author's own typing first and re-folds, so the
-proposal is re-anchored onto what they wrote rather than replacing it. The permanent test axis is now the
+the frontmatter delta when there is one, and Accept / Reject.
+
+Opening it re-folds the proposal **on its own** (`proposals:forPath` with `only`). The
+entry in `blocked` carries the cumulative fold, so accepting that would put the undecided
+inline links before it on disk under this proposal's name. Accepting saves the author's
+typing first — but only if there is any, since an unconditional snapshot on a clean buffer
+falls through the writer's nothing-to-record branch into a plain, unchecked write — and
+composes frontmatter the same way every other save does: the author's own unless they
+choose otherwise.
+
+**"Accept all" / "Reject all" on a document means everything pending on it**, whichever way
+each piece has to be decided: the inline chain through the editor, then each structural
+proposal the way the panel decides it. Reading it narrowly meant a document whose only
+proposal was structural decided an overlay that was never attached, returned success, and
+left an empty commit behind for every click. The permanent test axis is now the
 simple statement of the rule: for any proposal that changes block structure, the inline
 chunk count is zero and the saved document is the author's, whatever they type.
 
