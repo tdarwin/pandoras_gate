@@ -362,6 +362,100 @@ interface Segment {
   bTo: number
 }
 
+/**
+ * Pairs the blocks of an UNEVEN removed/added run by what they say.
+ *
+ * A run of unequal length is not automatically one restructuring. Two
+ * paragraphs becoming a list is; so is a run that came out uneven because the
+ * editor appended a trailing empty paragraph, or because one block elsewhere
+ * was reworded. Emitting a single segment for the whole run made the ENTIRE
+ * document one segment whenever the diff found no block in common — and a
+ * keystroke anywhere in it then counted as interference with every suggestion
+ * in the document, dropping the lot.
+ *
+ * Restructuring does not change the words, so blocks are gathered from
+ * whichever side is behind until the two sides say the same thing. A remainder
+ * that will not pair — reworded and restructured at once — falls back to one
+ * segment, bounded to the run rather than the document.
+ */
+/** True when one text becomes the other by inserting or removing a single run. */
+function oneEdit(a: string, b: string): boolean {
+  if (a === b) return true
+  const min = Math.min(a.length, b.length)
+  let pre = 0
+  while (pre < min && a[pre] === b[pre]) pre++
+  let suf = 0
+  while (suf < min - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++
+  return pre + suf >= min
+}
+
+function pairRun(
+  kidsA: PMNode[],
+  ia: number,
+  n: number,
+  kidsB: PMNode[],
+  ib: number,
+  m: number
+): [number, number][] {
+  const runA: string[] = ['']
+  for (let k = 0; k < n; k++) runA.push(runA[k]! + kidsA[ia + k]!.textContent)
+  const runB: string[] = ['']
+  for (let k = 0; k < m; k++) runB.push(runB[k]! + kidsB[ib + k]!.textContent)
+  const sayA = (from: number, count: number): string => runA[from + count]!.slice(runA[from]!.length)
+  const sayB = (from: number, count: number): string => runB[from + count]!.slice(runB[from]!.length)
+
+  const out: [number, number][] = []
+  let i = 0
+  let j = 0
+  while (i < n || j < m) {
+    if (i >= n) {
+      out.push([0, m - j])
+      break
+    }
+    if (j >= m) {
+      out.push([n - i, 0])
+      break
+    }
+    let ca = 1
+    let cb = 1
+    let ta = sayA(i, ca)
+    let tb = sayB(j, cb)
+    while (ta !== tb) {
+      if (ta.length <= tb.length && i + ca < n) ta = sayA(i, ++ca)
+      else if (j + cb < m) tb = sayB(j, ++cb)
+      else if (i + ca < n) ta = sayA(i, ++ca)
+      else break
+    }
+    if (ta === tb) {
+      out.push([ca, cb])
+      i += ca
+      j += cb
+      continue
+    }
+    // The words do not line up, so something here was rewritten as well as
+    // moved. The two heads are still a pair when nothing was restructured
+    // BETWEEN them — same kind of block, the same words with one run of
+    // characters inserted or removed (which is what typing looks like), or an
+    // equal number of blocks left on both sides. Only exact accumulation
+    // having failed first keeps these from stealing the blocks of a genuine
+    // N-into-1 restructuring; a remainder that satisfies none of them becomes
+    // one segment, bounded to this run rather than swallowing the document.
+    if (
+      kidsA[ia + i]!.type === kidsB[ib + j]!.type ||
+      oneEdit(sayA(i, 1), sayB(j, 1)) ||
+      n - i === m - j
+    ) {
+      out.push([1, 1])
+      i += 1
+      j += 1
+      continue
+    }
+    out.push([n - i, m - j])
+    break
+  }
+  return out
+}
+
 function alignTopLevel(a: PMNode, b: PMNode): Segment[] {
   const kidsA: PMNode[] = []
   const kidsB: PMNode[] = []
@@ -393,6 +487,11 @@ function alignTopLevel(a: PMNode, b: PMNode): Segment[] {
   }
 
   const parts = diffArrays(kidsA.map(blockKey), kidsB.map(blockKey))
+  const dbgP = (globalThis as Record<string, unknown>).__TC_PARTS as string[] | undefined
+  if (dbgP)
+    dbgP.push(
+      JSON.stringify(parts.map((x) => ({ a: !!x.added, r: !!x.removed, n: x.count ?? x.value.length })))
+    )
   let ia = 0
   let ib = 0
   for (let i = 0; i < parts.length; i++) {
@@ -407,11 +506,13 @@ function alignTopLevel(a: PMNode, b: PMNode): Segment[] {
     const next = parts[i + 1]
     if (part.removed && next?.added) {
       const m = next.count ?? next.value.length
-      // Same 1:1 split as the alignment used for diffing: a run of equal
-      // length is a block-for-block rewrite, so each pair gets its own
-      // segment and two adjacent wraps stay two chunks.
-      if (n === m) for (let k = 0; k < n; k++) push(ia + k, 1, ib + k, 1)
-      else push(ia, n, ib, m)
+      let oa = 0
+      let ob = 0
+      for (const [ca, cb] of pairRun(kidsA, ia, n, kidsB, ib, m)) {
+        push(ia + oa, ca, ib + ob, cb)
+        oa += ca
+        ob += cb
+      }
       ia += n
       ib += m
       i += 1
@@ -426,6 +527,17 @@ function alignTopLevel(a: PMNode, b: PMNode): Segment[] {
     }
   }
   return out
+}
+
+/** True when every whole block in the range is an empty text block. */
+function blankRange(node: PMNode, from: number, to: number): boolean {
+  if (from >= to) return true
+  let blank = true
+  node.forEach((child, offset) => {
+    if (offset < from || offset + child.nodeSize > to) return
+    if (!child.isTextblock || child.content.size > 0) blank = false
+  })
+  return blank
 }
 
 /** Spans totalling `length`, one per source, so a fused chunk keeps its attribution. */
@@ -460,11 +572,22 @@ function mergeBlockStructuralChanges(
   original: PMNode,
   doc: PMNode
 ): Change<string>[] {
+  /**
+   * A change that says the same words on both sides: the block was
+   * restructured, not rewritten.
+   *
+   * Token-only changes (an open/close pair carrying no text at all) are the
+   * obvious case, but `Change.merge` fuses the touching whole-node ranges of
+   * consecutive restructured blocks, and a fused run carries all their text —
+   * so testing for "no text" missed exactly the runs that most needed
+   * splitting, and twenty wrapped paragraphs came out as one chunk. Compared
+   * with no block separator, because the separators differ with the nesting
+   * that is being changed.
+   */
   const structural = (c: Change<string>): boolean =>
-    doc.textBetween(c.fromB, c.toB, ' ') === '' && original.textBetween(c.fromA, c.toA, ' ') === ''
+    doc.textBetween(c.fromB, c.toB, '') === original.textBetween(c.fromA, c.toA, '')
 
-  const members = changes.filter(structural)
-  if (members.length === 0) return changes
+  if (!changes.some(structural)) return changes
 
   let segments: Segment[]
   try {
@@ -474,58 +597,13 @@ function mergeBlockStructuralChanges(
   }
 
   /**
-   * The segment a change belongs to: the last one starting at or before it on
-   * BOTH sides. An unwrap's closing token sits on the seam between the block
-   * it closes and the next, and the document hands it to the following block —
-   * but its deletion is still inside the previous block in the original, so
-   * the A side pins it. The mirror case is the opening token of a second
-   * restructured block, whose insertion is at that same seam and whose A
-   * position is the start of the next original block: there the B side pins
-   * it. Requiring both is what tells the two apart.
-   */
-  const indexOf = (c: Change<string>): number => {
-    let found = -1
-    for (let i = 0; i < segments.length; i++) {
-      const s = segments[i]!
-      if (s.aFrom <= c.fromA && s.bFrom <= c.fromB) found = i
-      else break
-    }
-    return found
-  }
-
-  // Segment spans, one per structural change, widened until the change fits.
-  const spans: [number, number][] = []
-  const unplaced = new Set<Change<string>>()
-  for (const change of members) {
-    const lo = indexOf(change)
-    if (lo < 0) {
-      unplaced.add(change)
-      continue
-    }
-    let hi = lo
-    while (
-      hi + 1 < segments.length &&
-      (change.toA > segments[hi]!.aTo || change.toB > segments[hi]!.bTo)
-    )
-      hi++
-    if (change.toA > segments[hi]!.aTo || change.toB > segments[hi]!.bTo) {
-      unplaced.add(change)
-      continue
-    }
-    spans.push([lo, hi])
-  }
-
-  /**
-   * The changes a replacement over these segments would swallow. A zero-width
+   * The changes a replacement over this block would swallow. A zero-width
    * change counts only when it is STRICTLY inside, so a deletion written at a
    * block boundary belongs to the block it was written against rather than to
    * both of them.
    */
-  const covering = (lo: number, hi: number): Change<string>[] => {
-    const aFrom = segments[lo]!.aFrom
-    const aTo = segments[hi]!.aTo
-    const bFrom = segments[lo]!.bFrom
-    const bTo = segments[hi]!.bTo
+  const covering = (k: number): Change<string>[] => {
+    const { aFrom, aTo, bFrom, bTo } = segments[k]!
     return changes.filter((c) => {
       const aHit =
         c.toA > c.fromA ? c.fromA < aTo && c.toA > aFrom : c.fromA > aFrom && c.fromA < aTo
@@ -534,97 +612,116 @@ function mergeBlockStructuralChanges(
       return aHit || bHit
     })
   }
-  const holds = (lo: number, hi: number, c: Change<string>): boolean =>
-    c.fromA >= segments[lo]!.aFrom &&
-    c.toA <= segments[hi]!.aTo &&
-    c.fromB >= segments[lo]!.bFrom &&
-    c.toB <= segments[hi]!.bTo
-
-  // Overlapping spans are one restructuring seen from several tokens. Groups
-  // then grow to hold every change they touch — a rewrite that crosses a block
-  // boundary has to travel with the restructuring, not be spliced across it —
-  // and growing can make two groups meet, so this settles rather than passes.
-  const groups: [number, number][] = []
-  spans.sort((x, y) => x[0] - y[0] || x[1] - y[1])
-  for (const [lo, hi] of spans) {
-    const last = groups[groups.length - 1]
-    if (last && lo <= last[1]) last[1] = Math.max(last[1], hi)
-    else groups.push([lo, hi])
+  const covers = (c: Change<string>): number[] => {
+    const out: number[] = []
+    for (let k = 0; k < segments.length; k++) if (covering(k).includes(c)) out.push(k)
+    return out
   }
-  for (let pass = 0; pass < 8; pass++) {
+  /** This block was restructured, not rewritten: both sides say the same words. */
+  const sameWords = (k: number): boolean => {
+    const { aFrom, aTo, bFrom, bTo } = segments[k]!
+    return original.textBetween(aFrom, aTo, '') === doc.textBetween(bFrom, bTo, '')
+  }
+
+  /*
+   * Decided per ALIGNED BLOCK, not per change.
+   *
+   * `Change.merge` fuses the touching whole-node ranges of consecutive
+   * restructured blocks into one change, so the change is the wrong unit at
+   * both ends: twenty wrapped paragraphs arrived as a single ✓/✕, and one
+   * keystroke in the first of them was read as interference with all twenty.
+   * The block is the unit the author decides in, so it is the unit the merge
+   * works in — seeded from the blocks that were genuinely restructured, then
+   * closed over whatever the fused changes reach.
+   */
+  const claimed = new Set<number>()
+  for (let k = 0; k < segments.length; k++) {
+    const here = covering(k)
+    if (here.length === 0) continue
+    // Seeded from the blocks that were genuinely restructured, plus any block
+    // holding a token change that carries no text at all — an open/close pair
+    // is unactionable on its own however the block around it was rewritten,
+    // and leaving one behind is the ✓/✕ over nothing.
+    if (
+      sameWords(k) ||
+      here.some(
+        (c) =>
+          doc.textBetween(c.fromB, c.toB, '') === '' &&
+          original.textBetween(c.fromA, c.toA, '') === ''
+      )
+    )
+      claimed.add(k)
+  }
+  const dropped = new Set<Change<string>>()
+  for (let pass = 0; pass < segments.length + 1; pass++) {
     let grew = false
-    for (const g of groups) {
-      for (const c of covering(g[0], g[1])) {
-        while (
-          g[0] > 0 &&
-          (c.fromA < segments[g[0]]!.aFrom || c.fromB < segments[g[0]]!.bFrom)
-        ) {
-          g[0]--
-          grew = true
-        }
-        while (
-          g[1] + 1 < segments.length &&
-          (c.toA > segments[g[1]]!.aTo || c.toB > segments[g[1]]!.bTo)
-        ) {
-          g[1]++
-          grew = true
-        }
+    for (const k of [...claimed]) {
+      for (const c of covering(k)) {
+        if (dropped.has(c)) continue
+        dropped.add(c)
+        grew = true
+        // A fused change reaches blocks that were not restructured. They are
+        // inside the splice either way, so they have to be resolved here too.
+        for (const k2 of covers(c)) if (!claimed.has(k2)) claimed.add(k2)
       }
     }
     if (!grew) break
-    for (let i = groups.length - 1; i > 0; i--) {
-      if (groups[i]![0] <= groups[i - 1]![1]) {
-        groups[i - 1]![1] = Math.max(groups[i - 1]![1], groups[i]![1])
-        groups.splice(i, 1)
-      }
-    }
   }
 
-  const dropped = new Set<Change<string>>(unplaced)
+  const anySource: string[] = []
+  for (const c of changes)
+    for (const src of sourcesOf(c))
+      if (src !== AUTHOR && !anySource.includes(src)) anySource.push(src)
+
   const replacements: Change<string>[] = []
-  for (const [lo, hi] of groups) {
-    const aFrom = segments[lo]!.aFrom
-    const aTo = segments[hi]!.aTo
-    const fromB = segments[lo]!.bFrom
-    const toB = segments[hi]!.bTo
-    const inside = covering(lo, hi)
+  for (const k of [...claimed].sort((x, y) => x - y)) {
+    const here = covering(k)
+    const { aFrom, aTo, bFrom, bTo } = segments[k]!
 
     /**
-     * The author typed in the block being restructured.
+     * The author typed in THIS block.
      *
-     * Their keystroke fuses into the token change itself — the list-open
-     * deletion and the first character arrive as one change — so there is no
-     * separating the two, and the whole block becomes theirs, chunks and all.
-     * That is the adjacent-typing rule at block scale, and it errs the same
-     * way: a wrap they did not ask for is a smaller harm than a save that eats
-     * the sentence they just wrote.
-     *
-     * Only a change carrying TEXT can be theirs. Changeset re-attributes spans
-     * as it merges, so an author tag turns up on the closing token of a wrap
-     * three blocks away from anything they touched; a token change is never
-     * evidence of typing.
+     * Restructuring does not change the words, so a block whose two sides read
+     * differently was rewritten as well — by the proposal, which travels with
+     * the restructuring in one chunk, or by the AUTHOR, which does not. Their
+     * keystroke fuses into the block's own token change, so there is no
+     * separating the two and the block becomes theirs, chunks and all. That is
+     * the adjacent-typing rule at block scale, and it errs the same way: a
+     * wrap they did not ask for is a smaller harm than a save that eats the
+     * sentence they just wrote. Scoped to the block, it can no longer reach a
+     * suggestion they never went near.
      */
-    const authored = inside.some((c) => !structural(c) && sourcesOf(c).includes(AUTHOR))
-    const sources: string[] = []
-    for (const c of inside)
-      for (const s of sourcesOf(c)) if (s !== AUTHOR && !sources.includes(s)) sources.push(s)
-
-    // Nothing of a proposal left to propose, a change that still will not fit,
-    // or a block the author has taken over: drop, never splice.
-    if (authored || sources.length === 0 || inside.some((c) => !holds(lo, hi, c))) {
-      for (const c of inside) dropped.add(c)
+    // A block added or removed with nothing in it: the editor's trailing empty
+    // paragraph, appended the moment the author edits a document ending in a
+    // blockquote or a list. A chunk over it is ✓/✕ with no text under it.
+    // Narrow on purpose — an image swap has no text either, and it is a
+    // suggestion the author must be able to see and refuse.
+    if (
+      (aFrom === aTo && blankRange(doc, bFrom, bTo)) ||
+      (bFrom === bTo && blankRange(original, aFrom, aTo))
+    )
       continue
-    }
 
-    for (const c of inside) dropped.add(c)
+    const authored = !sameWords(k) && here.some((c) => sourcesOf(c).includes(AUTHOR))
+    const sources: string[] = []
+    for (const c of here)
+      for (const src of sourcesOf(c)) if (src !== AUTHOR && !sources.includes(src)) sources.push(src)
+    // Changeset gives a fused span no data at all when the sides disagree, so
+    // a restructuring can arrive attributed to nobody. Crediting it to the
+    // proposals in the document is a worse label than the right one and a far
+    // better outcome than a chunk with no source, which does not render — the
+    // wrap would stand with no ✓/✕ to refuse it.
+    if (sources.length === 0 && sameWords(k)) sources.push(...anySource)
+    if (authored || sources.length === 0) continue
+
     replacements.push(
       Change.fromJSON<string>({
         fromA: aFrom,
         toA: aTo,
-        fromB,
-        toB,
+        fromB: bFrom,
+        toB: bTo,
         deleted: sourceSpans(aTo - aFrom, sources),
-        inserted: sourceSpans(toB - fromB, sources)
+        inserted: sourceSpans(bTo - bFrom, sources)
       })
     )
   }

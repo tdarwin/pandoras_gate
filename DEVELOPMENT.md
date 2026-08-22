@@ -348,10 +348,27 @@ Deriving one range from the other is what made this the most-revised code in the
 wrap gathers several original blocks into one and an unwrap does the reverse, so every fix
 in that shape cured one direction and broke the other. Segments are ordered and disjoint
 on both sides, which makes overlapping replacements — two restructured blocks side by side
-claiming each other's text — impossible rather than guarded against. A token is assigned
-to the last segment starting at or before it on **both** sides, which is what tells an
-unwrap's closing token (on the seam, but deleted from the block before it) apart from the
-next block's opening token (on that same seam, but inserted into the block after it).
+claiming each other's text — impossible rather than guarded against.
+
+**The aligned block is the unit of decision, not the change.** `Change.merge` fuses the
+touching whole-node ranges of consecutive restructured blocks into a single change, so the
+change is the wrong unit at both ends: twenty wrapped paragraphs arrived as one ✓/✕, and
+one keystroke in the first of them read as interference with all twenty. The merge is
+seeded from blocks whose two sides say the same words — restructuring does not change the
+words — plus any block holding a token change with no text at all, then closed over
+whatever the fused changes reach.
+
+Pairing blocks inside an uneven run is where this has gone wrong most often. A run of
+unequal length is not automatically one restructuring: two paragraphs becoming a list is,
+but so is a run that came out uneven because the editor appended a trailing empty
+paragraph — which it does the moment the author edits a document ending in a blockquote or
+a list. Emitting one segment for such a run made the ENTIRE document a single segment
+whenever the diff found no block in common, and one keystroke then dropped every
+suggestion in it. `pairRun` gathers blocks from whichever side is behind until the two
+sides say the same thing; when they will not, two heads still pair if nothing was
+restructured between them (same kind of block, the same words with one run of characters
+inserted or removed, or an equal number of blocks left on both sides). Only a remainder
+that satisfies none of those becomes one segment, bounded to the run.
 
 A group that cannot be merged **drops** its members rather than leaving them. An
 unmergeable restructuring is not revertible at all, and both ways of leaving one behind
@@ -362,9 +379,15 @@ buttons that do nothing when read and damage when clicked.
 That is also how author typing inside a restructured block is handled: the container's own
 tokens fuse with the first keystroke into one change, so the block becomes the author's,
 chunks and all. It is the adjacent-typing trade above at block scale, and it errs the same
-way. Only a change carrying *text* counts as evidence of typing — changeset re-attributes
-spans as it merges, and an author tag turns up on the closing token of a wrap three blocks
-from anything the author touched.
+way — and being scoped to the block, it cannot reach a suggestion the author never went
+near. A block counts as theirs only when its two sides read differently AND a change over
+it carries their tag; changeset re-attributes spans as it merges, so an author tag alone
+turns up on the closing token of a wrap in a block they never touched.
+
+The test matrix types one character in an untouched block for every wrap and unwrap shape,
+in the first block, the middle and the last. That axis is permanent: four review rounds
+running, this function regressed its neighbour handling and the suite stayed green because
+nothing typed anywhere.
 
 Accepting is metadata-only, so it is not undoable; rejecting mutates the document and is.
 

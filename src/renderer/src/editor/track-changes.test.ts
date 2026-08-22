@@ -233,6 +233,73 @@ describe('TrackChanges', () => {
     }
   })
 
+  it('a keystroke in a block the proposal never touched decides nothing', () => {
+    // The matrix, not three point tests: this function has regressed its
+    // neighbour handling once per review round, and every time the suite
+    // stayed green because no wrap/unwrap test typed anywhere in the document.
+    //
+    // What broke last was the alignment collapsing to ONE segment for the
+    // whole document whenever the top-level block counts did not pair — which
+    // the editor causes by itself, appending a trailing empty paragraph the
+    // moment the author edits a document ending in a blockquote or a list.
+    // One keystroke then counted as interference with every suggestion in the
+    // document: the ✓/✕ vanished, the restructuring went to disk, and Reject
+    // All could not bring it back.
+    const blocks = ['Para zero.', 'Middle one.', 'Para two.']
+    const norm = (md: string): string =>
+      docToMarkdown(markdownToDoc(getSchema(baseExtensions()), md))
+    for (const wrap of [(t: string) => `> ${t}`, (t: string) => `- ${t}`]) {
+      for (const mask of [1, 2, 4, 3, 5, 6]) {
+        const plain = blocks.join('\n\n') + '\n'
+        const wrapped = blocks.map((t, i) => ((mask >> i) & 1 ? wrap(t) : t)).join('\n\n') + '\n'
+        for (const [original, proposal] of [
+          [plain, wrapped],
+          [wrapped, plain]
+        ] as const) {
+          for (let u = 0; u < blocks.length; u++) {
+            if ((mask >> u) & 1) continue // only blocks the proposal left alone
+            const editor = makeReviewEditor(original, proposal)
+            const before = pendingChangeCount(editor.state)
+            let caret = -1
+            editor.state.doc.descendants((node, pos) => {
+              if (caret < 0 && node.isText && node.text === blocks[u]) caret = pos
+            })
+            editor.commands.setTextSelection(caret)
+            editor.commands.insertContent('X')
+            expect(docToMarkdown(savableDoc(editor.state))).toBe(
+              norm(original.replace(blocks[u]!, `X${blocks[u]!}`))
+            )
+            expect(pendingChangeCount(editor.state)).toBe(before)
+            editor.destroy()
+          }
+        }
+      }
+    }
+  })
+
+  it('a run of adjacent wraps is decidable block by block', () => {
+    // `Change.merge` fuses the touching whole-node ranges of consecutive
+    // restructured blocks into one change. Deciding at that granularity gave
+    // twenty wrapped paragraphs a single ✓/✕ between them — and made one
+    // keystroke in the first of the twenty an acceptance of all of them.
+    const paras = Array.from({ length: 20 }, (_, i) => `Paragraph ${i}.`)
+    const original = paras.join('\n\n') + '\n'
+    const editor = makeReviewEditor(original, paras.map((p) => `> ${p}`).join('\n\n') + '\n')
+    expect(pendingChangeCount(editor.state)).toBe(20)
+
+    let caret = -1
+    editor.state.doc.descendants((node, pos) => {
+      if (caret < 0 && node.isText && node.text === 'Paragraph 0.') caret = pos
+    })
+    editor.commands.setTextSelection(caret)
+    editor.commands.insertContent('X')
+    expect(pendingChangeCount(editor.state)).toBe(19)
+    expect(docToMarkdown(savableDoc(editor.state))).toBe(
+      ['> XParagraph 0.', ...paras.slice(1)].join('\n\n') + '\n'
+    )
+    editor.destroy()
+  })
+
   it('never renders a chunk with nothing to show', () => {
     // A structural chunk that could not be merged used to reach the
     // decorations as a zero-width token span: a ✓/✕ pair floating over
