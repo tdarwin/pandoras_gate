@@ -283,13 +283,17 @@ Two separate places, and the distinction matters:
   looking at and a crash mid-review leaves nothing to reconcile. `baseContent` advances
   as hunks are accepted; the item resolves when nothing is left to suggest.
 
-  A refused apply means the file moved under the author. If a plain write is coming after
-  it, that write re-anchors the overlay; a write-less refusal has no fallback, so it
-  re-folds AND re-reads the buffer — which was a copy of the anchor main just called
-  stale, and would otherwise have been written back over the external edit on the next
-  snapshot, silently. Both are conditional on the buffer still being what was sent:
-  keystrokes typed during the round trip win, ride the next save, and keep the buffer
-  dirty so autosave still has a reason to fire.
+  A refused apply means the file moved under the author, and what happens next depends on
+  whether there was anything to write. When there was, the writer declines and the caller
+  makes an ordinary write, which re-anchors the overlay: the buffer holds typing, and
+  losing that is worse than overwriting the change main objected to. When there was not —
+  `write` is null exactly when the savable document already equals the anchor — the writer
+  handles it and reports so, because a fallback write there has nothing to offer but
+  damage: it puts the pre-change text back over the external edit. That path re-folds and
+  re-reads the buffer instead, which was a copy of the anchor main just called stale. Both
+  are conditional on the buffer still being what was sent: keystrokes typed during the
+  round trip win, ride the next save, and keep the buffer dirty so autosave still has a
+  reason to fire.
 
   Concurrency: every read-modify-write of `.pandora/state.json`, of the proposal JSON,
   and of a git index runs through `withLock` (`src/main/locks.ts`) — nothing in Electron

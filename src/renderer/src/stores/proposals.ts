@@ -556,11 +556,16 @@ async function writeDecisions(
     // A refusal that HAS a fallback coming re-anchors from it: re-folding here
     // would describe the file as it was before that write, and the next save
     // would be refused all over again. `setCurrent` is called once the plain
-    // write lands.
+    // write lands. Falling back is right there and only there — the buffer
+    // holds typing, and losing that is worse than overwriting the change main
+    // objected to.
     //
-    // A write-less refusal has no fallback — the buffer already matches disk
-    // as far as the caller knows, so nothing else runs and `current` would
-    // stay stale forever, refusing every reject after it with the same toast.
+    // A write-less refusal is the opposite case. `writeArg` is null only when
+    // the savable document already equals the anchor, so there is no typing to
+    // protect and the fallback write has nothing to offer but damage: it puts
+    // the pre-change text back over whatever main just said had changed. This
+    // is where "Reject all" quietly reverted an edit made outside the app.
+    // Report handled, so the caller writes nothing.
     if (writeArg === null && useProposalsStore.getState().active?.path === active.path) {
       // The buffer is a copy of `current`, which main has just told us is out
       // of date — so the buffer is out of date too, and the next save would
@@ -572,6 +577,7 @@ async function writeDecisions(
         await stale.reloadActiveChapter()
       }
       await useProposalsStore.getState().loadFor(active.path)
+      return true
     }
     return false
   }
