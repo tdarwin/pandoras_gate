@@ -312,18 +312,25 @@ export default function Workspace(): React.JSX.Element {
 
   // The overlay attaches to the LIVE editor rather than remounting it —
   // recreating the editor steals focus and resets the caret.
+  //
+  // Keyed on the CHAIN, deliberately not on the baseline. Attaching is
+  // destructive — it replaces the whole document with the last link's content
+  // — so re-attaching whenever `current` moves would re-attach a chain that
+  // was folded against the previous baseline: a successful apply advances
+  // `current` and leaves `chain` alone, so a routine autosave would put the
+  // old fully-proposed text back, render the author's own sentence as a
+  // struck-out AI deletion, and reset the caret mid-session.
+  //
+  // A baseline that moves because the FILE moved is handled without this. The
+  // re-fold sets `shown` false, which nulls the spec and detaches, and the
+  // auto-show effect above then re-attaches from the freshly folded chain.
   const shownKey = suggestionSpec ? suggestionsHere?.chain.map((l) => l.proposalId).join() : null
-  // The baseline counts as much as the chain does: re-anchoring after someone
-  // else wrote the file changes what the same suggestions MEAN, and an overlay
-  // left on the old baseline would have the next save quietly undo the
-  // external edit.
-  const baseline = suggestionSpec ? suggestionsHere?.current : null
   useEffect(() => {
     if (!editorHandle) return
     if (suggestionSpec) editorHandle.attachSuggestions(suggestionSpec)
     else if (editorHandle.suggestionCount() > 0) editorHandle.detachSuggestions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editorHandle, shownKey, baseline, activeFile])
+  }, [editorHandle, shownKey, activeFile])
 
   // The store asks the editor what each proposal still proposes, at save time.
   useEffect(() => {

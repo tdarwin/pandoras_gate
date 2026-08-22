@@ -370,6 +370,20 @@ describe('saving a document with suggestions', () => {
     expect(project.useProjectStore.getState().content).toBe(external)
   })
 
+  it('a re-fold leaves the overlay off, so it re-attaches from the new fold', async () => {
+    const { proposals } = await setUp()
+    expect(proposals.useProposalsStore.getState().active?.shown).toBe(true)
+
+    // The workspace keys the overlay on the CHAIN, because attaching replaces
+    // the document with the last link's content — re-attaching on a moved
+    // baseline would put stale AI text back over the author's own. A baseline
+    // that moves because the FILE moved is covered by this instead: the
+    // re-fold turns the overlay off, and the auto-show effect brings it back
+    // against the chain that was just folded.
+    await proposals.useProposalsStore.getState().loadFor(PATH)
+    expect(proposals.useProposalsStore.getState().active?.shown).toBe(false)
+  })
+
   it('leaves documents without suggestions on the ordinary write path', async () => {
     const { proposals, project } = await setUp()
     proposals.useProposalsStore.setState({ active: null })

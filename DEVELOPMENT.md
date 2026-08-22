@@ -291,6 +291,14 @@ Two separate places, and the distinction matters:
   disagrees; a save that carries their typing omits it, since losing that is the worse
   outcome — the one deliberate place the buffer wins.
 
+  The overlay is keyed on the CHAIN and never on the baseline. Attaching is destructive —
+  it replaces the whole document with the last link's content — and a successful apply
+  advances `current` while leaving `chain` alone, so re-attaching on a moved baseline
+  re-attaches a stale fold: a routine autosave puts the old fully-proposed text back and
+  renders the author's own sentence as a struck-out AI deletion. A baseline that moves
+  because the FILE moved is covered without it, because a re-fold turns the overlay off
+  and it comes back against the chain that was just folded.
+
   A refused apply means the file moved under the author, and what happens next depends on
   whether there was anything to write. When there was, the writer declines and the caller
   makes an ordinary write, which re-anchors the overlay: the buffer holds typing, and
