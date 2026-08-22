@@ -962,8 +962,16 @@ export const TrackChanges = Extension.create<TrackChangesOptions>({
         (spec) =>
         ({ state, tr, dispatch }) => {
           if (dispatch) {
-            const next = markdownToDoc(state.schema, spec.chain[spec.chain.length - 1]?.content ?? '')
-            tr.replace(0, state.doc.content.size, next.slice(0, next.content.size))
+            // A chain with no links has nothing to show — every proposal for
+            // the document was set aside as un-combinable. Replacing the
+            // document with the last link's content then emptied it: the
+            // author's prose vanished from the screen while the file on disk
+            // still had it.
+            const last = spec.chain[spec.chain.length - 1]
+            if (last) {
+              const next = markdownToDoc(state.schema, last.content)
+              tr.replace(0, state.doc.content.size, next.slice(0, next.content.size))
+            }
             tr.setMeta(trackChangesKey, { attach: spec } satisfies TrackMeta)
             // Suggestions ARRIVING is not an edit the author can undo — and
             // undoing it would leave the plugin diffing against an original
