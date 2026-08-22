@@ -1,8 +1,5 @@
 import { useState } from 'react'
-import { stringify as stringifyYaml } from 'yaml'
-import { parseFrontmatter } from '@shared/frontmatter'
 import { useProposalsStore, type ActiveSuggestions } from '../stores/proposals'
-import WordDiff from './WordDiff'
 
 /**
  * A thin, non-modal strip above the document being reviewed. It says what is
@@ -15,18 +12,14 @@ import WordDiff from './WordDiff'
 export default function SuggestionStrip({
   active,
   chunkCount,
-  currentRaw,
   onShow
 }: {
   active: ActiveSuggestions
   /** Undecided changes the editor is showing — what the reader actually counts. */
   chunkCount: number
-  /** The document as the buffer holds it, for the frontmatter comparison. */
-  currentRaw: string
   /** Puts the overlay on the editor (deferred while the author is typing). */
   onShow: () => void
 }): React.JSX.Element {
-  const setFmChoice = useProposalsStore((s) => s.setFmChoice)
   const showOnly = useProposalsStore((s) => s.showOnly)
   const resolveDoc = useProposalsStore((s) => s.resolveDoc)
   const [openRationale, setOpenRationale] = useState(false)
@@ -37,13 +30,6 @@ export default function SuggestionStrip({
   const count = active.shown && chunkCount > 0 ? chunkCount : active.chain.length
   const sources = [...new Set(active.chain.map((l) => l.sourceTitle))].join(', ')
   const isNew = active.current === ''
-
-  const proposed = parseFrontmatter(active.chain[active.chain.length - 1]?.content ?? '')
-  const current = parseFrontmatter(currentRaw)
-  const fmDiffers =
-    !isNew && JSON.stringify(current.data) !== JSON.stringify(proposed.data)
-  const fmText = (data: Record<string, unknown>): string =>
-    Object.keys(data).length > 0 ? stringifyYaml(data).trimEnd() : '(none)'
 
   const act = async (resolution: 'accept' | 'reject'): Promise<void> => {
     setBusy(true)
@@ -118,32 +104,6 @@ export default function SuggestionStrip({
             </li>
           ))}
         </ul>
-      )}
-      {fmDiffers && (
-        <div className="border-t border-line/60 px-4 py-2">
-          <div className="mb-1.5 flex items-center justify-between gap-3">
-            <span className="text-xs font-medium text-ink-muted">Details also change</span>
-            <span className="flex shrink-0 gap-3 text-xs text-ink-muted">
-              <label className="flex cursor-pointer items-center gap-1">
-                <input
-                  type="radio"
-                  checked={active.fmChoice === 'proposed'}
-                  onChange={() => setFmChoice('proposed')}
-                />
-                Use proposed
-              </label>
-              <label className="flex cursor-pointer items-center gap-1">
-                <input
-                  type="radio"
-                  checked={active.fmChoice === 'current'}
-                  onChange={() => setFmChoice('current')}
-                />
-                Keep current
-              </label>
-            </span>
-          </div>
-          <WordDiff oldText={fmText(current.data)} newText={fmText(proposed.data)} />
-        </div>
       )}
     </div>
   )

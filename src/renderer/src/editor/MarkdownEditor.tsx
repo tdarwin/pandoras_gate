@@ -59,8 +59,6 @@ export interface EditorHandle {
   /* --- Suggestions (no-ops when nothing is attached) --- */
   /** Undecided suggestions currently shown. */
   suggestionCount: () => number
-  /** Markdown as it should be saved: undecided suggestions reverted. */
-  savableBody: () => string
   /** Markdown of what one proposal still proposes. */
   proposedBody: (proposalId: string) => string
   acceptAllSuggestions: () => void
@@ -235,11 +233,7 @@ export default function MarkdownEditor({
       // count, and the next save) holding the pre-accept text.
       onTransaction({ editor, transaction }) {
         if (!transaction.getMeta(trackChangesKey)) return
-        const md = savableMarkdown(editor.state)
-        if (md === lastValueRef.current) return
-        lastValueRef.current = md
-        onChangeRef.current(md)
-        onSuggestionsChangeRef.current?.(pendingChangeCount(editor.state))
+        emit(editor.state)
       },
       onUpdate({ editor }) {
         // The SAVABLE document, not the visible one: with suggestions shown
@@ -315,7 +309,6 @@ export default function MarkdownEditor({
       // destroyed editor, so the suggestion commands — the ones effects drive
       // rather than clicks — check first.
       suggestionCount: () => (editor.isDestroyed ? 0 : pendingChangeCount(editor.state)),
-      savableBody: () => (editor.isDestroyed ? lastValueRef.current : savableMarkdown(editor.state)),
       proposedBody: (proposalId) =>
         editor.isDestroyed ? lastValueRef.current : proposedMarkdown(editor.state, proposalId),
       acceptAllSuggestions: () => {
