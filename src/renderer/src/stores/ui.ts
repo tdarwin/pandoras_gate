@@ -20,11 +20,14 @@ interface UiStore {
   welcomeIntent: 'create' | null
   /** Set → Workspace copies the active chapter for the platform. */
   copyForRequest: { seq: number; platform: PublishPlatform } | null
+  /** Bump → Workspace jumps to the next suggestion (menu, status bar). */
+  nextSuggestionSignal: number
   setShowAbout: (v: boolean) => void
   setShowPrefs: (v: boolean) => void
   signalNewChapter: () => void
   setWelcomeIntent: (v: 'create' | null) => void
   signalCopyFor: (platform: PublishPlatform) => void
+  requestNextSuggestion: () => void
 }
 
 export const useUiStore = create<UiStore>((set) => ({
@@ -33,10 +36,12 @@ export const useUiStore = create<UiStore>((set) => ({
   newChapterSignal: 0,
   welcomeIntent: null,
   copyForRequest: null,
+  nextSuggestionSignal: 0,
   setShowAbout: (v) => set({ showAbout: v }),
   setShowPrefs: (v) => set({ showPrefs: v }),
   signalNewChapter: () => set((s) => ({ newChapterSignal: s.newChapterSignal + 1 })),
   setWelcomeIntent: (v) => set({ welcomeIntent: v }),
   signalCopyFor: (platform) =>
-    set((s) => ({ copyForRequest: { seq: (s.copyForRequest?.seq ?? 0) + 1, platform } }))
+    set((s) => ({ copyForRequest: { seq: (s.copyForRequest?.seq ?? 0) + 1, platform } })),
+  requestNextSuggestion: () => set((s) => ({ nextSuggestionSignal: s.nextSuggestionSignal + 1 }))
 }))

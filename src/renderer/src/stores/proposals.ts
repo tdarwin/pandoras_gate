@@ -40,6 +40,8 @@ export interface BlockedProposal {
  */
 export interface ActiveSuggestions {
   path: string
+  /** 'create' when no file exists yet — not the same as a file that is empty. */
+  action: 'create' | 'update'
   /** The file as main last confirmed it; echoed back so a moved file is refused. */
   current: string
   chain: FoldLink[]
@@ -229,6 +231,9 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     set({
       active: {
         path,
+        // An existing zero-byte file is not a create, and treating it as one
+        // ignored the author's frontmatter choice and skipped their saves.
+        action: get().pendingByPath.get(path)?.action ?? 'update',
         current: result.data.current,
         chain: result.data.chain,
         blocked: result.data.blocked,
@@ -496,7 +501,12 @@ async function writeDecisions(
   // field, and the default is the author's OWN data. Defaulting to the
   // proposal meant every autosave wrote AI frontmatter nobody had agreed to —
   // and threw away whatever the author had just changed in the details panel.
-  const data = active.fmChoice === 'proposed' ? proposedFm.data : savable.data
+  //
+  // A document that does not exist yet is the exception: there is no author
+  // frontmatter to protect, and using the empty buffer's would strip the
+  // proposal's own details the first time the row was opened.
+  const isCreate = active.action === 'create'
+  const data = active.fmChoice === 'proposed' || isCreate ? proposedFm.data : savable.data
   const write = serializeFrontmatter({
     data,
     body: savable.body,
@@ -531,8 +541,27 @@ async function writeDecisions(
 
   // Nothing to record and nothing to change: the interval snapshot fires on
   // every document with suggestions pending, and this would otherwise rewrite
-  // the file, every proposal, and a commit for a document nobody touched.
-  if (write === active.current && decisions.length === 0) return false
+  // the file, every proposal, and a commit for a document nobody touched. An
+  // explicit ⌘S still gets its history entry — just without rewriting content
+  // (and never for a document that does not exist yet).
+  if (write === active.current && decisions.length === 0) {
+    if (snapshot && !isCreate) {
+      await window.pandora.invoke('chapter:write', {
+        novelDir: novel.dir,
+        file: active.path,
+        content: write,
+        snapshot: true
+      })
+    }
+    return true
+  }
+
+  // A document that does not exist yet stays that way until the author accepts
+  // something. Merely opening a proposed character profile and navigating away
+  // used to write a frontmatter-only stub — which took the NEW marker off the
+  // row, turned the create into an update, and left a bodyless profile behind
+  // if the author later rejected it.
+  const untouched = isCreate && savable.body.trim() === ''
 
   // An emptied existing document is not a decision — main would refuse the
   // apply as an "Empty document" and the author would get a toast for having
@@ -541,8 +570,9 @@ async function writeDecisions(
   if (active.current !== '' && write.trim() === '') return false
 
   // A save that changes nothing writes nothing — and a write-less apply is
-  // what lets main remember a clean reject.
-  const writeArg = write === active.current ? null : write
+  // what lets main remember a clean reject. A document nobody has decided on
+  // is in the same position: it stays a document that does not exist.
+  const writeArg = untouched || write === active.current ? null : write
 
   const result = await window.pandora.invoke('proposals:apply', {
     novelDir: novel.dir,
@@ -589,6 +619,11 @@ async function writeDecisions(
         { active: { ...s.active, current: result.data.content ?? s.active.current } }
       : {}
   )
+  // A document that had no file has one now. The flag that keeps saves from
+  // materialising a rejected phantom must not outlive the accept that created
+  // it, or an author who selects all and deletes gets their deletion swallowed
+  // and genuine read errors stay hidden for the rest of the session.
+  if (result.data.content !== null) useProjectStore.getState().notePathWritten(active.path)
   // What went to disk can differ from the buffer. Left unsynced, the next
   // plain save — once the suggestions resolve and this writer stops running —
   // put the buffer straight back over it.
@@ -604,11 +639,17 @@ async function writeDecisions(
   ) {
     project.setSavedContent(result.data.content)
   }
-  if (snapshot) {
+  // `chapter:write` writes unconditionally, so following a write-less apply
+  // with the computed content re-created exactly the stub the null write
+  // existed to avoid — leaving a phantom undecided still made the file, took
+  // its NEW marker off, and turned the create into an update of a bodyless
+  // document. An existing document still gets its history entry, written
+  // byte-identically; one that does not exist gets nothing at all.
+  if (snapshot && (writeArg !== null || !isCreate)) {
     await window.pandora.invoke('chapter:write', {
       novelDir: novel.dir,
       file: active.path,
-      content: write,
+      content: writeArg ?? active.current,
       snapshot: true
     })
   }
@@ -636,6 +677,12 @@ async function finishBulk(
       }.`
     )
   }
+  // Including a create that was just ACCEPTED: main has made the file, and
+  // skipping the reload left the editor holding the empty buffer it started
+  // with — which the next save then wrote back over the new profile.
+  // `reloadActiveChapter` already stays quiet about the ENOENT that is the
+  // expected answer for a document with no file, so a rejected create needs no
+  // special case here.
   if (reloadOpenDoc) await useProjectStore.getState().reloadActiveChapter()
   return result.data.applied > 0
 }

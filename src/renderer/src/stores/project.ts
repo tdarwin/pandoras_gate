@@ -67,6 +67,12 @@ interface ProjectStore {
   activeFile: string | null
   /** Editor buffer for the active chapter. */
   content: string
+  /**
+   * The open document has no file on disk — a Codex document that exists only
+   * as a pending `create` proposal. Nothing may write it until the author
+   * accepts something, or merely looking at the row makes the file.
+   */
+  activeMissing: boolean
   dirty: boolean
   lastError: string | null
 
@@ -76,9 +82,20 @@ interface ProjectStore {
   applyNovelState: (novel: NovelState) => void
   /** Replace the buffer with on-disk content (not dirty). */
   setSavedContent: (content: string) => void
+  /**
+   * main wrote this path — through the suggestion writer, which returns to the
+   * caller as "saved" without going near `chapter:write`. A document opened
+   * with `allowMissing` has a file from that moment on.
+   */
+  notePathWritten: (path: string) => void
   /** Snapshots the open buffer, then clears the workspace. */
   closeNovel: () => Promise<void>
-  openChapter: (file: string) => Promise<void>
+  /**
+   * `allowMissing` opens a path that has no file yet — a Codex document that
+   * exists only as a pending `create` proposal. The buffer starts empty and
+   * the whole proposed document renders as one insertion.
+   */
+  openChapter: (file: string, opts?: { allowMissing?: boolean }) => Promise<void>
   /**
    * Re-read the ACTIVE file after main rewrote it (restore, status change).
    * Unlike openChapter this never snapshots first — snapshotting would write
@@ -101,6 +118,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   novel: null,
   activeFile: null,
   content: '',
+  activeMissing: false,
   dirty: false,
   lastError: null,
 
@@ -121,12 +139,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     // File → Open Recent, so without this, novel A's conversation gets sent as
     // history for novel B and A's suggestions render over B's documents.
     resetForNovelChange()
-    set({ novel, activeFile: null, content: '', dirty: false })
+    set({ novel, activeFile: null, content: '', activeMissing: false, dirty: false })
   },
 
   applyNovelState: (novel) => set({ novel }),
 
-  setSavedContent: (content) => set({ content, dirty: false }),
+  setSavedContent: (content) => set({ content, dirty: false, activeMissing: false }),
+
+  notePathWritten: (path) =>
+    set((s) => (s.activeFile === path ? { activeMissing: false } : {})),
 
 
   closeNovel: async () => {
@@ -134,17 +155,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     // dropped up to 5 s of typing.
     await get().snapshotActiveChapter()
     resetForNovelChange()
-    set({ novel: null, activeFile: null, content: '', dirty: false })
+    set({ novel: null, activeFile: null, content: '', activeMissing: false, dirty: false })
   },
 
-  openChapter: async (file) => {
+  openChapter: async (file, opts) => {
     const { novel, activeFile } = get()
     if (!novel) return
     // Leaving a document is a natural save point: snapshot it.
     if (activeFile) await get().snapshotActiveChapter()
     const result = await window.pandora.invoke('chapter:read', { novelDir: novel.dir, file })
     if (result.ok) {
-      set({ activeFile: file, content: result.data.content, dirty: false })
+      set({ activeFile: file, content: result.data.content, activeMissing: false, dirty: false })
+    } else if (opts?.allowMissing) {
+      set({ activeFile: file, content: '', activeMissing: true, dirty: false })
     } else {
       set({ lastError: result.error.message })
     }
@@ -154,8 +177,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     const { novel, activeFile } = get()
     if (!novel || !activeFile) return
     const result = await window.pandora.invoke('chapter:read', { novelDir: novel.dir, file: activeFile })
-    if (result.ok) set({ content: result.data.content, dirty: false })
-    else set({ lastError: result.error.message })
+    if (result.ok) set({ content: result.data.content, activeMissing: false, dirty: false })
+    // A document that never existed has nothing to reload; ENOENT here is the
+    // expected answer after rejecting a create, not something to report.
+    else if (!get().activeMissing) set({ lastError: result.error.message })
   },
 
   // A write that changes nothing is not an edit. The editor emits its
@@ -172,12 +197,21 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       settle(set, get, content)
       return
     }
+    // A document with no file stays that way while it is empty. The suggestion
+    // writer declines once the proposals resolve — rejected, or not yet folded
+    // — and the plain write below would then materialise the rejected document
+    // as a zero-byte file, with a history entry to match.
+    if (get().activeMissing && content.trim() === '') {
+      set({ dirty: false })
+      return
+    }
     const result = await window.pandora.invoke('chapter:write', {
       novelDir: novel.dir,
       file: activeFile,
       content
     })
     if (result.ok) {
+      set({ activeMissing: false })
       settle(set, get, content)
       currentSink?.(activeFile, content)
     } else set({ lastError: result.error.message })
@@ -190,6 +224,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       settle(set, get, content)
       return
     }
+    // A document with no file stays that way while it is empty. The suggestion
+    // writer declines once the proposals resolve — rejected, or not yet folded
+    // — and the plain write below would then materialise the rejected document
+    // as a zero-byte file, with a history entry to match.
+    if (get().activeMissing && content.trim() === '') {
+      set({ dirty: false })
+      return
+    }
     // Always write+snapshot: commits are no-ops when nothing changed, and
     // this also sweeps up earlier quiet writes into a history entry.
     const result = await window.pandora.invoke('chapter:write', {
@@ -199,6 +241,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       snapshot: true
     })
     if (result.ok) {
+      set({ activeMissing: false })
       settle(set, get, content)
       currentSink?.(activeFile, content)
     } else set({ lastError: result.error.message })

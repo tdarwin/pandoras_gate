@@ -370,6 +370,140 @@ describe('saving a document with suggestions', () => {
     expect(project.useProjectStore.getState().content).toBe(external)
   })
 
+  it('leaving a document that does not exist yet writes nothing at all', async () => {
+    const stores = await loadStores()
+    const CREATE = 'metadata/characters/mara-din.md'
+    const PROPOSED = '---\nname: Mara Din\n---\nSharp-eyed.\n'
+    stores.project.useProjectStore.setState({ novel: NOVEL, activeFile: CREATE })
+    responses['proposals:pending'] = {
+      docs: [{ path: CREATE, action: 'create', count: 1, sources: ['Codex update'], blocked: 0 }]
+    }
+    responses['proposals:forPath'] = {
+      current: '',
+      chain: [
+        { proposalId: 'p1', sourceTitle: 'Codex update', rationale: 'New character', content: PROPOSED }
+      ],
+      blocked: []
+    }
+    responses['proposals:apply'] = { content: null, remaining: 1 }
+    stores.proposals.useProposalsStore.getState().init()
+    await stores.proposals.useProposalsStore.getState().refresh()
+    stores.proposals.useProposalsStore.getState().setShown(true)
+    stores.proposals.setSuggestionHandle(fakeHandle('', { p1: 'Sharp-eyed.\n' }))
+
+    // Navigating away, blurring, ⌘S and the interval snapshot all land here.
+    await stores.project.useProjectStore.getState().snapshotActiveChapter()
+
+    const apply = invokes.find((i) => i.channel === 'proposals:apply')!
+    expect((apply.payload as { write: string | null }).write).toBeNull()
+    // The apply wrote nothing, so there is nothing to snapshot. Following it
+    // with chapter:write re-created exactly the stub the null write avoided.
+    expect(invokes.some((i) => i.channel === 'chapter:write')).toBe(false)
+  })
+
+  it('a rejected document that never existed does not materialise as an empty file', async () => {
+    const stores = await loadStores()
+    const CREATE = 'metadata/characters/mara-din.md'
+    stores.project.useProjectStore.setState({ novel: NOVEL })
+    responses['chapter:read'] = undefined
+    ;(window as unknown as { pandora: { invoke: unknown } }).pandora.invoke = vi.fn(
+      async (channel: string, payload: Record<string, unknown>) => {
+        invokes.push({ channel, payload })
+        if (channel === 'chapter:read') return { ok: false, error: { message: 'ENOENT' } }
+        return { ok: true, data: responses[channel] ?? {} }
+      }
+    )
+    await stores.project.useProjectStore.getState().openChapter(CREATE, { allowMissing: true })
+    expect(stores.project.useProjectStore.getState().activeMissing).toBe(true)
+
+    // The proposal was rejected, so there is no suggestion writer for the path
+    // any more — and the plain fallback used to create the file regardless.
+    stores.proposals.useProposalsStore.setState({ active: null })
+    invokes.length = 0
+    await stores.project.useProjectStore.getState().snapshotActiveChapter()
+    expect(invokes.some((i) => i.channel === 'chapter:write')).toBe(false)
+    expect(stores.project.useProjectStore.getState().lastError).toBeNull()
+  })
+
+  it('reloads a created document, so the buffer it started empty with is not written back', async () => {
+    const stores = await loadStores()
+    const CREATE = 'metadata/characters/mara-din.md'
+    const PROPOSED = '---\nname: Mara Din\n---\nSharp-eyed.\n'
+    let onDisk: string | null = null
+    stores.project.useProjectStore.setState({ novel: NOVEL })
+    responses['proposals:pending'] = {
+      docs: [{ path: CREATE, action: 'create', count: 1, sources: ['Codex update'], blocked: 0 }]
+    }
+    responses['proposals:resolveAll'] = { applied: 1, skipped: 0, conflicts: [] }
+    ;(window as unknown as { pandora: { invoke: unknown } }).pandora.invoke = vi.fn(
+      async (channel: string, payload: Record<string, unknown>) => {
+        invokes.push({ channel, payload })
+        if (channel === 'chapter:read') {
+          return onDisk === null
+            ? { ok: false, error: { message: 'ENOENT' } }
+            : { ok: true, data: { content: onDisk } }
+        }
+        // Accepting is what creates the file.
+        if (channel === 'proposals:resolveAll') onDisk = PROPOSED
+        if (channel === 'proposals:pending' && onDisk !== null) return { ok: true, data: { docs: [] } }
+        return { ok: true, data: responses[channel] ?? {} }
+      }
+    )
+    await stores.project.useProjectStore.getState().openChapter(CREATE, { allowMissing: true })
+    stores.project.useProjectStore.getState().setContent('my own note')
+
+    await stores.proposals.useProposalsStore.getState().resolveDoc(CREATE, 'accept')
+
+    // Skipping the reload for every missing document skipped it after an
+    // accept too, and the next save put the empty start-state back over the
+    // profile main had just written.
+    expect(stores.project.useProjectStore.getState().content).toBe(PROPOSED)
+    expect(stores.project.useProjectStore.getState().activeMissing).toBe(false)
+  })
+
+  it('lets the author empty a document the accept created', async () => {
+    const stores = await loadStores()
+    const CREATE = 'metadata/characters/mara-din.md'
+    const PROPOSED = '---\nname: Mara Din\n---\nSharp-eyed.\n'
+    stores.project.useProjectStore.setState({ novel: NOVEL })
+    responses['proposals:pending'] = {
+      docs: [{ path: CREATE, action: 'create', count: 1, sources: ['Codex update'], blocked: 0 }]
+    }
+    responses['proposals:forPath'] = {
+      current: '',
+      chain: [
+        { proposalId: 'p1', sourceTitle: 'Codex update', rationale: 'New', content: PROPOSED }
+      ],
+      blocked: []
+    }
+    responses['proposals:apply'] = { content: PROPOSED, remaining: 0 }
+    ;(window as unknown as { pandora: { invoke: unknown } }).pandora.invoke = vi.fn(
+      async (channel: string, payload: Record<string, unknown>) => {
+        invokes.push({ channel, payload })
+        if (channel === 'chapter:read') return { ok: false, error: { message: 'ENOENT' } }
+        return { ok: true, data: responses[channel] ?? {} }
+      }
+    )
+    await stores.project.useProjectStore.getState().openChapter(CREATE, { allowMissing: true })
+    stores.proposals.useProposalsStore.getState().init()
+    await stores.proposals.useProposalsStore.getState().refresh()
+    stores.proposals.useProposalsStore.getState().setShown(true)
+    stores.proposals.setSuggestionHandle(fakeHandle('Sharp-eyed.\n', {}))
+    stores.project.useProjectStore.getState().setContent(PROPOSED)
+    await stores.project.useProjectStore.getState().saveActiveChapter()
+
+    // The accept made the file, so "this document has no file yet" has to stop
+    // being true — it was suppressing the write, and select-all-delete then
+    // vanished with a clean "saved" indicator.
+    expect(stores.project.useProjectStore.getState().activeMissing).toBe(false)
+    stores.proposals.useProposalsStore.setState({ active: null })
+    invokes.length = 0
+    stores.project.useProjectStore.getState().setContent('')
+    await stores.project.useProjectStore.getState().snapshotActiveChapter()
+    const write = invokes.find((i) => i.channel === 'chapter:write')
+    expect(write?.payload.content).toBe('')
+  })
+
   it('leaves documents without suggestions on the ordinary write path', async () => {
     const { proposals, project } = await setUp()
     proposals.useProposalsStore.setState({ active: null })
