@@ -264,6 +264,16 @@ Two separate places, and the distinction matters:
   compose instead of the last silently reverting the first two. A proposal that will not
   re-anchor is set aside with its reason rather than poisoning the fold.
 
+  Suggestions are reviewed **inline**, in the ordinary editor — there is no queue and no
+  review mode. Two rules keep the save path honest: only proposals the author can actually
+  SEE are decided (the overlay must be attached, and the fold's set-aside proposals are not
+  on screen), and frontmatter defaults to the author's own, never the proposal's. The document the editor holds is the file plus every pending suggestion;
+  what gets saved is `savableDoc` (see below), so an undecided suggestion never reaches
+  disk. Every save path in `stores/project.ts` routes through the injected
+  `suggestionWriter` when the open document has suggestions, so autosave, blur, the
+  interval snapshot, ⌘S, switching chapters and closing the novel all record decisions
+  rather than writing the buffer over them.
+
   A decision is recorded by `applyProposalDecisions`: what the file should say now, and
   what is still proposed — for the proposals the author actually saw. Anything not named
   in `decisions` is left untouched, `baseContent` included, because the fold re-anchors it
@@ -280,6 +290,26 @@ Two separate places, and the distinction matters:
   nothing the author typed passes its belief about disk and is refused readably if disk
   disagrees; a save that carries their typing omits it, since losing that is the worse
   outcome — the one deliberate place the buffer wins.
+
+  The overlay is keyed on the CHAIN and never on the baseline. Attaching is destructive —
+  it replaces the whole document with the last link's content — and a successful apply
+  advances `current` while leaving `chain` alone, so re-attaching on a moved baseline
+  re-attaches a stale fold: a routine autosave puts the old fully-proposed text back and
+  renders the author's own sentence as a struck-out AI deletion. A baseline that moves
+  because the FILE moved is covered without it, because a re-fold turns the overlay off
+  and it comes back against the chain that was just folded.
+
+  A refused apply means the file moved under the author, and what happens next depends on
+  whether there was anything to write. When there was, the writer declines and the caller
+  makes an ordinary write, which re-anchors the overlay: the buffer holds typing, and
+  losing that is worse than overwriting the change main objected to. When there was not —
+  `write` is null exactly when the savable document already equals the anchor — the writer
+  handles it and reports so, because a fallback write there has nothing to offer but
+  damage: it puts the pre-change text back over the external edit. That path re-folds and
+  re-reads the buffer instead, which was a copy of the anchor main just called stale. Both
+  are conditional on the buffer still being what was sent: keystrokes typed during the
+  round trip win, ride the next save, and keep the buffer dirty so autosave still has a
+  reason to fire.
 
   Concurrency: every read-modify-write of `.pandora/state.json`, of the proposal JSON,
   and of a git index runs through `withLock` (`src/main/locks.ts`) — nothing in Electron
@@ -366,8 +396,32 @@ first structural link and everything after it waits: later links were folded on 
 so their content assumes it, and once the earlier ones are decided the fold re-anchors and
 the structural one comes back as the first.
 
-Such a proposal is still reachable and still decidable — it is set aside like one that will
-not re-anchor, and decided whole against a word diff. The permanent test axis is now the
+The gate is scoped to documents the tracked-changes editor actually opens. A YAML document
+is decided entry by entry and nothing is ever spliced, so `partitionChain` skips it — and
+must, because YAML list syntax parses as a markdown bullet list, which made adding a
+timeline event read as a change of shape.
+
+Such a proposal is still reachable and still decidable. The store partitions the fold on
+load (`partitionChain`), so it lands in `blocked` beside the ones that will not re-anchor —
+two reasons to be set aside, two ways out: the strip offers `N can't be combined · next ›`
+for one and `N changes the shape · review ›` for the other. The second opens
+`StructuralReview`, a panel in the editor column (not a modal — the author can leave it by
+opening another document) with the source, the rationale, a `WordDiff` of the whole body,
+the frontmatter delta when there is one, and Accept / Reject.
+
+Opening it re-folds the proposal **on its own** (`proposals:forPath` with `only`). The
+entry in `blocked` carries the cumulative fold, so accepting that would put the undecided
+inline links before it on disk under this proposal's name. Accepting saves the author's
+typing first — but only if there is any, since an unconditional snapshot on a clean buffer
+falls through the writer's nothing-to-record branch into a plain, unchecked write — and
+composes frontmatter the same way every other save does: the author's own unless they
+choose otherwise.
+
+**"Accept all" / "Reject all" on a document means everything pending on it**, whichever way
+each piece has to be decided: the inline chain through the editor, then each structural
+proposal the way the panel decides it. Reading it narrowly meant a document whose only
+proposal was structural decided an overlay that was never attached, returned success, and
+left an empty commit behind for every click. The permanent test axis is now the
 simple statement of the rule: for any proposal that changes block structure, the inline
 chunk count is zero and the saved document is the author's, whatever they type.
 

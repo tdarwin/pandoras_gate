@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { ChatMessage, ModelInfo } from '@shared/llm/types'
 import { onIpcEvent } from '../lib/events'
-import { useProjectStore } from './project'
+import { useProjectStore, onNovelChange } from './project'
 import { usePrefsStore, type ModelRole } from './prefs'
 
 export interface ContextReport {
@@ -79,6 +79,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   init: () => {
     if (initialized) return
     initialized = true
+    // A conversation belongs to the novel it was about. Workspace stays
+    // mounted across File → Open Recent, so without this, novel A's transcript
+    // gets sent as chat history for novel B.
+    onNovelChange(() => useChatStore.getState().clear())
 
     // Story context is budgeted from this cached model list, so the window has
     // to be corrected here as soon as the worker sizes it — otherwise the first
