@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import git from 'isomorphic-git'
 import { resolveInside } from '../paths'
 import { structuredPatch } from 'diff'
+import { withLock } from '../locks'
 
 /**
  * Git-under-the-hood: every novel dir is a repo the user never has to know
@@ -39,21 +40,8 @@ export interface FileDiff {
 // snapshot writes, quit flush). isomorphic-git's index writes are not safe to
 // interleave, so every mutating operation on a repo runs through one promise
 // chain per dir.
-const repoLocks = new Map<string, Promise<unknown>>()
-
 async function withRepoLock<T>(dir: string, fn: () => Promise<T>): Promise<T> {
-  const prev = repoLocks.get(dir) ?? Promise.resolve()
-  const next = prev.then(fn, fn)
-  repoLocks.set(
-    dir,
-    next.catch(() => undefined)
-  )
-  return next
-}
-
-/** Resolves once every in-flight commit has settled (quit flush). */
-export async function awaitIdle(): Promise<void> {
-  await Promise.allSettled([...repoLocks.values()])
+  return withLock(`repo:${dir}`, fn)
 }
 
 export async function ensureRepo(dir: string): Promise<void> {

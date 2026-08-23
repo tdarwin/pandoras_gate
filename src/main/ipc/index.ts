@@ -50,8 +50,10 @@ import { parseFrontmatter } from '../../shared/frontmatter'
 import {
   runMetadataUpdate,
   runOutlineGeneration,
-  proposalsForReview,
-  resolveProposalItem
+  pendingProposalDocs,
+  foldProposalsForPath,
+  applyProposalDecisions,
+  resolveAllProposals
 } from '../metadata/pipeline'
 import { startDraft, finishDraft } from '../draft/service'
 import { runEditingReview } from '../review/service'
@@ -186,7 +188,7 @@ export function registerIpcHandlers(): void {
   }))
 
   handle('chapter:write', async (req) => {
-    await project.writeChapter(req.novelDir, req.file, req.content)
+    await project.writeChapter(req.novelDir, req.file, req.content, req.expectedCurrent)
     let snapshotted = false
     if (req.snapshot) {
       // Explicit save (⌘S / blur / chapter switch): one history snapshot now.
@@ -558,11 +560,13 @@ export function registerIpcHandlers(): void {
     })
   })
 
-  handle('proposals:review', async (req) => ({
-    proposals: await proposalsForReview(req.novelDir)
-  }))
+  handle('proposals:pending', async (req) => ({ docs: await pendingProposalDocs(req.novelDir) }))
 
-  handle('proposals:resolve', (req) => resolveProposalItem(req))
+  handle('proposals:forPath', (req) => foldProposalsForPath(req.novelDir, req.path, req.only))
+
+  handle('proposals:apply', (req) => applyProposalDecisions(req))
+
+  handle('proposals:resolveAll', (req) => resolveAllProposals(req))
 
   handle('publish:copy', async (req) => {
     // Sweep any pending autosave so the clipboard matches the editor.

@@ -5,25 +5,17 @@ import { useProjectStore } from './project'
 import { useChatStore } from './chat'
 import { useDraftStore } from './draft'
 
-export interface ReviewItem {
+/** A document with suggestions waiting. Bodies are fetched per document, on demand. */
+export interface PendingDoc {
   path: string
   action: 'create' | 'update'
-  /** Proposal content rebased onto the current file (when it still applies). */
-  newContent: string
-  rationale: string
-  currentContent: string
-  /** sha256 of currentContent — passed back when accepting edited content. */
-  currentHash: string
-  /** The change no longer lines up with the current file; Accept is disabled. */
-  conflict: boolean
-}
-
-export interface ReviewProposal {
-  id: string
-  chapterFile: string
-  chapterTitle: string
-  createdAt: number
-  items: ReviewItem[]
+  count: number
+  /** Proposal titles, for tooltips and aria-labels. */
+  sources: string[]
+  /** How many of `count` could not be folded in with the others. */
+  blocked: number
+  /** Display name for a document that does not exist yet. */
+  label?: string
 }
 
 /**
@@ -32,13 +24,12 @@ export interface ReviewProposal {
  * (proposed vs current) alongside.
  */
 export interface InlineReview {
-  proposalId: string
   path: string
+  /** The proposals this review folded — the only ones Apply decides. */
+  proposalIds: string[]
   /** Current on-disk file content (raw, incl. frontmatter). */
   originalRaw: string
-  /** sha256 of originalRaw, echoed to main so a moved file is refused. */
-  currentHash: string
-  /** Proposed file content (raw, incl. frontmatter). */
+  /** Proposed file content: every pending proposal for this path, folded. */
   proposedRaw: string
   /** Live body markdown — starts as the proposal's body, tracks edits/rejects. */
   bodyBuffer: string
@@ -48,7 +39,9 @@ export interface InlineReview {
 }
 
 interface ProposalsStore {
-  proposals: ReviewProposal[]
+  /** Every document with something pending, path-ascending. */
+  pendingDocs: PendingDoc[]
+  pendingTotal: number
   /** True while any pipeline run is in flight (manual or chat-deferred). */
   running: boolean
   /** A manual run (Update Codex / Outline / Review buttons) is awaiting its invoke. */
@@ -62,8 +55,7 @@ interface ProposalsStore {
   review: InlineReview | null
 
   init: () => void
-  pendingCount: () => number
-  enterReview: (proposalId: string, path: string) => Promise<void>
+  enterReview: (path: string) => Promise<void>
   updateReviewBody: (body: string) => void
   setReviewFmChoice: (choice: 'proposed' | 'current') => void
   applyReview: () => Promise<void>
@@ -78,14 +70,10 @@ interface ProposalsStore {
     scope: 'chapter' | 'novel',
     guidance?: string
   ) => Promise<void>
-  /** Resolves one item; false when main refused (conflict, stale review). */
-  resolve: (
-    proposalId: string,
-    path: string,
-    resolution: 'accept' | 'reject',
-    editedContent?: string,
-    expectedCurrentHash?: string
-  ) => Promise<boolean>
+  /** Accepts or rejects everything pending for one document. */
+  resolveDoc: (path: string, resolution: 'accept' | 'reject') => Promise<boolean>
+  /** …and for the whole novel. */
+  resolveNovel: (resolution: 'accept' | 'reject') => Promise<{ applied: number; skipped: number }>
 }
 
 /** Accepting into the chapter an AI draft is streaming into would race the
@@ -98,7 +86,8 @@ function draftBlocks(path: string): boolean {
 let subscribed = false
 
 export const useProposalsStore = create<ProposalsStore>((set, get) => ({
-  proposals: [],
+  pendingDocs: [],
+  pendingTotal: 0,
   running: false,
   manualRunning: false,
   agentRuns: 0,
@@ -141,29 +130,40 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     })
   },
 
-  enterReview: async (proposalId, path) => {
+  enterReview: async (path) => {
     if (draftBlocks(path)) {
       set({ error: 'The AI is drafting into this chapter — stop the draft first.' })
       return
     }
-    // Flush the buffer and re-read so the review diffs against what is
-    // actually on disk, not a stale refresh.
+    const novel = useProjectStore.getState().novel
+    if (!novel) return
+    // Flush the buffer first so the fold happens against what is actually on
+    // disk, not a stale read.
     await useProjectStore.getState().saveActiveChapter()
-    await get().refresh()
-    const proposal = get().proposals.find((p) => p.id === proposalId)
-    const item = proposal?.items.find((i) => i.path === path)
-    if (!proposal || !item) return
+    const folded = await window.pandora.invoke('proposals:forPath', {
+      novelDir: novel.dir,
+      path
+    })
+    if (!folded.ok) {
+      set({ error: folded.error.message })
+      return
+    }
+    const last = folded.data.chain[folded.data.chain.length - 1]
+    if (!last) {
+      set({ error: 'These suggestions no longer apply to this document.' })
+      await get().refresh()
+      return
+    }
     set({
       review: {
-        proposalId,
         path,
-        originalRaw: item.currentContent,
-        currentHash: item.currentHash,
-        proposedRaw: item.newContent,
-        bodyBuffer: parseFrontmatter(item.newContent).body,
+        proposalIds: folded.data.chain.map((l) => l.proposalId),
+        originalRaw: folded.data.current,
+        proposedRaw: last.content,
+        bodyBuffer: parseFrontmatter(last.content).body,
         fmChoice: 'proposed',
-        rationale: item.rationale,
-        sourceTitle: proposal.chapterTitle
+        rationale: folded.data.chain.map((l) => l.rationale).join(' · '),
+        sourceTitle: [...new Set(folded.data.chain.map((l) => l.sourceTitle))].join(', ')
       }
     })
   },
@@ -176,53 +176,59 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
 
   applyReview: async () => {
     const { review } = get()
-    if (!review) return
-    // The body buffer already reflects per-chunk rejections and edits. The
-    // chosen side's frontmatter comes across whole — including an unreadable
-    // block, which must survive an accept the same way it survives a rename:
-    // nothing the app writes may reinterpret YAML it could not read.
-    const chosen = parseFrontmatter(
-      review.fmChoice === 'current' ? review.originalRaw : review.proposedRaw
-    )
-    const content = serializeFrontmatter({
-      data: chosen.data,
-      body: review.bodyBuffer,
-      rawFrontmatter: chosen.rawFrontmatter
+    const novel = useProjectStore.getState().novel
+    if (!review || !novel) return
+    if (draftBlocks(review.path)) {
+      set({ error: 'The AI is drafting into this chapter — stop the draft first.' })
+      return
+    }
+    // The body buffer already reflects per-chunk rejections and edits.
+    const source = review.fmChoice === 'current' ? review.originalRaw : review.proposedRaw
+    const { data, rawFrontmatter } = parseFrontmatter(source)
+    const content = serializeFrontmatter({ data, body: review.bodyBuffer, rawFrontmatter })
+    const result = await window.pandora.invoke('proposals:apply', {
+      novelDir: novel.dir,
+      path: review.path,
+      expectedCurrent: review.originalRaw,
+      write: content,
+      // Apply decides exactly the proposals this review folded — anything the
+      // fold set aside is still waiting for a look and must survive.
+      decisions: review.proposalIds.map((proposalId) => ({ proposalId, newContent: content }))
     })
-    const ok = await get().resolve(
-      review.proposalId,
-      review.path,
-      'accept',
-      content,
-      review.currentHash
-    )
-    if (!ok) return
+    if (!result.ok) {
+      set({ error: result.error.message })
+      await get().refresh()
+      return
+    }
     set({ review: null })
     const project = useProjectStore.getState()
-    if (/^(chapters|metadata|outlines)\//.test(review.path)) {
+    if (result.data.content !== null && review.path === project.activeFile) {
+      project.setSavedContent(result.data.content)
+    } else if (/^(chapters|metadata|outlines)\//.test(review.path)) {
       await project.openChapter(review.path)
     }
+    await get().refresh()
   },
 
   rejectReview: async () => {
     const { review } = get()
     if (!review) return
-    await get().resolve(review.proposalId, review.path, 'reject')
+    await get().resolveDoc(review.path, 'reject')
     set({ review: null })
   },
 
   exitReview: () => set({ review: null }),
 
-  pendingCount: () => get().proposals.reduce((n, p) => n + p.items.length, 0),
-
   refresh: async () => {
     const novel = useProjectStore.getState().novel
     if (!novel) {
-      set({ proposals: [] })
+      set({ pendingDocs: [], pendingTotal: 0 })
       return
     }
-    const result = await window.pandora.invoke('proposals:review', { novelDir: novel.dir })
-    if (result.ok) set({ proposals: result.data.proposals })
+    const result = await window.pandora.invoke('proposals:pending', { novelDir: novel.dir })
+    if (!result.ok) return
+    const docs = result.data.docs
+    set({ pendingDocs: docs, pendingTotal: docs.reduce((n, d) => n + d.count, 0) })
   },
 
   runForActiveChapter: async (opts) => {
@@ -247,6 +253,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       modelId: model.id
     })
     if (result.ok) {
+      const dropped = result.data.dropped ?? []
       set((s) => ({
         manualRunning: false,
         running: s.agentRuns > 0,
@@ -255,8 +262,19 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
           result.data.status === 'ran'
             ? `${result.data.itemCount} suggestion${result.data.itemCount === 1 ? '' : 's'}`
             : result.data.status === 'no-changes'
-              ? 'Codex already up to date'
-              : null
+              ? // A run whose every suggestion was refused is NOT "up to date" —
+                // saying so buries the chapter and gives the author nothing to act on.
+                dropped.length > 0
+                ? `${dropped.length} suggestion${dropped.length === 1 ? '' : 's'} couldn't be used`
+                : 'Codex already up to date'
+              : null,
+        ...(dropped.length > 0 && !opts?.silent
+          ? {
+              error: `The model suggested ${dropped.length} change${
+                dropped.length === 1 ? '' : 's'
+              } this app can't apply — ${dropped[0]!.path}: ${dropped[0]!.reason}. Try again, or use a stronger model for Codex upkeep.`
+            }
+          : {})
       }))
       await get().refresh()
     } else {
@@ -345,7 +363,7 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
     }
   },
 
-  resolve: async (proposalId, path, resolution, editedContent, expectedCurrentHash) => {
+  resolveDoc: async (path, resolution) => {
     const project = useProjectStore.getState()
     const novel = project.novel
     if (!novel) return false
@@ -353,27 +371,53 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       set({ error: 'The AI is drafting into this chapter — stop the draft first.' })
       return false
     }
-    // Unsaved typing must reach disk before main rebases against the file.
+    // Unsaved typing must reach disk before main folds against the file.
     if (resolution === 'accept') await project.saveActiveChapter()
-    const result = await window.pandora.invoke('proposals:resolve', {
+    const result = await window.pandora.invoke('proposals:resolveAll', {
       novelDir: novel.dir,
-      proposalId,
-      path,
-      resolution,
-      ...(editedContent !== undefined ? { editedContent } : {}),
-      ...(expectedCurrentHash !== undefined ? { expectedCurrentHash } : {})
+      paths: [path],
+      resolution
     })
-    if (result.ok) {
-      // Accepting an edit to the open document must refresh the editor buffer.
-      if (resolution === 'accept' && path === project.activeFile) {
-        const read = await window.pandora.invoke('chapter:read', { novelDir: novel.dir, file: path })
-        if (read.ok) project.setSavedContent(read.data.content)
-      }
-      await get().refresh()
-      return true
-    }
-    set({ error: result.error.message })
     await get().refresh()
-    return false
+    if (!result.ok) {
+      set({ error: result.error.message })
+      return false
+    }
+    const { skipped, conflicts } = result.data
+    if (skipped > 0) {
+      set({
+        error: `${skipped} suggestion${skipped === 1 ? '' : 's'} needs a look first — ${
+          conflicts[0]?.reason ?? 'it no longer lines up with the document'
+        }.`
+      })
+    }
+    // Accepting into the open document must refresh the editor buffer.
+    if (resolution === 'accept' && path === project.activeFile) {
+      await useProjectStore.getState().reloadActiveChapter()
+    }
+    return result.data.applied > 0
+  },
+
+  resolveNovel: async (resolution) => {
+    const project = useProjectStore.getState()
+    const novel = project.novel
+    if (!novel) return { applied: 0, skipped: 0 }
+    // The open chapter's buffer may hold typing main has not seen: without
+    // this the fold runs against stale disk content, and the 5 s autosave then
+    // writes the buffer back over whatever was just accepted.
+    await project.saveActiveChapter()
+    const result = await window.pandora.invoke('proposals:resolveAll', {
+      novelDir: novel.dir,
+      resolution
+    })
+    await get().refresh()
+    if (!result.ok) {
+      set({ error: result.error.message })
+      return { applied: 0, skipped: 0 }
+    }
+    // …and the editor keeps the old text unless it is re-read, so the next
+    // keystroke would revert the accepted suggestion.
+    if (resolution === 'accept') await useProjectStore.getState().reloadActiveChapter()
+    return { applied: result.data.applied, skipped: result.data.skipped }
   }
 }))

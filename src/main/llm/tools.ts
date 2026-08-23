@@ -330,12 +330,19 @@ async function executeToolInner(ctx: ToolContext, name: string, argsJson: string
                 onStatus,
                 ...(ctx.conversationId ? { conversationId: ctx.conversationId } : {})
               })
-              return result.status === 'ran'
-                ? `${result.itemCount} suggestion${result.itemCount === 1 ? '' : 's'}`
-                : 'Codex already up to date'
+              if (result.status === 'ran') {
+                return `${result.itemCount} suggestion${result.itemCount === 1 ? '' : 's'}`
+              }
+              // A run whose every suggestion was refused is not "up to date" —
+              // saying so leaves the author with nothing to act on.
+              const dropped = result.dropped ?? []
+              if (dropped.length > 0) {
+                return `${dropped.length} suggestion${dropped.length === 1 ? '' : 's'} couldn't be used — ${dropped[0]!.path}: ${dropped[0]!.reason}`
+              }
+              return 'Codex already up to date'
             }
           })
-          return 'Queued: the Codex analysis will run as soon as this reply finishes; its suggestions will appear in the review queue (the badge in the toolbar). Keep your reply to one short sentence.'
+          return 'Queued: the Codex analysis will run as soon as this reply finishes; its suggestions will appear in the documents they touch, marked in the sidebar. Keep your reply to one short sentence.'
         }
         case 'list_chapters': {
           const manifest = await readNovelManifest(ctx.novelDir)

@@ -54,9 +54,7 @@ export default function CodexBrowser(): React.JSX.Element {
   const generateOutline = useProposalsStore((s) => s.generateOutline)
   const proposalsRunning = useProposalsStore((s) => s.running)
 
-  const pendingTotal = useProposalsStore((s) =>
-    s.proposals.reduce((n, p) => n + p.items.length, 0)
-  )
+  const pendingTotal = useProposalsStore((s) => s.pendingTotal)
 
   const refresh = useCallback(async (): Promise<void> => {
     const result = await window.pandora.invoke('metadata:list', { novelDir: novel.dir })

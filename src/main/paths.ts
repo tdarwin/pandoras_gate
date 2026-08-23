@@ -1,5 +1,7 @@
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { existsSync, realpathSync } from 'node:fs'
+import { mkdir, open, rename, rm } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
 
 /** Symlink-resolved form when the path exists; the path itself otherwise. */
 export function realpathOrSelf(p: string): string {
@@ -60,4 +62,35 @@ export function resolveInside(root: string, rel: string): string {
     throw new Error(`Path "${rel}" points outside its allowed folder`)
   }
   return target
+}
+
+/**
+ * Writes JSON through a temp file and a rename, so a crash or a full disk
+ * mid-write leaves the previous version intact rather than a truncated file.
+ * The app's own state files (`.pandora/state.json`, proposal JSON) are read
+ * back with a parse that silently skips what it cannot read, so a torn write
+ * is silent data loss — pending suggestions or a chapter's processed hash
+ * simply vanishing.
+ */
+export async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true })
+  // Same directory: rename is only atomic within a filesystem. The random
+  // suffix is not decoration — two writers of one path in the same millisecond
+  // would otherwise share a temp file.
+  const tmp = `${path}.${process.pid}.${Date.now().toString(36)}.${randomBytes(4).toString('hex')}.tmp`
+  try {
+    const fh = await open(tmp, 'w')
+    try {
+      await fh.writeFile(JSON.stringify(value, null, 2), 'utf8')
+      // Without this the rename can land ahead of the data on a power loss,
+      // leaving an empty file — the torn write this is here to prevent.
+      await fh.sync()
+    } finally {
+      await fh.close()
+    }
+    await rename(tmp, path)
+  } catch (err) {
+    await rm(tmp, { force: true })
+    throw err
+  }
 }

@@ -92,7 +92,7 @@ export default function Workspace(): React.JSX.Element {
   const rejectReview = useProposalsStore((s) => s.rejectReview)
   const exitReview = useProposalsStore((s) => s.exitReview)
   const [editorHandle, setEditorHandle] = useState<EditorHandle | null>(null)
-  const pendingCount = useProposalsStore((s) => s.proposals.reduce((n, p) => n + p.items.length, 0))
+  const pendingCount = useProposalsStore((s) => s.pendingTotal)
   const runProposals = useProposalsStore((s) => s.runForActiveChapter)
   const generateOutline = useProposalsStore((s) => s.generateOutline)
   const refreshProposals = useProposalsStore((s) => s.refresh)
@@ -322,7 +322,7 @@ export default function Workspace(): React.JSX.Element {
           )}
           <div className="min-h-0 flex-1 overflow-hidden">
             <MarkdownEditor
-              docId={`review:${review.proposalId}:${review.path}`}
+              docId={`review:${review.path}`}
               value={review.bodyBuffer}
               onChange={updateReviewBody}
               reviewOriginal={original.body}

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { WebContents } from 'electron'
 import { createNovel, createChapter } from '../project/service'
-import { listProposals, resolveProposalItem } from '../metadata/pipeline'
+import { listProposals, resolveAllProposals } from '../metadata/pipeline'
 import { history, fileAtCommit } from '../git/service'
 import { MockProvider } from './mock'
 import { chatToolDefinitions, executeTool, type ToolContext } from './tools'
@@ -381,16 +381,10 @@ describe('find_in_chapter / edit_chapter_section', () => {
         replacement: 'Thunder rolled as Kael spoke his first words.'
       })
     )
-    const proposals = await listProposals(novelDir)
-    expect(proposals).toHaveLength(2)
-    for (const p of proposals) {
-      await resolveProposalItem({
-        novelDir,
-        proposalId: p.id,
-        path: CHAPTER,
-        resolution: 'accept'
-      })
-    }
+    expect(await listProposals(novelDir)).toHaveLength(2)
+    // Both fold onto the same base, so accepting the pair keeps both edits —
+    // the failure mode is the second overwriting the first.
+    expect((await resolveAllProposals({ novelDir, paths: [CHAPTER], resolution: 'accept' })).applied).toBe(2)
     const finalText = await readFile(join(novelDir, CHAPTER), 'utf8')
     expect(finalText).toContain('hood drawn low against the storm')
     expect(finalText).toContain('Thunder rolled as Kael spoke')
@@ -410,21 +404,15 @@ describe('find_in_chapter / edit_chapter_section', () => {
     const typed = `---\ntitle: The Iron Gate\nstatus: draft\n---\n${BODY}\nKael added one more line.\n`
     await writeFile(join(novelDir, CHAPTER), typed)
 
-    const proposals = await listProposals(novelDir)
-    await resolveProposalItem({
-      novelDir,
-      proposalId: proposals[0]!.id,
-      path: CHAPTER,
-      resolution: 'accept'
-    })
+    await resolveAllProposals({ novelDir, paths: [CHAPTER], resolution: 'accept' })
     // The accepted file keeps the typed line AND applies the edit…
     const finalText = await readFile(join(novelDir, CHAPTER), 'utf8')
     expect(finalText).toContain('Kael added one more line.')
     expect(finalText).toContain('Thunder rolled')
     // …and the pre-accept version is recoverable from history.
     const log = await history(novelDir, CHAPTER)
-    expect(log.some((c) => c.message.includes('before accepting suggestion'))).toBe(true)
-    const preAccept = log.find((c) => c.message.includes('before accepting suggestion'))!
+    expect(log.some((c) => c.message.includes('before accepting suggestions'))).toBe(true)
+    const preAccept = log.find((c) => c.message.includes('before accepting suggestions'))!
     expect(await fileAtCommit(novelDir, preAccept.oid, CHAPTER)).toBe(typed)
   })
 

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createNovel, createChapter, writeChapter, listMetadata } from '../project/service'
 import { MockProvider } from '../llm/mock'
-import { listProposals, resolveProposalItem } from '../metadata/pipeline'
+import { listProposals, resolveAllProposals } from '../metadata/pipeline'
 import { runEditingReview, type ReviewRequest } from './service'
 
 let dir: string
@@ -167,12 +167,7 @@ describe('report reviews', () => {
     expect(prompt).toContain('Has green eyes.')
 
     // Accepting the proposal writes the report and it becomes browsable.
-    await resolveProposalItem({
-      novelDir,
-      proposalId: pending[0]!.id,
-      path: item.path,
-      resolution: 'accept'
-    })
+    await resolveAllProposals({ novelDir, paths: [item.path], resolution: 'accept' })
     const listing = await listMetadata(novelDir)
     expect(listing.reviews).toHaveLength(1)
     expect(listing.reviews[0]!.title).toContain('Fact check — The Iron Gate')
