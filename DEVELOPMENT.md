@@ -273,6 +273,14 @@ Two separate places, and the distinction matters:
   looking at and a crash mid-review leaves nothing to reconcile. `baseContent` advances
   as hunks are accepted; the item resolves when nothing is left to suggest.
 
+  Staleness is checked in main, not trusted to the renderer. `proposals:apply` has
+  always compared `expectedCurrent` against disk; `chapter:write` now takes the same
+  optional field, because four review rounds each found one more renderer path where a
+  plain write put a stale buffer over a file edited outside the app. A save that carries
+  nothing the author typed passes its belief about disk and is refused readably if disk
+  disagrees; a save that carries their typing omits it, since losing that is the worse
+  outcome — the one deliberate place the buffer wins.
+
   Concurrency: every read-modify-write of `.pandora/state.json`, of the proposal JSON,
   and of a git index runs through `withLock` (`src/main/locks.ts`) — nothing in Electron
   serializes IPC handlers, and a pipeline run holds state across a minutes-long model

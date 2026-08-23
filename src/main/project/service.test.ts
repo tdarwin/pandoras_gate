@@ -123,6 +123,27 @@ describe('path containment', () => {
     expect(await readFile(join(dir, 'outside.md'), 'utf8')).toBe('secret')
   })
 
+  it('refuses a write whose expectation of the file is stale', async () => {
+    // A renderer's belief about disk goes stale the moment the file is edited
+    // elsewhere. Four review rounds each found one more path where a plain
+    // write put that stale buffer over the newer file; the check lives in main
+    // now, so no renderer path can walk around it.
+    const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
+    const file = 'chapters/001-old-title.md'
+    await writeChapter(novelDir, file, 'Original.\n')
+    const before = await readChapter(novelDir, file)
+    await writeChapter(novelDir, file, 'Edited outside the app.\n')
+    await expect(writeChapter(novelDir, file, 'stale buffer', before)).rejects.toThrow(
+      /changed while you were reviewing/
+    )
+    expect(await readChapter(novelDir, file)).toBe('Edited outside the app.\n')
+    // The expectation matching disk — or a file that does not exist yet,
+    // expected empty — lands normally.
+    await writeChapter(novelDir, file, 'next', 'Edited outside the app.\n')
+    await writeChapter(novelDir, 'metadata/characters/new.md', 'born', '')
+    expect(await readChapter(novelDir, 'metadata/characters/new.md')).toBe('born')
+  })
+
   it('a hand-edited manifest with a traversal chapter path degrades with a readable message', async () => {
     const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
     const manifestPath = join(novelDir, 'novel.yaml')

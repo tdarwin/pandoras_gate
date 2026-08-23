@@ -188,7 +188,7 @@ export function registerIpcHandlers(): void {
   }))
 
   handle('chapter:write', async (req) => {
-    await project.writeChapter(req.novelDir, req.file, req.content)
+    await project.writeChapter(req.novelDir, req.file, req.content, req.expectedCurrent)
     let snapshotted = false
     if (req.snapshot) {
       // Explicit save (⌘S / blur / chapter switch): one history snapshot now.

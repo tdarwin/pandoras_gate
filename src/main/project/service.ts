@@ -236,8 +236,30 @@ export async function readChapter(novelDir: string, file: string): Promise<strin
   return readFile(resolveInside(novelDir, file), 'utf8')
 }
 
-export async function writeChapter(novelDir: string, file: string, content: string): Promise<void> {
-  await writeFile(resolveInside(novelDir, file), content, 'utf8')
+export const STALE_FILE_MESSAGE =
+  'This file changed while you were reviewing — reopen it to see the latest text.'
+
+/**
+ * `expectedCurrent` is what the caller believes is on disk. A renderer holds
+ * that belief for as long as a document is open, and it goes stale the moment
+ * the file is edited elsewhere — so a write that carries nothing the author
+ * typed checks first, rather than putting an old buffer over a newer file.
+ */
+export async function writeChapter(
+  novelDir: string,
+  file: string,
+  content: string,
+  expectedCurrent?: string
+): Promise<void> {
+  const full = resolveInside(novelDir, file)
+  if (expectedCurrent !== undefined) {
+    const onDisk = await readFile(full, 'utf8').catch((err: NodeJS.ErrnoException) => {
+      if (err.code === 'ENOENT') return ''
+      throw err
+    })
+    if (onDisk !== expectedCurrent) throw new Error(STALE_FILE_MESSAGE)
+  }
+  await writeFile(full, content, 'utf8')
 }
 
 /**

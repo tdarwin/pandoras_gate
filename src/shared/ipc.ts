@@ -159,7 +159,15 @@ export const ipcContract = {
        * When true, a history snapshot (git commit) is taken immediately.
        * Plain writes just persist to disk for crash safety — no history entry.
        */
-      snapshot: z.boolean().optional()
+      snapshot: z.boolean().optional(),
+      /**
+       * What the renderer believes the file says now. When given, main refuses
+       * the write if disk disagrees — a readable "reopen it" rather than a
+       * stale buffer quietly put over an edit made outside the app. Omitted by
+       * saves that carry the author's own typing, where losing that is the
+       * worse outcome.
+       */
+      expectedCurrent: z.string().optional()
     }),
     response: z.object({ saved: z.literal(true), snapshotted: z.boolean() })
   },
