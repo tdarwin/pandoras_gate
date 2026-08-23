@@ -12,6 +12,61 @@ Write for a novelist, not for a reviewer of the diff.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-08-23
+
+### Changed
+
+- **AI suggestions now live in your document.** The proposals window is gone. Open a
+  chapter or Codex entry that has suggestions waiting and they are simply there, as
+  tracked changes in the ordinary editor, with ✓ / ✕ on each — and you keep writing while
+  you decide. Nothing you have not accepted ever reaches disk: autosave, blur, ⌘S, and
+  closing the novel all save *your* document, with undecided suggestions set aside and
+  rejected ones remembered. A thin strip above the text says what is waiting, with
+  **Accept all** / **Reject all** and the reason for each suggestion a click away.
+- **Suggestions are decided at the right grain.** A heavy copy-edit across a long chapter
+  used to collapse into one all-or-nothing change; it now comes through paragraph by
+  paragraph, each with its own ✓ / ✕. Frontmatter is decided field by field in the details
+  strip, and `timeline.yaml` is decided event by event, as cards. Typing next to a
+  suggestion no longer silently accepts it, accepting no longer rewrites your undo
+  history, and a document with hundreds of changes stays responsive.
+- **A suggestion that changes the shape of a document is decided whole.** Wrapping
+  paragraphs into a quote or list, adding or removing a paragraph, adding emphasis — these
+  are offered as a single whole-document diff rather than inline, because deciding them
+  piece by piece could not be made safe. The strip shows them as *N to decide as a whole ·
+  review ›*.
+
+### Added
+
+- **Find what needs your attention.** Every chapter and Codex row with a suggestion waiting
+  carries a count; collapsed sections and the sidebar tabs carry the total; the status bar
+  shows the novel's, as a button. A **Suggestions** menu adds *Next Suggestion* (⌘J),
+  which walks through the open document and on to the next one that has something
+  pending, plus *Accept / Reject All in This Document* and *Accept All in the Novel*. A
+  character the AI wants to create appears as a **NEW** row before the file exists, and
+  nothing is written until you accept it.
+- **Suggestions wait for you.** Ones that arrive while you are typing stay behind a
+  **Show** button instead of appearing under your cursor.
+
+### Fixed
+
+- **Saves never overwrite an edit made outside the app.** If a file changed on disk while
+  you had it open — in another editor, or by sync — the app now refuses to put its stale
+  copy back over it, tells you, and re-reads the file. Only a save that carries your own
+  unsaved typing still wins, on purpose.
+- **A broken frontmatter block no longer leaks into your prose.** A YAML header the app
+  cannot read is shown in the details strip with a notice and left exactly as written,
+  instead of rendering as text at the top of the chapter or being rewritten on save.
+  Renaming a chapter or changing its status refuses readably rather than writing a second
+  header above the first.
+- **Rejected suggestions stay rejected**, including when the document is open and when
+  you reject every change in it; a Codex run that produced nothing usable now says why
+  instead of "already up to date"; and a Codex run finishing while you were rejecting
+  something no longer loses the rejection.
+- **Switching novels starts clean.** Chat transcripts, a draft in progress, and pending
+  suggestions from one novel no longer carry into the next.
+- **Accepting a list-field suggestion** (tags, aliases) no longer reverts to the old
+  value on the next click away.
+
 ## [0.6.0] — 2026-08-20
 
 ### Added
@@ -227,7 +282,8 @@ First tagged release.
 - **One-paste publishing** to RoyalRoad and Patreon.
 - Chapter management, tunable interval snapshots, git sync, and preferences.
 
-[Unreleased]: https://github.com/tdarwin/pandoras_gate/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/tdarwin/pandoras_gate/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/tdarwin/pandoras_gate/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tdarwin/pandoras_gate/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/tdarwin/pandoras_gate/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/tdarwin/pandoras_gate/compare/v0.4.2...v0.5.0
