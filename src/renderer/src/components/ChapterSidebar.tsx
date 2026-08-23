@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useProjectStore } from '../stores/project'
 import { useDraftStore } from '../stores/draft'
 import { closeNovelSafely } from '../app/novelActions'
 import { useUiStore } from '../stores/ui'
+import { useProposalsStore } from '../stores/proposals'
 import CodexBrowser from './CodexBrowser'
+import SuggestionDot from './SuggestionDot'
 
 function ArchiveSection(): React.JSX.Element | null {
   const novel = useProjectStore((s) => s.novel)!
@@ -83,6 +85,22 @@ function ArchiveSection(): React.JSX.Element | null {
 
 export default function ChapterSidebar(): React.JSX.Element {
   const [tab, setTab] = useState<'chapters' | 'codex'>('chapters')
+  const pendingByPath = useProposalsStore((s) => s.pendingByPath)
+
+  // A suggestion in the tab you are NOT looking at still has to announce
+  // itself, or the sidebar stops answering "where do I need to look?".
+  const tabPending = useMemo(() => {
+    const out = {
+      chapters: { count: 0, sources: [] as string[] },
+      codex: { count: 0, sources: [] as string[] }
+    }
+    for (const mark of pendingByPath.values()) {
+      const bucket = mark.path.startsWith('chapters/') ? out.chapters : out.codex
+      bucket.count += mark.count
+      for (const src of mark.sources) if (!bucket.sources.includes(src)) bucket.sources.push(src)
+    }
+    return out
+  }, [pendingByPath])
   const novel = useProjectStore((s) => s.novel)!
   const activeFile = useProjectStore((s) => s.activeFile)
   const openChapter = useProjectStore((s) => s.openChapter)
@@ -187,6 +205,7 @@ export default function ChapterSidebar(): React.JSX.Element {
           }`}
         >
           Chapters
+          <SuggestionDot count={tabPending.chapters.count} sources={tabPending.chapters.sources} aggregate />
         </button>
         <button
           onClick={() => setTab('codex')}
@@ -195,6 +214,7 @@ export default function ChapterSidebar(): React.JSX.Element {
           }`}
         >
           Codex
+          <SuggestionDot count={tabPending.codex.count} sources={tabPending.codex.sources} aggregate />
         </button>
       </div>
 
@@ -277,6 +297,13 @@ export default function ChapterSidebar(): React.JSX.Element {
                       <span className="mr-1.5 text-xs text-ink-faint">{i + 1}.</span>
                       {ch.title}
                     </button>
+                    {pendingByPath.get(ch.file) && (
+                      <SuggestionDot
+                        count={pendingByPath.get(ch.file)!.count}
+                        sources={pendingByPath.get(ch.file)!.sources}
+                        blocked={pendingByPath.get(ch.file)!.blocked}
+                      />
+                    )}
                     {drafting && draftFile === ch.file ? (
                       <span
                         title="The AI is drafting this chapter"

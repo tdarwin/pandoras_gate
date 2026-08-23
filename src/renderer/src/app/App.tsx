@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useProjectStore } from '../stores/project'
+import { useProposalsStore } from '../stores/proposals'
 import { useDownloadsStore } from '../stores/downloads'
 import { usePrefsStore } from '../stores/prefs'
 import { useUiStore } from '../stores/ui'
@@ -33,6 +34,9 @@ async function openNovelFromMenu(dir?: string): Promise<void> {
 export default function App(): React.JSX.Element {
   const novel = useProjectStore((s) => s.novel)
   const activeFile = useProjectStore((s) => s.activeFile)
+  const pendingTotal = useProposalsStore((s) => s.pendingTotal)
+  const pendingPaths = useProposalsStore((s) => s.pendingByPath)
+  const documentHasSuggestions = activeFile !== null && pendingPaths.has(activeFile)
   const lastError = useProjectStore((s) => s.lastError)
   const setError = useProjectStore((s) => s.setError)
   const initDownloads = useDownloadsStore((s) => s.init)
@@ -84,6 +88,34 @@ export default function App(): React.JSX.Element {
         case 'copy-for':
           if (platform) ui.signalCopyFor(platform)
           break
+        case 'suggest-next':
+          ui.requestNextSuggestion()
+          break
+        // Bulk decisions go through the STORE, not the editor: they have to
+        // work for YAML documents and for creates, where there is no editor
+        // to command.
+        case 'suggest-accept-doc':
+          if (project.activeFile) {
+            void useProposalsStore.getState().resolveDoc(project.activeFile, 'accept')
+          }
+          break
+        case 'suggest-reject-doc':
+          if (project.activeFile) {
+            void useProposalsStore.getState().resolveDoc(project.activeFile, 'reject')
+          }
+          break
+        case 'suggest-accept-novel': {
+          const total = useProposalsStore.getState().pendingTotal
+          if (
+            total > 0 &&
+            window.confirm(
+              `Accept all ${total} suggestion${total === 1 ? '' : 's'} in this novel?\n\nEach document is snapshotted first, so this can be undone from History.`
+            )
+          ) {
+            void useProposalsStore.getState().resolveNovel('accept')
+          }
+          break
+        }
       }
     })
   }, [])
@@ -106,9 +138,14 @@ export default function App(): React.JSX.Element {
     void window.pandora.invoke('menu:setContext', {
       novelOpen: novel !== null,
       documentOpen: novel !== null && activeFile !== null,
-      chapterOpen: novel !== null && (activeFile?.startsWith('chapters/') ?? false)
+      chapterOpen: novel !== null && (activeFile?.startsWith('chapters/') ?? false),
+      suggestionsPending: pendingTotal,
+      documentHasSuggestions
     })
-  }, [novel, activeFile])
+    // Deliberately not the Map: its identity changes on every refresh, and
+    // rebuilding the whole application menu for two unchanged scalars is work
+    // on the click path of every accept.
+  }, [novel, activeFile, pendingTotal, documentHasSuggestions])
 
   return (
     <div className="flex h-screen flex-col">

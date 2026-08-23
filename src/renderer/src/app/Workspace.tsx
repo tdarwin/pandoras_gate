@@ -17,6 +17,7 @@ import MarkdownEditor, { type EditorHandle, type ImageImporter } from '../editor
 import EditorToolbar from '../editor/EditorToolbar'
 import PlainEditor from '../editor/PlainEditor'
 import { parseFrontmatter, serializeFrontmatter } from '@shared/frontmatter'
+import { novelOrder, nextPendingPath, codexSection } from '../lib/codexPaths'
 
 const AUTO_METADATA_DELAY_MS = 15_000
 
@@ -89,6 +90,7 @@ export default function Workspace(): React.JSX.Element {
   const loadSuggestionsFor = useProposalsStore((s) => s.loadFor)
   const setSuggestionsShown = useProposalsStore((s) => s.setShown)
   const persistDecisions = useProposalsStore((s) => s.persistDecisions)
+  const reviewStructural = useProposalsStore((s) => s.reviewStructural)
   const runProposals = useProposalsStore((s) => s.runForActiveChapter)
   const generateOutline = useProposalsStore((s) => s.generateOutline)
   const refreshProposals = useProposalsStore((s) => s.refresh)
@@ -333,10 +335,67 @@ export default function Workspace(): React.JSX.Element {
   const shownKey = suggestionSpec ? suggestionsHere?.chain.map((l) => l.proposalId).join() : null
   useEffect(() => {
     if (!editorHandle) return
-    if (suggestionSpec) editorHandle.attachSuggestions(suggestionSpec)
-    else if (editorHandle.suggestionCount() > 0) editorHandle.detachSuggestions()
+    if (suggestionSpec) {
+      editorHandle.attachSuggestions(suggestionSpec)
+      if (jumpOnAttachRef.current) {
+        jumpOnAttachRef.current = false
+        editorHandle.goToNextSuggestion()
+      }
+    } else if (editorHandle.suggestionCount() > 0) {
+      editorHandle.detachSuggestions()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorHandle, shownKey, activeFile])
+
+  // "Next suggestion": through the open document first, then on to the next
+  // document that has one. The Codex order comes from the shared helper the
+  // browser also renders from, so the walk cannot disagree with the sidebar.
+  const nextSuggestionSignal = useUiStore((s) => s.nextSuggestionSignal)
+  const jumpOnAttachRef = useRef(false)
+  const pendingByPath = useProposalsStore((s) => s.pendingByPath)
+  useEffect(() => {
+    if (nextSuggestionSignal === 0) return
+    if (editorHandle?.goToNextSuggestion()) return
+    // Nothing inline left here, but something on this document still needs
+    // deciding: open the panel that decides it. Without this the walk landed
+    // on a document whose only proposal changes the shape, attached nothing,
+    // and ⌘J did nothing at all — with no message — for as long as it was open.
+    const structuralHere = suggestionsHere?.blocked.find((b) => b.structural)
+    if (structuralHere && !suggestionsHere?.review) {
+      void reviewStructural(structuralHere.proposalId)
+      return
+    }
+    void (async () => {
+      const listing = await window.pandora.invoke('metadata:list', { novelDir: novel.dir })
+      // Every pending path, not only the creates: `metadata:list` has no
+      // bucket for allowed paths outside the named sections, so an update to
+      // one of those is drawn under "Other" and has to be walkable too.
+      const order = novelOrder(
+        novel.manifest.chapters,
+        listing.ok ? listing.data : null,
+        // Codex paths only: the chapters come from the manifest, and passing
+        // them here too walked them twice when the listing failed.
+        [...pendingByPath.keys()].filter((p) => codexSection(p) !== null)
+      )
+      const next = nextPendingPath(order, new Set(pendingByPath.keys()), activeFile)
+      if (next && next !== activeFile) {
+        // Armed only once a jump is actually going to happen: left set, the
+        // next unrelated attach (a Codex run finishing while you read) would
+        // move the caret without being asked.
+        jumpOnAttachRef.current = true
+        await openChapter(next, { allowMissing: pendingByPath.get(next)?.action === 'create' })
+      } else if (next === activeFile) {
+        // The only document with anything pending is this one: start again
+        // from the top rather than leaving ⌘J with nothing to say.
+        if (!editorHandle?.goToFirstSuggestion()) jumpOnAttachRef.current = false
+      }
+      // Landing somewhere with nothing to attach leaves the flag armed, and
+      // the next unrelated attach then moves the caret unasked — which is
+      // exactly what arming it late was meant to prevent.
+      if (!next) jumpOnAttachRef.current = false
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextSuggestionSignal])
 
   // The store asks the editor what each proposal still proposes, at save time.
   useEffect(() => {
