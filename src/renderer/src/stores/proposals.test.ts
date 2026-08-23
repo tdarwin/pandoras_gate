@@ -569,6 +569,39 @@ describe('saving a document with suggestions', () => {
     expect(invokes.some((i) => i.channel === 'proposals:resolveAll')).toBe(true)
   })
 
+  it('“reject all” with the overlay off saves the author’s typing before main sweeps', async () => {
+    const { proposals, project } = await setUp()
+    proposals.useProposalsStore.getState().setShown(false)
+    // A DIRTY buffer this time: the author is mid-sentence, the strip offers
+    // "Show", and they click the button beside it instead. Main folds against
+    // disk, and the reload after the sweep replaced the buffer with what main
+    // wrote — the sentence was gone, and the click reported success.
+    const typed = '---\nname: Kael\n---\nAlpha.\n\nBeta. My own sentence.\n'
+    project.useProjectStore.getState().setContent(typed)
+    let disk = CURRENT
+    ;(window as unknown as { pandora: { invoke: unknown } }).pandora.invoke = vi.fn(
+      async (channel: string, payload: Record<string, unknown>) => {
+        invokes.push({ channel, payload })
+        if (channel === 'chapter:write') disk = payload.content as string
+        if (channel === 'proposals:resolveAll') {
+          return { ok: true, data: { applied: 1, skipped: 0, conflicts: [] } }
+        }
+        if (channel === 'chapter:read') return { ok: true, data: { content: disk } }
+        if (channel === 'proposals:forPath') return { ok: true, data: { current: disk, chain: [], blocked: [] } }
+        if (channel === 'proposals:pending') return { ok: true, data: { docs: [] } }
+        return { ok: true, data: responses[channel] ?? {} }
+      }
+    )
+    invokes.length = 0
+    await proposals.useProposalsStore.getState().resolveDoc(PATH, 'reject')
+
+    const write = invokes.findIndex((i) => i.channel === 'chapter:write')
+    const sweep = invokes.findIndex((i) => i.channel === 'proposals:resolveAll')
+    expect(write).toBeGreaterThanOrEqual(0)
+    expect(write).toBeLessThan(sweep)
+    expect(project.useProjectStore.getState().content).toContain('My own sentence.')
+  })
+
   it('a snapshot with nothing to record tells main what it expects on disk', async () => {
     const { proposals, project } = await setUp()
     proposals.setSuggestionHandle(null)

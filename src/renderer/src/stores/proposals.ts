@@ -559,6 +559,11 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
         return true
       }
     }
+    // The open document's buffer may hold typing main has not seen. Main folds
+    // against DISK, and the reload afterwards replaces the buffer with what it
+    // wrote — so without this, "Reject all" beside the strip's "Show" button
+    // silently discarded the author's unsaved sentence and reported success.
+    if (path === project.activeFile) await useProjectStore.getState().snapshotActiveChapter()
     const result = await window.pandora.invoke('proposals:resolveAll', {
       novelDir: novel.dir,
       paths: [path],
