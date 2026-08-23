@@ -336,11 +336,16 @@ rather than raw token spans: a wrap suggestion (paragraph → blockquote, paragr
 has endpoints at different depths, which `Node.replace` rejects outright — and the throw
 escaped through `onUpdate`, stopping autosave for the rest of the session.
 
-**Inline review is for edits WITHIN a block.** A proposal that changes the shape of the
-document — a wrap, an unwrap, a block added or removed, a styled-block attribute — is not
-shown inline at all. `sameBlockShape` (`editor/blockShape.ts`) is the gate, and everything
-that puts a document on the overlay goes through `inlineSpec` / `inlineDocContent`, so the
-editor's content and the plugin's chain can never disagree about which links are on screen.
+**Inline review is for edits WITHIN a block, and only when the save can prove it.**
+`splitInlineChain` (`editor/track-changes.ts`) is the gate, and its test is the property
+`savableDoc` actually needs: reverting a link's own chunks must reproduce the document
+before it. `sameBlockShape` (`editor/blockShape.ts`) is checked first because it is the
+stated rule and it is cheap, but the revert check is what holds — it also catches a change
+that renders nothing (the character encoder is mark-blind, so emphasis or a link yields no
+chunk), the same leak inside a mixed proposal, and a mis-paired block (two image-only
+paragraphs hash alike). Everything that puts a document on the overlay goes through
+`inlineSpec` / `inlineDocContent`, so the editor's content and the plugin's chain can never
+disagree about which links are on screen: **attached means every difference is a chunk.**
 
 This is the one design decision here that came from failing rather than reasoning. Five
 review rounds ran aground on the same product: block-alignment ambiguity multiplied by

@@ -176,22 +176,6 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
       set({ error: 'The AI is drafting into this chapter — stop the draft first.' })
       return
     }
-    // Nothing was reviewable. A proposal that changes the shape of the
-    // document never reaches the overlay (see `editor/blockShape.ts`), so the
-    // editor holds the ORIGINAL and Apply would write that back while marking
-    // every proposal decided — the AI's restructuring discarded and recorded
-    // as agreed. The destination for these is the whole-document panel in the
-    // PR above this one; here the job is simply not to lose them.
-    if (
-      body === parseFrontmatter(review.originalRaw).body &&
-      body !== parseFrontmatter(review.proposedRaw).body
-    ) {
-      set({
-        error:
-          'This suggestion changes the shape of the document, so it cannot be reviewed change by change yet. Leave it pending.'
-      })
-      return
-    }
     // The body buffer already reflects per-chunk rejections and edits.
     const source = review.fmChoice === 'current' ? review.originalRaw : review.proposedRaw
     const { data, rawFrontmatter } = parseFrontmatter(source)

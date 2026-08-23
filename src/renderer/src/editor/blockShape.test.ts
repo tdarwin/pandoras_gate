@@ -85,6 +85,26 @@ describe('splitInlineChain', () => {
     }
   })
 
+  it('routes out a mixed proposal whose unrendered half would otherwise leak', () => {
+    // One block's rewording produces a chunk; another block's italics do not.
+    // Asking only "does the link produce SOME chunk" let the italics through
+    // to disk on the strength of the rewording.
+    const split = splitInlineChain(schema, 'The gate opened.\n\nNobody spoke of it.\n', [
+      link('p1', 'The gate swung wide.\n\nNobody *spoke* of it.\n')
+    ])
+    expect(split.inline).toHaveLength(0)
+  })
+
+  it('routes out blocks the diff would pair wrongly', () => {
+    // Two paragraphs holding only an image have the same (empty) text, so the
+    // block diff paired the wrong ones and the revert spliced one image over
+    // the other — one.png deleted from the saved file, Reject All included.
+    const split = splitInlineChain(schema, '![](one.png)\n\n![](two.png)\n', [
+      link('p1', 'Look ![](one.png)\n\n![](two.png)\n')
+    ])
+    expect(split.inline).toHaveLength(0)
+  })
+
   it('keeps a rewording, which does produce chunks', () => {
     const split = splitInlineChain(schema, 'The gate opened.\n', [
       link('p1', 'The gate swung open.\n')

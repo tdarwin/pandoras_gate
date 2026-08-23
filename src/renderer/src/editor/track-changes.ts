@@ -582,15 +582,26 @@ declare module '@tiptap/core' {
  * and their content assumes it. Once the earlier ones are decided the fold
  * re-anchors and the structural one comes back as the first.
  *
- * Two ways a link fails. It changes the SHAPE of the document, which makes
- * splicing the original back over its range ambiguous (`blockShape.ts`). Or it
- * produces no chunks at all while still differing from what came before —
- * which sounds impossible and is not: the changeset's character encoder is
- * mark-blind, so a proposal that only adds emphasis, a link, inline code or a
- * font span is invisible to it. Left inline, that renders nothing, ✓/✕ nothing,
- * and autosave writes the AI's formatting the author never saw. Routing it out
- * restores the invariant the overlay depends on: attached means every
- * difference is a chunk.
+ * The test is the property `savableDoc` actually needs: reverting a link's own
+ * chunks must reproduce the document before it. That one check covers every
+ * way the overlay could otherwise lie —
+ *
+ * - a changed SHAPE, where splicing the original back is ambiguous
+ *   (`blockShape.ts` says why, and is still checked first because it is the
+ *   stated rule and it is cheap);
+ * - a change that renders NOTHING: the changeset's character encoder is
+ *   mark-blind, so emphasis, a link, inline code or a font span yields no
+ *   chunk at all, and left inline it would be written by the next autosave
+ *   with nothing ever shown to refuse;
+ * - the same leak inside a MIXED proposal, where one block's rewording
+ *   produced a chunk and another block's italics did not;
+ * - and a mis-paired block, where two paragraphs with the same text but
+ *   different content (two images) hash alike, the diff pairs the wrong
+ *   ones, and the revert splices one image over the other.
+ *
+ * Routing such a link out costs the author per-chunk review of that one
+ * proposal. Admitting it costs them prose. So: attached means every
+ * difference is a chunk, and the save can prove it.
  */
 export function splitInlineChain<T extends { content: string }>(
   schema: PMNode['type']['schema'],
@@ -600,18 +611,29 @@ export function splitInlineChain<T extends { content: string }>(
   let previous = markdownToDoc(schema, original)
   for (let i = 0; i < chain.length; i++) {
     const next = markdownToDoc(schema, chain[i]!.content)
-    const reviewable =
-      sameBlockShape(previous, next) &&
-      (previous.eq(next) ||
-        ChangeSet.create<string>(previous, undefined, attrsAwareEncoder).addSteps(
-          next,
-          blockStepMaps(previous, next),
-          'probe'
-        ).changes.length > 0)
-    if (!reviewable) return { inline: chain.slice(0, i), structural: chain.slice(i) }
+    if (!reviewableInline(previous, next)) {
+      return { inline: chain.slice(0, i), structural: chain.slice(i) }
+    }
     previous = next
   }
   return { inline: chain, structural: [] }
+}
+
+/** True when reverting every chunk of `next` against `previous` gives `previous` back. */
+function reviewableInline(previous: PMNode, next: PMNode): boolean {
+  if (previous.eq(next)) return true
+  if (!sameBlockShape(previous, next)) return false
+  const set = ChangeSet.create<string>(previous, undefined, attrsAwareEncoder).addSteps(
+    next,
+    blockStepMaps(previous, next),
+    'probe'
+  )
+  const chunks: Chunk[] = []
+  for (const change of simplifyChanges(set.changes, next)) {
+    const chunk = narrow(change)
+    if (chunk) chunks.push(chunk)
+  }
+  return revert(next, previous, chunks).eq(previous)
 }
 
 /**
