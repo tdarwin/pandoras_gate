@@ -105,6 +105,36 @@ describe('splitInlineChain', () => {
     expect(split.inline).toHaveLength(0)
   })
 
+  it('routes out a chain whose links are each fine but whose fold is not', () => {
+    // The overlay folds the whole chain into one ChangeSet. Two proposals that
+    // touch the same words can merge into a change whose revert gives neither
+    // document back — AI bold on disk with nothing to refuse, or the author's
+    // own italic destroyed by Reject All. Both reproductions from review.
+    const bold = splitInlineChain(schema, 'spoke quietly promise spoke\n', [
+      link('p1', 'ash promise spoke\n'),
+      link('p2', '**quietly** promise spoke\n')
+    ])
+    expect(bold.inline.length + bold.structural.length).toBe(2)
+    expect(bold.structural.length).toBeGreaterThan(0)
+
+    const italic = splitInlineChain(schema, '*fish*\n', [
+      link('p1', '*fish*  \nfish gate\n'),
+      link('p2', '*green*  \nfish gate\n')
+    ])
+    expect(italic.structural.length).toBeGreaterThan(0)
+  })
+
+  it('keeps a multi-link chain whose fold does revert', () => {
+    // Several section edits in one chat reply are the designed case, and they
+    // must keep their per-chunk review when nothing composes badly.
+    const split = splitInlineChain(schema, 'A one.\n\nB two.\n\nC three.\n', [
+      link('p1', 'A uno.\n\nB two.\n\nC three.\n'),
+      link('p2', 'A uno.\n\nB dos.\n\nC three.\n'),
+      link('p3', 'A uno.\n\nB dos.\n\nC tres.\n')
+    ])
+    expect(split.inline).toHaveLength(3)
+  })
+
   it('keeps a rewording, which does produce chunks', () => {
     const split = splitInlineChain(schema, 'The gate opened.\n', [
       link('p1', 'The gate swung open.\n')

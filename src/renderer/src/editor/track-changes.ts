@@ -608,15 +608,44 @@ export function splitInlineChain<T extends { content: string }>(
   original: string,
   chain: T[]
 ): { inline: T[]; structural: T[] } {
-  let previous = markdownToDoc(schema, original)
+  const base = markdownToDoc(schema, original)
+  const docs: PMNode[] = []
+  let previous = base
+  let inline = chain.length
   for (let i = 0; i < chain.length; i++) {
     const next = markdownToDoc(schema, chain[i]!.content)
     if (!reviewableInline(previous, next)) {
-      return { inline: chain.slice(0, i), structural: chain.slice(i) }
+      inline = i
+      break
     }
+    docs.push(next)
     previous = next
   }
-  return { inline: chain, structural: [] }
+  // Links that each revert cleanly against the one before can still compose
+  // into a FOLD that does not: the overlay folds the whole chain into one
+  // ChangeSet, and two proposals touching the same words — a rewording, then
+  // emphasis on the reworded word — can merge into a change whose revert
+  // gives neither document back. Nothing renders, nothing can be refused, and
+  // the save writes the AI's bold or destroys the author's own italic. So the
+  // property is checked on the fold too, and the inline prefix shrinks until
+  // it holds; whatever is cut goes to the whole-document path.
+  while (inline > 1 && !foldReverts(base, docs.slice(0, inline))) inline--
+  return { inline: chain.slice(0, inline), structural: chain.slice(inline) }
+}
+
+/** True when reverting every displayed chunk of the folded chain gives the file back. */
+function foldReverts(base: PMNode, docs: PMNode[]): boolean {
+  const set = foldChain(
+    base,
+    docs.map((doc, i) => ({ proposalId: `p${i}`, doc }))
+  )
+  const doc = docs[docs.length - 1]!
+  const chunks: Chunk[] = []
+  for (const change of simplifyChanges(set.changes, doc)) {
+    const chunk = narrow(change)
+    if (chunk) chunks.push(chunk)
+  }
+  return revert(doc, base, chunks).eq(base)
 }
 
 /** True when reverting every chunk of `next` against `previous` gives `previous` back. */
