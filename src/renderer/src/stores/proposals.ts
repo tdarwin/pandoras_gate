@@ -524,24 +524,40 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
      */
     const { active } = get()
     if (path === project.activeFile && active) {
-      let acted = false
-      if (active.shown && active.chain.length > 0 && activeHandle) {
+      // The inline chain, through the editor — which holds the author's
+      // typing and their per-chunk decisions — when it is actually showing.
+      if (active.shown && active.chain.length > 0 && activeHandle?.suggestionsAttached()) {
         if (resolution === 'accept') activeHandle.acceptAllSuggestions()
         else activeHandle.rejectAllSuggestions()
         await project.snapshotActiveChapter()
-        acted = true
+        await get().loadFor(path)
       }
-      // Each structural one is decided the way the panel decides it — folded
-      // on its own, so accepting one does not put the others on disk.
-      for (let guard = 0; guard < 32; guard++) {
-        const next = get().active?.blocked.find((b) => b.structural)
+      // Each structural one the way the panel decides it — folded on its own,
+      // so accepting one does not put the others on disk. Deciding one can
+      // turn the next into an inline one, so this runs until nothing is set
+      // aside rather than for a fixed count.
+      const decided = new Set<string>()
+      for (;;) {
+        // One attempt per proposal: a fold that keeps offering something just
+        // decided is main disagreeing with us, and that goes to main below.
+        const next = get().active?.blocked.find((b) => b.structural && !decided.has(b.proposalId))
         if (!next) break
+        decided.add(next.proposalId)
         await get().reviewStructural(next.proposalId)
         if (get().active?.review?.proposalId !== next.proposalId) break
         if (!(await get().decideStructural(next.proposalId, resolution))) break
-        acted = true
       }
-      if (acted) return true
+      // Done only when nothing is left. Anything else — a chain the editor
+      // could not speak for because the overlay is deferred, a link the
+      // structural decisions freed, a proposal main set aside — goes to main,
+      // which is idempotent over what is already decided and reports what it
+      // had to skip. Returning early here left suggestions pending behind a
+      // success, and the author clicking the same button twice.
+      const left = get().active
+      if (!left || left.chain.length + left.blocked.length === 0) {
+        await get().refresh()
+        return true
+      }
     }
     const result = await window.pandora.invoke('proposals:resolveAll', {
       novelDir: novel.dir,
@@ -777,19 +793,32 @@ async function writeDecisions(
   // every document with suggestions pending, and this would otherwise rewrite
   // the file, every proposal, and a commit for a document nobody touched.
   //
-  // Reported as HANDLED, not declined. Declining sends the caller to a plain
-  // `chapter:write` of the whole buffer, which main does not staleness-check —
-  // so a save with nothing to say would put a stale buffer over an edit made
-  // outside the app. An explicit ⌘S still gets its history entry, written
-  // byte-identically, because main has already proved the buffer matches disk.
+  // Reported as HANDLED, not declined: declining sends the caller to a plain
+  // write of the whole buffer. An explicit ⌘S still gets its history entry —
+  // written with `expectedCurrent`, so main checks disk rather than this
+  // store's belief about it, and a buffer that went stale behind an outside
+  // edit is refused readably instead of landing on top of it. Nothing of the
+  // author's is in that buffer, so refusing costs them nothing; re-reading
+  // shows them the file as it now is.
   if (write === active.current && decisions.length === 0) {
     if (snapshot) {
-      await window.pandora.invoke('chapter:write', {
+      const result = await window.pandora.invoke('chapter:write', {
         novelDir: novel.dir,
         file: active.path,
         content: write,
-        snapshot: true
+        snapshot: true,
+        expectedCurrent: active.current
       })
+      if (!result.ok) {
+        useProjectStore.getState().setError(result.error.message)
+        const stale = useProjectStore.getState()
+        if (stale.activeFile === active.path && stale.content === content) {
+          await stale.reloadActiveChapter()
+        }
+        if (useProposalsStore.getState().active?.path === active.path) {
+          await useProposalsStore.getState().loadFor(active.path)
+        }
+      }
     }
     return true
   }

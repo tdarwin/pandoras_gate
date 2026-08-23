@@ -184,7 +184,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   snapshotActiveChapter: async () => {
-    const { novel, activeFile, content } = get()
+    const { novel, activeFile, content, dirty } = get()
     if (!novel || !activeFile) return
     if (await suggestionWriter?.(activeFile, content, true)) {
       settle(set, get, content)
@@ -192,16 +192,28 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
     // Always write+snapshot: commits are no-ops when nothing changed, and
     // this also sweeps up earlier quiet writes into a history entry.
+    //
+    // A clean buffer IS this renderer's belief about disk, and it carries
+    // nothing of the author's — so main is told what is expected and refuses
+    // if the file moved, rather than putting an old buffer over an edit made
+    // outside the app. A dirty buffer holds their typing and omits it on
+    // purpose: losing that is the worse outcome.
     const result = await window.pandora.invoke('chapter:write', {
       novelDir: novel.dir,
       file: activeFile,
       content,
-      snapshot: true
+      snapshot: true,
+      ...(dirty ? {} : { expectedCurrent: content })
     })
     if (result.ok) {
       settle(set, get, content)
       currentSink?.(activeFile, content)
-    } else set({ lastError: result.error.message })
+    } else {
+      set({ lastError: result.error.message })
+      // Refused for being stale with nothing of theirs in the buffer: show
+      // them the file as it now is.
+      if (!dirty) await get().reloadActiveChapter()
+    }
   },
 
   createChapter: async (title) => {

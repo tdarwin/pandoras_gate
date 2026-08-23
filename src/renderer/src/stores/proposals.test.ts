@@ -494,9 +494,40 @@ describe('saving a document with suggestions', () => {
     expect(invokes.some((i) => i.channel === 'chapter:write')).toBe(false)
   })
 
+  /** main as it behaves: once a proposal is decided, the fold no longer offers it. */
+  function stubMainThatResolves(): void {
+    type Link = { proposalId: string }
+    const fold = responses['proposals:forPath'] as { chain: Link[]; current: string }
+    const decided = new Set<string>()
+    ;(window as unknown as { pandora: { invoke: unknown } }).pandora.invoke = vi.fn(
+      async (channel: string, payload: Record<string, unknown>) => {
+        invokes.push({ channel, payload })
+        if (channel === 'proposals:apply') {
+          for (const d of payload.decisions as Link[]) decided.add(d.proposalId)
+        }
+        if (channel === 'proposals:resolveAll') {
+          for (const l of fold.chain) decided.add(l.proposalId)
+          return { ok: true, data: { applied: 1, skipped: 0, conflicts: [] } }
+        }
+        if (channel === 'proposals:forPath') {
+          const chain = fold.chain.filter((l) => !decided.has(l.proposalId))
+          if (payload.only && !decided.has(payload.only as string)) {
+            return { ok: true, data: { current: fold.current, chain: fold.chain.filter((l) => l.proposalId === payload.only), blocked: [] } }
+          }
+          return { ok: true, data: { current: fold.current, chain, blocked: [] } }
+        }
+        if (channel === 'proposals:pending' && decided.size === fold.chain.length) {
+          return { ok: true, data: { docs: [] } }
+        }
+        return { ok: true, data: responses[channel] ?? {} }
+      }
+    )
+  }
+
   it('“accept all” decides a structural-only document instead of doing nothing', async () => {
     const { proposals } = await setUpStructural()
     proposals.useProposalsStore.getState().setShown(true)
+    stubMainThatResolves()
     invokes.length = 0
     const ok = await proposals.useProposalsStore.getState().resolveDoc(PATH, 'accept')
 
@@ -504,6 +535,92 @@ describe('saving a document with suggestions', () => {
     // attached, return true, and leave a fresh empty commit behind.
     expect(ok).toBe(true)
     expect(invokes.some((i) => i.channel === 'proposals:apply')).toBe(true)
+  })
+
+  it('“accept all” with the overlay deferred still decides the inline chain', async () => {
+    const stores = await loadStores()
+    stores.project.useProjectStore.setState({ novel: NOVEL, activeFile: PATH })
+    responses['proposals:pending'] = {
+      docs: [{ path: PATH, action: 'update', count: 2, sources: ['Codex update'], blocked: 0 }]
+    }
+    responses['proposals:forPath'] = {
+      current: CURRENT,
+      chain: [
+        { proposalId: 'p1', sourceTitle: 'A', rationale: 'r', content: '---\nname: Kael\n---\nAlpha edited.\n\nBeta.\n' },
+        { proposalId: 'p2', sourceTitle: 'B', rationale: 'r', content: '---\nname: Kael\n---\nAlpha edited.\n\n> Beta.\n' }
+      ],
+      blocked: []
+    }
+    responses['proposals:apply'] = { content: null, remaining: 0 }
+    stores.proposals.useProposalsStore.getState().init()
+    await stores.proposals.useProposalsStore.getState().refresh()
+    stores.project.useProjectStore.getState().setSavedContent(CURRENT)
+    // The author is mid-sentence, so the strip is offering "Show": the editor
+    // cannot speak for p1. Deciding p2 alone and reporting success left p1
+    // pending behind a green button that said it was done.
+    expect(stores.proposals.useProposalsStore.getState().active?.shown).toBe(false)
+    stubMainThatResolves()
+    invokes.length = 0
+
+    const ok = await stores.proposals.useProposalsStore.getState().resolveDoc(PATH, 'accept')
+    expect(ok).toBe(true)
+    // p2 through the panel path, then main sweeps what the editor could not.
+    expect(invokes.some((i) => i.channel === 'proposals:apply')).toBe(true)
+    expect(invokes.some((i) => i.channel === 'proposals:resolveAll')).toBe(true)
+  })
+
+  it('a snapshot with nothing to record tells main what it expects on disk', async () => {
+    const { proposals, project } = await setUp()
+    proposals.setSuggestionHandle(null)
+    proposals.useProposalsStore.setState((st) => ({ active: { ...st.active!, chain: [], shown: true } }))
+    project.useProjectStore.getState().setSavedContent(CURRENT)
+    invokes.length = 0
+    await project.useProjectStore.getState().snapshotActiveChapter()
+
+    // Handled rather than declined, so the caller makes no fallback write —
+    // and the history entry it does make carries `expectedCurrent`, so main
+    // checks disk instead of trusting this store's belief about it.
+    const writes = invokes.filter((i) => i.channel === 'chapter:write')
+    expect(writes).toHaveLength(1)
+    expect(writes[0]!.payload.expectedCurrent).toBe(CURRENT)
+  })
+
+  it('re-reads the file when that snapshot is refused as stale', async () => {
+    const { proposals, project } = await setUp()
+    const external = '---\nname: Kael\n---\nSomeone else wrote this.\n'
+    proposals.setSuggestionHandle(null)
+    proposals.useProposalsStore.setState((st) => ({ active: { ...st.active!, chain: [], shown: true } }))
+    ;(window as unknown as { pandora: { invoke: unknown } }).pandora.invoke = vi.fn(
+      async (channel: string, payload: Record<string, unknown>) => {
+        invokes.push({ channel, payload })
+        if (channel === 'chapter:write') {
+          return { ok: false, error: { message: 'This file changed while you were reviewing' } }
+        }
+        if (channel === 'chapter:read') return { ok: true, data: { content: external } }
+        return { ok: true, data: responses[channel] ?? {} }
+      }
+    )
+    project.useProjectStore.getState().setSavedContent(CURRENT)
+    await project.useProjectStore.getState().snapshotActiveChapter()
+
+    expect(project.useProjectStore.getState().content).toBe(external)
+    expect(project.useProjectStore.getState().lastError).toMatch(/changed while/)
+  })
+
+  it('a clean-buffer snapshot on an ordinary document is checked by main too', async () => {
+    const { proposals, project } = await setUp()
+    proposals.useProposalsStore.setState({ active: null })
+    project.useProjectStore.getState().setSavedContent(CURRENT)
+    invokes.length = 0
+    await project.useProjectStore.getState().snapshotActiveChapter()
+    const write = invokes.find((i) => i.channel === 'chapter:write')!
+    expect(write.payload.expectedCurrent).toBe(CURRENT)
+
+    // A dirty buffer holds the author's typing and omits it on purpose.
+    invokes.length = 0
+    project.useProjectStore.getState().setContent('---\nname: Kael\n---\nTyped.\n')
+    await project.useProjectStore.getState().snapshotActiveChapter()
+    expect(invokes.find((i) => i.channel === 'chapter:write')!.payload.expectedCurrent).toBeUndefined()
   })
 
   it('leaves a YAML document to its own per-entry review', async () => {
