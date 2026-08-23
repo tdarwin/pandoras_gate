@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
+import type { FieldSuggestion } from '../lib/frontmatterEdit'
+import WordDiff from './WordDiff'
 
 /**
  * Frontmatter without the YAML: a collapsible details strip above the editor.
@@ -86,6 +88,50 @@ function YamlField({
 }
 
 /**
+ * One field's suggestion: what it would become, and ✓/✕. Accepting writes the
+ * value into the document like any other edit; rejecting is recorded, because
+ * "still differs from current" cannot tell a refusal from an open question.
+ */
+function FieldSuggestionRow({
+  suggestion,
+  onAccept,
+  onReject
+}: {
+  suggestion: FieldSuggestion
+  onAccept: () => void
+  onReject: () => void
+}): React.JSX.Element {
+  const asText = (v: unknown): string =>
+    v === undefined ? '(removed)' : isScalar(v) ? scalarToText(v) : stringifyYaml(v).trimEnd()
+  return (
+    <div className="mb-1 flex items-start gap-2 rounded border border-amber-900/60 bg-amber-950/20 px-2 py-1">
+      <span className="min-w-0 flex-1">
+        {suggestion.current === undefined ? (
+          <span className="mr-1 rounded bg-emerald-950 px-1 text-[10px] text-emerald-300">
+            Added
+          </span>
+        ) : null}
+        {isScalar(suggestion.proposed) && isScalar(suggestion.current) ? (
+          <WordDiff oldText={asText(suggestion.current)} newText={asText(suggestion.proposed)} />
+        ) : (
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded border border-line bg-surface px-2 py-1 font-mono text-xs text-emerald-300">
+            {asText(suggestion.proposed)}
+          </pre>
+        )}
+      </span>
+      <span className="tc-ctrl shrink-0" title={suggestion.sourceLabel}>
+        <button type="button" title="Accept this change" onClick={onAccept}>
+          ✓
+        </button>
+        <button type="button" title="Reject this change" onClick={onReject}>
+          ✕
+        </button>
+      </span>
+    </div>
+  )
+}
+
+/**
  * The one place raw YAML is deliberately visible. Commits on blur like the
  * other fields; an edit that parses clears the notice on the next render
  * because the document re-parses into `data`.
@@ -131,22 +177,36 @@ export default function ChapterDetails({
   data,
   rawFrontmatter,
   lockedKeys = [],
+  suggestions = [],
   onChange,
-  onRawChange
+  onRawChange,
+  onAcceptField,
+  onRejectField
 }: {
   data: Record<string, unknown>
   /** Set when the `---` block is not readable YAML; `data` is {} in that case. */
   rawFrontmatter: string | null
   lockedKeys?: string[]
+  /** Undecided field suggestions for this document. */
+  suggestions?: FieldSuggestion[]
   onChange: (data: Record<string, unknown>) => void
   onRawChange: (rawFrontmatter: string) => void
+  onAcceptField?: (key: string, value: unknown | undefined) => void
+  onRejectField?: (key: string) => void
 }): React.JSX.Element | null {
-  const [open, setOpen] = useState(rawFrontmatter !== null)
-  // The block can become unreadable while the document is open — an external
-  // edit picked up by a reload. The amber summary line alone is easy to miss.
+  // `title` and `status` are the manifest's, and main owns them — accepting a
+  // suggestion for one would put the file out of step with the manifest.
+  const offered = suggestions.filter((s) => !lockedKeys.includes(s.key))
+  const [open, setOpen] = useState(rawFrontmatter !== null || offered.length > 0)
+  // Neither can be an initial value alone: suggestions arrive after the
+  // document opens (the fold is a round trip), and a block can become
+  // unreadable while it is open (an external edit picked up by a reload).
+  // Either waiting inside a collapsed strip is something nobody sees.
   useEffect(() => {
-    if (rawFrontmatter !== null) setOpen(true)
-  }, [rawFrontmatter])
+    if (offered.length > 0 || rawFrontmatter !== null) setOpen(true)
+  }, [offered.length, rawFrontmatter])
+  const suggestionFor = new Map(offered.map((s) => [s.key, s]))
+  const addedKeys = offered.filter((s) => !(s.key in data)).map((s) => s.key)
   const [newKey, setNewKey] = useState('')
   const keys = Object.keys(data)
 
@@ -200,7 +260,7 @@ export default function ChapterDetails({
       )}
       {open && rawFrontmatter === null && (
         <div className="border-t border-line/60 px-4 py-2">
-          {keys.map((key) => (
+          {[...keys, ...addedKeys].map((key) => (
             <div key={key} className="flex items-start gap-2 py-0.5">
               <span
                 className="w-28 shrink-0 truncate pt-1.5 text-xs text-ink-faint"
@@ -209,16 +269,30 @@ export default function ChapterDetails({
                 {key}
               </span>
               <div className="min-w-0 flex-1">
-                {isScalar(data[key]) ? (
+                {suggestionFor.has(key) && (
+                  <FieldSuggestionRow
+                    suggestion={suggestionFor.get(key)!}
+                    onAccept={() => onAcceptField?.(key, suggestionFor.get(key)!.proposed)}
+                    onReject={() => onRejectField?.(key)}
+                  />
+                )}
+                {key in data && isScalar(data[key]) ? (
                   <ScalarField
                     key={`${key}:${scalarToText(data[key])}`}
                     value={data[key]}
                     locked={lockedKeys.includes(key)}
                     onCommit={(v) => commit(key, v)}
                   />
-                ) : (
-                  <YamlField value={data[key]} onCommit={(v) => commit(key, v)} />
-                )}
+                ) : key in data ? (
+                  <YamlField
+                    // Keyed by its value the way ScalarField is: seeding local
+                    // state once meant an accepted suggestion left the textarea
+                    // showing the OLD YAML, which blur then committed back.
+                    key={`${key}:${stringifyYaml(data[key])}`}
+                    value={data[key]}
+                    onCommit={(v) => commit(key, v)}
+                  />
+                ) : null}
               </div>
               {!lockedKeys.includes(key) && (
                 <button

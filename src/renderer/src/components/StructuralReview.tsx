@@ -22,8 +22,6 @@ type Review = NonNullable<ActiveSuggestions['review']>
 export default function StructuralReview({ review }: { review: Review }): React.JSX.Element {
   const close = useProposalsStore((s) => s.closeStructuralReview)
   const decide = useProposalsStore((s) => s.decideStructural)
-  const fmChoice = useProposalsStore((s) => s.active?.fmChoice ?? 'current')
-  const setFmChoice = useProposalsStore((s) => s.setFmChoice)
   const [busy, setBusy] = useState(false)
 
   const base = parseFrontmatter(review.base)
@@ -61,24 +59,9 @@ export default function StructuralReview({ review }: { review: Review }): React.
           <div className="mt-4">
             <p className="mb-1 text-xs text-ink-muted">It also changes the details:</p>
             <WordDiff oldText={fmText(base.data)} newText={fmText(proposed.data)} />
-            <div className="mt-2 flex items-center gap-3 text-xs">
-              <label className="flex items-center gap-1 text-ink-muted">
-                <input
-                  type="radio"
-                  checked={fmChoice === 'current'}
-                  onChange={() => setFmChoice('current')}
-                />
-                Keep mine
-              </label>
-              <label className="flex items-center gap-1 text-ink-muted">
-                <input
-                  type="radio"
-                  checked={fmChoice === 'proposed'}
-                  onChange={() => setFmChoice('proposed')}
-                />
-                Use proposed
-              </label>
-            </div>
+            <p className="mt-1 text-xs text-ink-faint">
+              Accepting takes these too, except any you have already turned down.
+            </p>
           </div>
         )}
 
