@@ -274,6 +274,16 @@ The app must never crash on a hand-edited novel file. Validation failures degrad
 fall back, surface a readable message — because users are explicitly invited to edit these
 files in any editor.
 
+Frontmatter has three states, not two (`src/shared/frontmatter.ts`): a readable block, no
+block, and a block that is not readable YAML — an unquoted colon in a title, a list, a
+stray tab. The third is kept in `FrontmatterDoc.rawFrontmatter` rather than folded into the
+body, so it never renders as prose in the writing surface and never gets rewritten as prose
+on save. It is the one place the app deliberately shows YAML: the details strip displays it
+with a notice and lets the author fix it in place. Anything that needs to SET a field
+(`renameChapter`, `setChapterStatus`) checks the flag and refuses readably instead of
+writing a second block above the first. A leading UTF-8 BOM is stripped on parse and does
+not come back.
+
 ## Testing
 
 Tests are colocated with the code as `*.test.ts` and run with Vitest:

@@ -191,6 +191,11 @@ export async function renameChapter(
   const source = resolveInside(novelDir, file)
   const raw = await readFile(source, 'utf8')
   const doc = parseFrontmatter(raw)
+  if (doc.rawFrontmatter !== null) {
+    throw new Error(
+      `This chapter's details block isn't readable as YAML, so renaming it would write a second block over it. Open the chapter and fix the block in the details panel first.`
+    )
+  }
   doc.data['title'] = newTitle
   await writeFile(source, serializeFrontmatter(doc), 'utf8')
 
@@ -405,12 +410,18 @@ export async function setChapterStatus(
   const manifest = await readNovelManifest(novelDir)
   const entry = manifest.chapters.find((c) => c.file === file)
   if (!entry) throw new Error(`Chapter not in manifest: ${file}`)
-  entry.status = status
-  await writeNovelManifest(novelDir, manifest)
-
+  // Read and vet the file BEFORE the manifest write: refusing afterwards would
+  // leave the manifest saying one thing and the chapter another.
   const target = resolveInside(novelDir, file)
   const raw = await readFile(target, 'utf8')
   const doc = parseFrontmatter(raw)
+  if (doc.rawFrontmatter !== null) {
+    throw new Error(
+      `This chapter's details block isn't readable as YAML, so changing its status would write a second block over it. Open the chapter and fix the block in the details panel first.`
+    )
+  }
+  entry.status = status
+  await writeNovelManifest(novelDir, manifest)
   doc.data['status'] = status
   await writeFile(target, serializeFrontmatter(doc), 'utf8')
   return { dir: novelDir, manifest }

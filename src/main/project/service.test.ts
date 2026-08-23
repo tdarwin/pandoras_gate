@@ -7,6 +7,7 @@ import {
   openNovel,
   createChapter,
   renameChapter,
+  setChapterStatus,
   reorderChapters,
   archiveChapter,
   deleteChapter,
@@ -220,6 +221,37 @@ describe('chapters', () => {
     expect(result.novel.manifest.chapters[0]!.title).toBe('New Dawn')
     const raw = await readChapter(novelDir, 'chapters/001-new-dawn.md')
     expect(raw).toContain('title: New Dawn')
+  })
+
+  it('refuses to rename over an unreadable details block instead of doubling it', async () => {
+    const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
+    await createChapter(novelDir, 'Old Title')
+    // The shape a hand edit in another editor produces: an unquoted colon.
+    const broken = '---\ntitle: Chapter 1: The Gate\nstatus: draft\n---\nProse.\n'
+    await writeChapter(novelDir, 'chapters/001-old-title.md', broken)
+
+    await expect(renameChapter(novelDir, 'chapters/001-old-title.md', 'New Dawn')).rejects.toThrow(
+      /details block isn't readable/
+    )
+    // Nothing moved: no second frontmatter block, no renamed file, no manifest drift.
+    expect(await readChapter(novelDir, 'chapters/001-old-title.md')).toBe(broken)
+    const manifest = await readNovelManifest(novelDir)
+    expect(manifest.chapters[0]!.file).toBe('chapters/001-old-title.md')
+    expect(manifest.chapters[0]!.title).toBe('Old Title')
+  })
+
+  it('refuses a status change over an unreadable block, leaving the manifest alone', async () => {
+    const { dir: novelDir } = await createNovel({ parentDir: dir, title: 'N', author: 'D' })
+    await createChapter(novelDir, 'Only')
+    const broken = '---\ntitle: Chapter 1: The Gate\n---\nProse.\n'
+    await writeChapter(novelDir, 'chapters/001-only.md', broken)
+
+    await expect(setChapterStatus(novelDir, 'chapters/001-only.md', 'final')).rejects.toThrow(
+      /details block isn't readable/
+    )
+    expect(await readChapter(novelDir, 'chapters/001-only.md')).toBe(broken)
+    // The manifest write comes after the check, so the two cannot disagree.
+    expect((await readNovelManifest(novelDir)).chapters[0]!.status).toBe('draft')
   })
 
   it('renaming to a title another chapter holds keeps both files distinct', async () => {

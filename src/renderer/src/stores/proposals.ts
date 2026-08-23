@@ -177,12 +177,18 @@ export const useProposalsStore = create<ProposalsStore>((set, get) => ({
   applyReview: async () => {
     const { review } = get()
     if (!review) return
-    // The body buffer already reflects per-chunk rejections and edits.
-    const data =
-      review.fmChoice === 'current'
-        ? parseFrontmatter(review.originalRaw).data
-        : parseFrontmatter(review.proposedRaw).data
-    const content = serializeFrontmatter({ data, body: review.bodyBuffer })
+    // The body buffer already reflects per-chunk rejections and edits. The
+    // chosen side's frontmatter comes across whole — including an unreadable
+    // block, which must survive an accept the same way it survives a rename:
+    // nothing the app writes may reinterpret YAML it could not read.
+    const chosen = parseFrontmatter(
+      review.fmChoice === 'current' ? review.originalRaw : review.proposedRaw
+    )
+    const content = serializeFrontmatter({
+      data: chosen.data,
+      body: review.bodyBuffer,
+      rawFrontmatter: chosen.rawFrontmatter
+    })
     const ok = await get().resolve(
       review.proposalId,
       review.path,
